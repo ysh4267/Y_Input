@@ -1,3 +1,4 @@
+using System.Linq;
 using YInput.Core.Models;
 using YInput.Core.Persistence;
 using YInput.Engine;
@@ -186,5 +187,88 @@ public class GamepadTriggerTests
         Assert.False(r.Trigger.IsMouse);
         Assert.Equal(GamepadControl.A, r.Trigger.Gamepad);
         Assert.Contains("Pad A", r.Trigger.ToString());
+    }
+}
+
+public class LoopPlayerTests
+{
+    private sealed class FakeSink : IInputSink
+    {
+        public List<InputEvent> Sent { get; } = new();
+        public void Send(InputEvent e) => Sent.Add(e);
+    }
+
+    private static MacroStep S(InputEvent e) => new(e, 0);
+
+    [Fact]
+    public async Task RepeatsBodyNTimes()
+    {
+        var macro = new Macro
+        {
+            LoopCount = 1,
+            Steps = { S(new LoopStartEvent { Count = 3 }), S(new KeyboardEvent { Code = 30 }), S(new LoopEndEvent()) },
+        };
+        var sink = new FakeSink();
+        await new Player(sink).PlayAsync(macro);
+        Assert.Equal(3, sink.Sent.Count);
+        Assert.All(sink.Sent, e => Assert.IsType<KeyboardEvent>(e));
+    }
+
+    [Fact]
+    public async Task NestedLoopsMultiply()
+    {
+        var macro = new Macro
+        {
+            LoopCount = 1,
+            Steps =
+            {
+                S(new LoopStartEvent { Count = 2 }),
+                S(new KeyboardEvent { Code = 1 }),  // B ×2
+                S(new LoopStartEvent { Count = 3 }),
+                S(new KeyboardEvent { Code = 2 }),  // C ×(2×3)
+                S(new LoopEndEvent()),
+                S(new LoopEndEvent()),
+            },
+        };
+        var sink = new FakeSink();
+        await new Player(sink).PlayAsync(macro);
+        Assert.Equal(2, sink.Sent.Count(e => e is KeyboardEvent { Code: 1 }));
+        Assert.Equal(6, sink.Sent.Count(e => e is KeyboardEvent { Code: 2 }));
+    }
+
+    [Fact]
+    public async Task UnmatchedEndIsIgnored()
+    {
+        var macro = new Macro
+        {
+            LoopCount = 1,
+            Steps = { S(new LoopEndEvent()), S(new KeyboardEvent { Code = 30 }) },
+        };
+        var sink = new FakeSink();
+        await new Player(sink).PlayAsync(macro);
+        Assert.Single(sink.Sent);
+    }
+
+    [Fact]
+    public async Task CountClampedToAtLeastOne()
+    {
+        var macro = new Macro
+        {
+            LoopCount = 1,
+            Steps = { S(new LoopStartEvent { Count = 0 }), S(new KeyboardEvent { Code = 30 }), S(new LoopEndEvent()) },
+        };
+        var sink = new FakeSink();
+        await new Player(sink).PlayAsync(macro);
+        Assert.Single(sink.Sent); // 0 → 최소 1회
+    }
+
+    [Fact]
+    public void LoopEvents_RoundTrip()
+    {
+        var macro = new Macro { Steps = { S(new LoopStartEvent { Count = 5 }), S(new LoopEndEvent()) } };
+        var r = MacroStore.Deserialize(MacroStore.Serialize(macro));
+        Assert.IsType<LoopStartEvent>(r.Steps[0].Event);
+        Assert.Equal(5, ((LoopStartEvent)r.Steps[0].Event).Count);
+        Assert.IsType<LoopEndEvent>(r.Steps[1].Event);
     }
 }

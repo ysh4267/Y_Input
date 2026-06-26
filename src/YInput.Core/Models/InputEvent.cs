@@ -12,6 +12,8 @@ namespace YInput.Core.Models;
 [JsonDerivedType(typeof(GamepadEvent), "gamepad")]
 [JsonDerivedType(typeof(TextEvent), "text")]
 [JsonDerivedType(typeof(DelayEvent), "delay")]
+[JsonDerivedType(typeof(LoopStartEvent), "loopStart")]
+[JsonDerivedType(typeof(LoopEndEvent), "loopEnd")]
 public abstract class InputEvent
 {
     /// <summary>사람이 읽을 수 있는 요약(에디터 표시용).</summary>
@@ -103,4 +105,24 @@ public sealed class DelayEvent : InputEvent
 {
     [JsonIgnore]
     public override string Summary => "Wait";
+}
+
+/// <summary>
+/// 반복 시작 블록(no-op 송출). 이 블록과 짝이 되는 <see cref="LoopEndEvent"/> 사이의 스텝을
+/// <see cref="Count"/>회 반복한다. 중첩 가능(스택 매칭). 짝이 없으면 무시(그레이스풀).
+/// </summary>
+public sealed class LoopStartEvent : InputEvent
+{
+    /// <summary>반복 횟수(최소 1).</summary>
+    public int Count { get; set; } = 2;
+
+    [JsonIgnore]
+    public override string Summary => $"Loop ×{Count}";
+}
+
+/// <summary>반복 끝 블록(no-op 송출). 가장 가까운 미닫힌 <see cref="LoopStartEvent"/>와 짝.</summary>
+public sealed class LoopEndEvent : InputEvent
+{
+    [JsonIgnore]
+    public override string Summary => "Loop end";
 }

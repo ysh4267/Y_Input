@@ -213,6 +213,14 @@ export function gamepadEvent(control, value) {
   return { '$type': 'gamepad', control, value: value | 0 };
 }
 
+// ---------- 반복(루프) 블록 ----------
+export function loopStartEvent(count) {
+  return { '$type': 'loopStart', count: Math.max(1, count | 0 || 2) };
+}
+export function loopEndEvent() {
+  return { '$type': 'loopEnd' };
+}
+
 // ---------- 공통 요약 ----------
 export function summarizeEvent(ev) {
   switch (ev['$type']) {
@@ -221,10 +229,13 @@ export function summarizeEvent(ev) {
     case 'gamepad': return `패드 ${ev.control}=${ev.value}`;
     case 'text': return `텍스트 "${ev.text}"`;
     case 'delay': return '대기(Wait)';
+    case 'loopStart': return `반복 시작 ×${ev.count}`;
+    case 'loopEnd': return '반복 끝';
     default: return ev['$type'] || '?';
   }
 }
 
 export const TYPE_ICON = {
   keyboard: '⌨', mouse: '🖱', gamepad: '🎮', text: '🔤', delay: '⏱',
+  loopStart: '🔁', loopEnd: '🏁',
 };

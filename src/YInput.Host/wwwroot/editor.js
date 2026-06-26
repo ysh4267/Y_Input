@@ -16,7 +16,7 @@ function hotkeyToString(t) {
   return p.join('+');
 }
 
-const TYPE_NAME = { keyboard: '키', mouse: '마우스', gamepad: '패드', text: '텍스트', delay: '지연' };
+const TYPE_NAME = { keyboard: '키', mouse: '마우스', gamepad: '패드', text: '텍스트', delay: '지연', loopStart: '반복', loopEnd: '반복' };
 const fmtMs = (ms) => ms >= 1000 ? (ms / 1000).toFixed(2) + ' s' : Math.round(ms) + ' ms';
 
 // 세그먼트 컨트롤 헬퍼
@@ -86,9 +86,25 @@ export function createEditor({ log, onSaved, getStatus }) {
     } else {
       editing.steps.forEach((step, i) => wrap.appendChild(buildRow(step, i)));
       renderPairLines();
+      applyLoopStyles();
     }
     applySel();
     updateStats();
+  }
+
+  // 반복 블록 시각화: 시작/끝 마커 행 강조 + 본문 행 좌측 막대(깊이>0)
+  function applyLoopStyles() {
+    const rows = [...$('steps').querySelectorAll('.step')];
+    let depth = 0;
+    editing.steps.forEach((s, i) => {
+      const t = s.event['$type'];
+      const row = rows[i]; if (!row) return;
+      if (t === 'loopEnd') depth = Math.max(0, depth - 1);
+      const marker = (t === 'loopStart' || t === 'loopEnd');
+      if (marker) row.classList.add('loop-marker');
+      if (marker || depth > 0) row.classList.add('in-loop');
+      if (t === 'loopStart') depth += 1;
+    });
   }
 
   // 키 Down↔Up 같은 키끼리 스택 매칭 → 좌측 거터에 한 세트 연결선
@@ -249,6 +265,15 @@ export function createEditor({ log, onSaved, getStatus }) {
       const span = document.createElement('span'); span.className = 'muted';
       span.textContent = '대기 — 오른쪽 지연(ms) 값만큼 멈춤';
       td.append(span);
+    } else if (t === 'loopStart') {
+      const n = document.createElement('input');
+      n.type = 'number'; n.min = '1'; n.value = Math.max(1, ev.count || 2); n.title = '반복 횟수';
+      n.onchange = () => { ev.count = Math.max(1, parseInt(n.value, 10) || 1); n.value = ev.count; };
+      td.append(labelTag('반복'), n, labelTag('회 — 아래 “반복 끝”까지'));
+    } else if (t === 'loopEnd') {
+      const span = document.createElement('span'); span.className = 'muted';
+      span.textContent = '반복 끝 — 위 “반복”부터 여기까지가 한 묶음';
+      td.append(span);
     }
   }
 
@@ -326,6 +351,9 @@ export function createEditor({ log, onSaved, getStatus }) {
       case 'delay': return [{ delayBeforeMs: 100, event: { '$type': 'delay' } }];
       case 'gamepad': return [{ delayBeforeMs: 0, event: km.gamepadEvent('A', 1) }];
       case 'text': return [{ delayBeforeMs: 0, event: { '$type': 'text', text: '', perKeyDelayMs: 0 } }];
+      case 'loop': return [
+        { delayBeforeMs: 0, event: km.loopStartEvent(2) },
+        { delayBeforeMs: 0, event: km.loopEndEvent() }];
       default: return [];
     }
   }
@@ -338,6 +366,19 @@ export function createEditor({ log, onSaved, getStatus }) {
   }
   function insert(type) {
     insertTypeAt(type, selected.size ? Math.max(...selIdxs()) + 1 : editing.steps.length);
+  }
+  // 반복: 선택이 있으면 그 범위를 시작/끝 블록으로 감싸고, 없으면 빈 반복쌍을 끝에 추가
+  function insertLoop() {
+    const s = selIdxs();
+    if (s.length) {
+      const a = s[0], b = s[s.length - 1];
+      editing.steps.splice(b + 1, 0, { delayBeforeMs: 0, event: km.loopEndEvent() });
+      editing.steps.splice(a, 0, { delayBeforeMs: 0, event: km.loopStartEvent(2) });
+      selected = new Set([a]); lastIdx = a;
+      renderSteps();
+    } else {
+      insertTypeAt('loop', editing.steps.length);
+    }
   }
 
   // ---------- 일괄 작업 ----------
@@ -430,7 +471,7 @@ export function createEditor({ log, onSaved, getStatus }) {
   // 동작 팔레트: 클릭=추가, 드래그=원하는 위치(행/끝)에 드롭
   document.querySelectorAll('#palette .pal-item').forEach((el) => {
     const type = el.dataset.type;
-    el.onclick = () => insert(type);
+    el.onclick = () => (type === 'loop' ? insertLoop() : insert(type));
     el.addEventListener('dragstart', (e) => { dragType = type; dragSrc = -1; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', 'add:' + type); el.classList.add('dragging'); });
     el.addEventListener('dragend', () => { dragType = null; el.classList.remove('dragging'); });
   });

@@ -21,6 +21,7 @@
   --t-gamepad: #c084fc;
   --t-text: #fbbf24;
   --t-delay: #94a3b8;
+  --t-loop: #fb923c;
 }
 
 * { box-sizing: border-box; }
@@ -189,6 +190,11 @@ input[type=range] { accent-color: var(--accent); }
 .step.sel:hover { background: rgba(79,140,255,.16); }
 .step.dragover { box-shadow: inset 0 2px 0 var(--accent); }
 .step.dragging { opacity: .4; }
+/* 반복(루프) 블록 */
+.step.in-loop { box-shadow: inset 3px 0 0 var(--t-loop); }
+.step.loop-marker { background: rgba(251,146,60,.10); }
+.step.loop-marker:hover { background: rgba(251,146,60,.16); }
+.step.loop-marker.sel, .step.in-loop.sel { background: rgba(79,140,255,.14); }
 
 .step-drag { cursor: grab; color: var(--muted); text-align: center; font-size: 15px; user-select: none; }
 .step-drag:active { cursor: grabbing; }
@@ -201,6 +207,7 @@ input[type=range] { accent-color: var(--accent); }
 .type-gamepad { background: rgba(192,132,252,.16); color: var(--t-gamepad); }
 .type-text { background: rgba(251,191,36,.16); color: var(--t-text); }
 .type-delay { background: rgba(148,163,184,.16); color: var(--t-delay); }
+.type-loopStart, .type-loopEnd { background: rgba(251,146,60,.16); color: var(--t-loop); }
 .step-type .tname { color: var(--muted); }
 
 .step-detail { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; min-width: 0; }

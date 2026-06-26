@@ -60,20 +60,44 @@ public sealed class Player
             double speed = macro.SpeedMultiplier;
             int loops = macro.IsInfinite ? int.MaxValue : Math.Max(1, macro.LoopCount);
 
+            var steps = macro.Steps;
             for (int loop = 0; loop < loops && !ct.IsCancellationRequested; loop++)
             {
-                for (int i = 0; i < macro.Steps.Count; i++)
+                // 반복(Loop) 블록을 스택으로 해석: LoopStart/End를 짝지어 본문을 Count회 반복(중첩 가능).
+                var loopStack = new Stack<(int bodyStart, int remaining)>();
+                int ip = 0;
+                while (ip < steps.Count && !ct.IsCancellationRequested)
                 {
                     ct.ThrowIfCancellationRequested();
-                    var step = macro.Steps[i];
+                    var step = steps[ip];
 
+                    // 지연은 모든 스텝 공통(반복 끝 지연 = 반복 사이 간격으로 동작).
                     var delay = EffectiveDelayMs(step.DelayBeforeMs, speed);
                     delay = ApplyJitter(delay, macro.RandomizeDelayPercent, Random.Shared);
                     if (delay > 0)
                         await PreciseDelay.WaitAsync(delay, ct).ConfigureAwait(false);
 
-                    _sink.Send(step.Event);
-                    Progress?.Invoke(this, new PlaybackProgress(loop, i, macro.Steps.Count));
+                    switch (step.Event)
+                    {
+                        case LoopStartEvent ls:
+                            loopStack.Push((ip + 1, Math.Max(1, ls.Count)));
+                            ip++;
+                            break;
+                        case LoopEndEvent:
+                            if (loopStack.Count > 0)
+                            {
+                                var top = loopStack.Pop();
+                                if (top.remaining > 1) { loopStack.Push((top.bodyStart, top.remaining - 1)); ip = top.bodyStart; }
+                                else ip++;
+                            }
+                            else ip++; // 짝 없는 끝 → 무시
+                            break;
+                        default:
+                            _sink.Send(step.Event);
+                            Progress?.Invoke(this, new PlaybackProgress(loop, ip, steps.Count));
+                            ip++;
+                            break;
+                    }
                 }
             }
         }
