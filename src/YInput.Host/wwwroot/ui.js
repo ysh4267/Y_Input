@@ -69,6 +69,14 @@ export function alertDialog(message, opts = {}) {
 
 // ---------- 입력 잠금: 텍스트 드래그·브라우저 단축키·우클릭 메뉴 차단 ----------
 export function installLockdown() {
+  const SELECTABLE = 'input, textarea, .log, code, .modal-msg, .modal-input';
+
+  // 텍스트 선택(드래그 하이라이트) 차단 — 입력칸·로그·모달만 허용. CSS user-select와 이중 방어.
+  document.addEventListener('selectstart', (e) => {
+    if (e.target.closest && e.target.closest(SELECTABLE)) return;
+    e.preventDefault();
+  });
+
   // 텍스트/요소 드래그 차단 — 지정된 드래그 핸들(팔레트·행 핸들)만 허용
   document.addEventListener('dragstart', (e) => {
     if (e.target.closest && e.target.closest('.pal-item, .step-drag')) return;
