@@ -117,10 +117,12 @@ async function removeMacro(id, name) {
 }
 
 // ---------- WebSocket ----------
+let shuttingDown = false;
 function connectWs() {
+  if (shuttingDown) return;
   const ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onopen = () => $('ws-dot').className = 'ws-dot on';
-  ws.onclose = () => { $('ws-dot').className = 'ws-dot off'; setTimeout(connectWs, 1500); };
+  ws.onclose = () => { $('ws-dot').className = 'ws-dot off'; if (!shuttingDown) setTimeout(connectWs, 1500); };
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     switch (msg.type) {
@@ -130,8 +132,23 @@ function connectWs() {
       case 'progress': showProgress(msg.data); break;
       case 'inputDetected': editor.onInputDetected(msg.data); break;
       case 'inputMonitor': log('monitor', `[${msg.data.source}] ${msg.data.label}`, msg.data.time); break;
+      case 'shutdown': handleShutdown(); break;
     }
   };
+}
+
+// 트레이 종료 신호 → 페이지 닫기(앱 모드면 OK, 일반 탭이면 안내 화면)
+function handleShutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  document.title = 'Y_Input — 종료됨';
+  try { window.close(); } catch (e) { /* 일반 탭은 막힐 수 있음 */ }
+  setTimeout(() => {
+    const o = document.createElement('div');
+    o.className = 'closed-screen';
+    o.innerHTML = '<div><h1>Y_Input 종료됨</h1><p>프로그램이 종료되었습니다. 이 창을 닫아 주세요.</p></div>';
+    document.body.appendChild(o);
+  }, 150);
 }
 function showProgress(p) {
   const box = $('progress'); box.hidden = false;

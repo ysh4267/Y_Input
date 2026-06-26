@@ -13,6 +13,7 @@ internal sealed class TrayAppContext : ApplicationContext
     private readonly NotifyIcon _icon;
     private readonly MacroService _service;
     private readonly SynchronizationContext _ui;
+    private Process? _browser; // 앱 모드로 띄운 전용 브라우저(종료 시 함께 닫음)
 
     public TrayAppContext(MacroService service)
     {
@@ -43,7 +44,9 @@ internal sealed class TrayAppContext : ApplicationContext
     {
         try
         {
-            Process.Start(new ProcessStartInfo(_service.Url) { UseShellExecute = true });
+            if (_browser is { HasExited: false }) return; // 이미 앱 창이 열려 있음
+            _browser = BrowserLauncher.LaunchApp(_service.Url);
+            if (_browser == null) BrowserLauncher.ShellOpen(_service.Url); // 폴백: 기본 브라우저
         }
         catch (Exception ex)
         {
@@ -63,6 +66,9 @@ internal sealed class TrayAppContext : ApplicationContext
 
     protected override void ExitThreadCore()
     {
+        // 앱 모드로 띄운 브라우저 창도 함께 닫는다(프로세스 트리 종료).
+        try { if (_browser is { HasExited: false }) _browser.Kill(entireProcessTree: true); }
+        catch { /* ignore */ }
         _icon.Visible = false;
         _icon.Dispose();
         base.ExitThreadCore();

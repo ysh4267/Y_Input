@@ -247,3 +247,8 @@ input[type=range] { accent-color: var(--accent); }
 .modal-actions .modal-cancel[hidden] { display: none; }
 @keyframes modal-fade { from { opacity: 0; } }
 @keyframes modal-pop { from { opacity: 0; transform: translateY(8px) scale(.98); } }
+
+/* 종료 안내 화면 */
+.closed-screen { position: fixed; inset: 0; z-index: 2000; background: var(--bg); display: flex; align-items: center; justify-content: center; text-align: center; }
+.closed-screen h1 { font-size: 20px; margin: 0 0 8px; }
+.closed-screen p { color: var(--muted); margin: 0; }

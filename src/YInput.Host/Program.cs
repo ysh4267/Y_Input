@@ -60,6 +60,9 @@ internal static class Program
         // 메시지 루프(블로킹) — 종료 시까지
         System.Windows.Forms.Application.Run(tray);
 
+        // 기본 브라우저로 열린(앱 모드가 아닌) 페이지에 종료 신호 → 페이지가 스스로 닫힘 처리
+        try { hub.Broadcast("shutdown", new { }); Thread.Sleep(150); } catch { /* ignore */ }
+
         // 정리
         try { app.StopAsync().Wait(3000); } catch { /* ignore */ }
         try { (app as IDisposable)?.Dispose(); } catch { /* ignore */ }
