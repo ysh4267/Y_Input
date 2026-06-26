@@ -16,6 +16,11 @@ public sealed class Macro
     /// <summary>재생 속도 배율. 1.0=원속도, 2.0=2배 빠름. 0 이하 금지.</summary>
     public double SpeedMultiplier { get; set; } = 1.0;
 
+    /// <summary>
+    /// 지연 무작위화(휴머나이즈) 비율(%). 0=없음. 각 스텝 지연에 ±이 비율만큼 무작위 지터를 적용한다.
+    /// </summary>
+    public int RandomizeDelayPercent { get; set; } = 0;
+
     /// <summary>이 매크로를 시작/정지하는 전역 핫키(선택).</summary>
     public Hotkey? Trigger { get; set; }
 

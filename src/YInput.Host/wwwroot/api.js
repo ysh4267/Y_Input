@@ -28,7 +28,7 @@ export const api = {
   updateMacro: (id, macro) => request('PUT', `/api/macros/${id}`, macro),
   deleteMacro: (id) => request('DELETE', `/api/macros/${id}`),
 
-  recordStart: () => request('POST', '/api/record/start'),
+  recordStart: (options) => request('POST', '/api/record/start', options || {}),
   recordStop: (name) => request('POST', '/api/record/stop', { name }),
   play: (id) => request('POST', `/api/play/${id}`),
   stop: () => request('POST', '/api/stop'),

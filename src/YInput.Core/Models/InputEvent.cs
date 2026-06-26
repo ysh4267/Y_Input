@@ -11,6 +11,7 @@ namespace YInput.Core.Models;
 [JsonDerivedType(typeof(MouseEvent), "mouse")]
 [JsonDerivedType(typeof(GamepadEvent), "gamepad")]
 [JsonDerivedType(typeof(TextEvent), "text")]
+[JsonDerivedType(typeof(DelayEvent), "delay")]
 public abstract class InputEvent
 {
     /// <summary>사람이 읽을 수 있는 요약(에디터 표시용).</summary>
@@ -92,4 +93,14 @@ public sealed class TextEvent : InputEvent
     [JsonIgnore]
     public override string Summary =>
         $"Type \"{(Text.Length > 24 ? Text[..24] + "…" : Text)}\"";
+}
+
+/// <summary>
+/// 명시적 대기 스텝(no-op). 실제 대기 시간은 <see cref="MacroStep.DelayBeforeMs"/>가 담당하고,
+/// 이 이벤트는 송출 시 아무 동작도 하지 않는다(편집기에서 "Wait" 행으로 표시).
+/// </summary>
+public sealed class DelayEvent : InputEvent
+{
+    [JsonIgnore]
+    public override string Summary => "Wait";
 }

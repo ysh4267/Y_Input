@@ -46,6 +46,7 @@ public sealed class InputBackend : IInputSink, IInputSource, IDisposable
             case MouseEvent me: KeyboardMouse.SendMouse(me); break;
             case TextEvent te: KeyboardMouse.SendText(te); break;
             case GamepadEvent ge: Gamepad.Send(ge); break;
+            case DelayEvent: break; // no-op — 대기는 MacroStep.DelayBeforeMs가 담당
             default: throw new NotSupportedException($"지원하지 않는 이벤트 타입: {e.GetType().Name}");
         }
     }

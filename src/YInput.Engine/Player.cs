@@ -31,6 +31,19 @@ public sealed class Player
         return delayBeforeMs <= 0 ? 0 : delayBeforeMs / speed;
     }
 
+    /// <summary>
+    /// 지연에 ±<paramref name="percent"/>% 무작위 지터를 적용(휴머나이즈). (순수 함수 — 테스트 대상)
+    /// 결과는 [ms·(1-p), ms·(1+p)] 범위, 음수는 0으로 클램프.
+    /// </summary>
+    public static double ApplyJitter(double ms, int percent, Random rng)
+    {
+        if (percent <= 0 || ms <= 0) return ms;
+        double frac = percent / 100.0;
+        double factor = 1.0 + (rng.NextDouble() * 2.0 - 1.0) * frac; // [1-frac, 1+frac]
+        double result = ms * factor;
+        return result < 0 ? 0 : result;
+    }
+
     /// <summary>매크로를 재생한다. 이미 재생 중이면 무시. 백그라운드에서 완료될 때까지 대기 가능.</summary>
     public async Task PlayAsync(Macro macro, CancellationToken external = default)
     {
@@ -55,6 +68,7 @@ public sealed class Player
                     var step = macro.Steps[i];
 
                     var delay = EffectiveDelayMs(step.DelayBeforeMs, speed);
+                    delay = ApplyJitter(delay, macro.RandomizeDelayPercent, Random.Shared);
                     if (delay > 0)
                         await PreciseDelay.WaitAsync(delay, ct).ConfigureAwait(false);
 

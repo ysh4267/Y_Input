@@ -1,0 +1,160 @@
+// 키보드 스캔코드(set 1) · 마우스 비트 · 게임패드 컨트롤 매핑.
+// Interception KeyState 비트: Down=0x00, Up=0x01, E0(확장)=0x02.
+
+// KeyboardEvent.code → [scancode, extended(E0)?]
+export const KEYS = {
+  Escape: [0x01], Digit1: [0x02], Digit2: [0x03], Digit3: [0x04], Digit4: [0x05],
+  Digit5: [0x06], Digit6: [0x07], Digit7: [0x08], Digit8: [0x09], Digit9: [0x0A],
+  Digit0: [0x0B], Minus: [0x0C], Equal: [0x0D], Backspace: [0x0E], Tab: [0x0F],
+  KeyQ: [0x10], KeyW: [0x11], KeyE: [0x12], KeyR: [0x13], KeyT: [0x14], KeyY: [0x15],
+  KeyU: [0x16], KeyI: [0x17], KeyO: [0x18], KeyP: [0x19], BracketLeft: [0x1A],
+  BracketRight: [0x1B], Enter: [0x1C], ControlLeft: [0x1D], KeyA: [0x1E], KeyS: [0x1F],
+  KeyD: [0x20], KeyF: [0x21], KeyG: [0x22], KeyH: [0x23], KeyJ: [0x24], KeyK: [0x25],
+  KeyL: [0x26], Semicolon: [0x27], Quote: [0x28], Backquote: [0x29], ShiftLeft: [0x2A],
+  Backslash: [0x2B], KeyZ: [0x2C], KeyX: [0x2D], KeyC: [0x2E], KeyV: [0x2F], KeyB: [0x30],
+  KeyN: [0x31], KeyM: [0x32], Comma: [0x33], Period: [0x34], Slash: [0x35],
+  ShiftRight: [0x36], NumpadMultiply: [0x37], AltLeft: [0x38], Space: [0x39],
+  CapsLock: [0x3A], F1: [0x3B], F2: [0x3C], F3: [0x3D], F4: [0x3E], F5: [0x3F],
+  F6: [0x40], F7: [0x41], F8: [0x42], F9: [0x43], F10: [0x44], NumLock: [0x45],
+  ScrollLock: [0x46], Numpad7: [0x47], Numpad8: [0x48], Numpad9: [0x49],
+  NumpadSubtract: [0x4A], Numpad4: [0x4B], Numpad5: [0x4C], Numpad6: [0x4D],
+  NumpadAdd: [0x4E], Numpad1: [0x4F], Numpad2: [0x50], Numpad3: [0x51], Numpad0: [0x52],
+  NumpadDecimal: [0x53], F11: [0x57], F12: [0x58],
+
+  // 확장(E0) 키
+  NumpadEnter: [0x1C, true], ControlRight: [0x1D, true], NumpadDivide: [0x35, true],
+  AltRight: [0x38, true], Home: [0x47, true], ArrowUp: [0x48, true], PageUp: [0x49, true],
+  ArrowLeft: [0x4B, true], ArrowRight: [0x4D, true], End: [0x4F, true],
+  ArrowDown: [0x50, true], PageDown: [0x51, true], Insert: [0x52, true], Delete: [0x53, true],
+  MetaLeft: [0x5B, true], MetaRight: [0x5C, true], ContextMenu: [0x5D, true],
+};
+
+const LABELS = {
+  Escape: 'Esc', Minus: '-', Equal: '=', Backspace: 'Backspace', Tab: 'Tab',
+  BracketLeft: '[', BracketRight: ']', Enter: 'Enter', ControlLeft: 'LCtrl',
+  Semicolon: ';', Quote: "'", Backquote: '`', ShiftLeft: 'LShift', Backslash: '\\',
+  Comma: ',', Period: '.', Slash: '/', ShiftRight: 'RShift', NumpadMultiply: 'Num*',
+  AltLeft: 'LAlt', Space: 'Space', CapsLock: 'Caps', NumLock: 'NumLk', ScrollLock: 'ScrLk',
+  NumpadSubtract: 'Num-', NumpadAdd: 'Num+', NumpadDecimal: 'Num.', NumpadEnter: 'NumEnter',
+  NumpadDivide: 'Num/', ControlRight: 'RCtrl', AltRight: 'RAlt',
+  Home: 'Home', End: 'End', PageUp: 'PgUp', PageDown: 'PgDn', Insert: 'Ins', Delete: 'Del',
+  ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→',
+  MetaLeft: 'LWin', MetaRight: 'RWin', ContextMenu: 'Menu',
+};
+
+export function keyLabel(code) {
+  if (LABELS[code]) return LABELS[code];
+  let m;
+  if ((m = /^Key([A-Z])$/.exec(code))) return m[1];
+  if ((m = /^Digit(\d)$/.exec(code))) return m[1];
+  if ((m = /^Numpad(\d)$/.exec(code))) return 'Num' + m[1];
+  if (/^F\d{1,2}$/.test(code)) return code;
+  return code;
+}
+
+// 역방향: (scancode, e0) → 표시 이름
+const REVERSE = {};
+for (const [code, [scan, e0]] of Object.entries(KEYS)) {
+  REVERSE[`${scan}:${e0 ? 1 : 0}`] = keyLabel(code);
+}
+
+/** code → {scan, e0} (없으면 null) */
+export function scanInfo(code) {
+  const v = KEYS[code];
+  return v ? { scan: v[0], e0: !!v[1] } : null;
+}
+
+/** KeyboardEvent {code, state} → 키 이름만(방향 제외) */
+export function keyName(ev) {
+  const e0 = (ev.state & 0x02) ? 1 : 0;
+  return REVERSE[`${ev.code}:${e0}`] || `sc${ev.code.toString(16)}`;
+}
+
+/** KeyboardEvent {code, state} → 표시 이름(방향 포함) */
+export function labelFromKbEvent(ev) {
+  const dir = (ev.state & 0x01) ? '↑떼기' : '↓누름';
+  return `${keyName(ev)} ${dir}`;
+}
+
+/** 브라우저 keydown → 키보드 이벤트 객체 만들기. press=true면 [down,up] 두 개 반환 */
+export function kbEventsFromKey(code, mode /* 'down'|'up'|'press' */) {
+  const info = scanInfo(code);
+  if (!info) return [];
+  const base = info.e0 ? 0x02 : 0x00;
+  const down = { '$type': 'keyboard', code: info.scan, state: base };
+  const up = { '$type': 'keyboard', code: info.scan, state: base | 0x01 };
+  if (mode === 'down') return [down];
+  if (mode === 'up') return [up];
+  return [down, up];
+}
+
+// ---------- 마우스 ----------
+export const MOUSE = {
+  LeftDown: 0x001, LeftUp: 0x002, RightDown: 0x004, RightUp: 0x008,
+  MidDown: 0x010, MidUp: 0x020, ScrollV: 0x400,
+  MoveRelative: 0x00, MoveAbsolute: 0x01,
+};
+
+export function mouseButtonEvent(button /* 'left'|'right'|'middle' */, down) {
+  const map = {
+    left: down ? MOUSE.LeftDown : MOUSE.LeftUp,
+    right: down ? MOUSE.RightDown : MOUSE.RightUp,
+    middle: down ? MOUSE.MidDown : MOUSE.MidUp,
+  };
+  return { '$type': 'mouse', buttonState: map[button] || 0, flags: 0, rolling: 0, x: 0, y: 0 };
+}
+
+export function mouseMoveEvent(dx, dy, absolute) {
+  return {
+    '$type': 'mouse', buttonState: 0, flags: absolute ? MOUSE.MoveAbsolute : MOUSE.MoveRelative,
+    rolling: 0, x: dx | 0, y: dy | 0,
+  };
+}
+
+export function mouseWheelEvent(amount) {
+  return { '$type': 'mouse', buttonState: MOUSE.ScrollV, flags: 0, rolling: amount | 0, x: 0, y: 0 };
+}
+
+export function mouseLabel(ev) {
+  if ((ev.buttonState & MOUSE.ScrollV) || ev.rolling) return `휠 ${ev.rolling}`;
+  const btns = [
+    [MOUSE.LeftDown, 'L↓'], [MOUSE.LeftUp, 'L↑'], [MOUSE.RightDown, 'R↓'],
+    [MOUSE.RightUp, 'R↑'], [MOUSE.MidDown, 'M↓'], [MOUSE.MidUp, 'M↑'],
+  ];
+  for (const [bit, name] of btns) if (ev.buttonState & bit) return `클릭 ${name}`;
+  const abs = (ev.flags & MOUSE.MoveAbsolute) ? '절대' : '상대';
+  return `이동 ${abs}(${ev.x},${ev.y})`;
+}
+
+// ---------- 게임패드 (Core GamepadControl 과 일치) ----------
+export const GAMEPAD_BUTTONS = ['A', 'B', 'X', 'Y', 'LeftShoulder', 'RightShoulder',
+  'Back', 'Start', 'Guide', 'LeftThumb', 'RightThumb', 'DpadUp', 'DpadDown', 'DpadLeft', 'DpadRight'];
+export const GAMEPAD_AXES = ['LeftStickX', 'LeftStickY', 'RightStickX', 'RightStickY'];
+export const GAMEPAD_TRIGGERS = ['LeftTrigger', 'RightTrigger'];
+export const GAMEPAD_CONTROLS = [...GAMEPAD_BUTTONS, ...GAMEPAD_AXES, ...GAMEPAD_TRIGGERS];
+
+export function gamepadKind(control) {
+  if (GAMEPAD_AXES.includes(control)) return 'axis';
+  if (GAMEPAD_TRIGGERS.includes(control)) return 'trigger';
+  return 'button';
+}
+
+export function gamepadEvent(control, value) {
+  return { '$type': 'gamepad', control, value: value | 0 };
+}
+
+// ---------- 공통 요약 ----------
+export function summarizeEvent(ev) {
+  switch (ev['$type']) {
+    case 'keyboard': return labelFromKbEvent(ev);
+    case 'mouse': return mouseLabel(ev);
+    case 'gamepad': return `패드 ${ev.control}=${ev.value}`;
+    case 'text': return `텍스트 "${ev.text}"`;
+    case 'delay': return '대기(Wait)';
+    default: return ev['$type'] || '?';
+  }
+}
+
+export const TYPE_ICON = {
+  keyboard: '⌨', mouse: '🖱', gamepad: '🎮', text: '🔤', delay: '⏱',
+};

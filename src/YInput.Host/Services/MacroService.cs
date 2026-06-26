@@ -89,7 +89,7 @@ public sealed class MacroService
         _hub.Broadcast("log", new { level, message, time = DateTime.Now.ToString("HH:mm:ss") });
 
     // ---------- 녹화 ----------
-    public void StartRecording()
+    public void StartRecording(RecordOptions options)
     {
         lock (_gate)
         {
@@ -97,7 +97,7 @@ public sealed class MacroService
                 throw new InvalidOperationException("이미 녹화/재생 중입니다.");
             if (!_backend.InterceptionAvailable)
                 throw new InvalidOperationException("Interception 드라이버가 준비되지 않았습니다(설치/재부팅 확인).");
-            _recorder.Start();
+            _recorder.Start(options);
             _state = AppState.Recording;
         }
         Log("info", "녹화를 시작했습니다. 입력을 기록합니다…");

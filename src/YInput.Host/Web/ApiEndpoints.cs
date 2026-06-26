@@ -1,6 +1,8 @@
 using System.Net.WebSockets;
+using System.Text.Json;
 using YInput.Core.Models;
 using YInput.Core.Persistence;
+using YInput.Engine;
 using YInput.Host.Services;
 using YInput.Input;
 
@@ -68,10 +70,11 @@ public static class ApiEndpoints
         }));
 
         // ---- 녹화 ----
-        app.MapPost("/api/record/start", () => Guard(() =>
+        app.MapPost("/api/record/start", (HttpRequest req) => Guard(async () =>
         {
-            service.StartRecording();
-            return Task.FromResult(Results.Ok(new { ok = true }));
+            var options = await ReadRecordOptions(req);
+            service.StartRecording(options);
+            return Results.Ok(new { ok = true });
         }));
 
         app.MapPost("/api/record/stop", (StopRecordingBody? body) => Guard(() =>
@@ -158,6 +161,15 @@ public static class ApiEndpoints
         return MacroStore.Deserialize(json);
     }
 
+    private static async Task<RecordOptions> ReadRecordOptions(HttpRequest req)
+    {
+        using var reader = new StreamReader(req.Body);
+        var json = await reader.ReadToEndAsync();
+        if (string.IsNullOrWhiteSpace(json)) return RecordOptions.Default;
+        var body = JsonSerializer.Deserialize<RecordStartBody>(json, MacroStore.Options) ?? new RecordStartBody();
+        return body.ToOptions();
+    }
+
     /// <summary>핸들러 예외를 적절한 HTTP 응답으로 변환.</summary>
     private static async Task<IResult> Guard(Func<Task<IResult>> action)
     {
@@ -171,4 +183,13 @@ public static class ApiEndpoints
 
     private sealed record StopRecordingBody(string? Name);
     private sealed record GamepadSendBody(string Control, int Value);
+    private sealed record RecordStartBody(
+        bool Keyboard = true,
+        bool MouseButtons = true,
+        bool MouseMove = false,
+        bool MouseWheel = true,
+        double? FixedDelayMs = null)
+    {
+        public RecordOptions ToOptions() => new(Keyboard, MouseButtons, MouseMove, MouseWheel, FixedDelayMs);
+    }
 }
