@@ -26,7 +26,8 @@ export function createEditor({ log, onSaved, getStatus }) {
   let editing = null;
   let selected = new Set();
   let lastIdx = -1;
-  let dragSrc = -1;
+  let dragSrc = -1;   // 기존 스텝 재정렬 중인 인덱스(-1=없음)
+  let dragType = null; // 팔레트에서 새로 끌어오는 동작 타입
 
   function blank() {
     return { id: '', name: '새 매크로', loopCount: 1, speedMultiplier: 1.0, randomizeDelayPercent: 0, trigger: null, steps: [] };
@@ -76,10 +77,59 @@ export function createEditor({ log, onSaved, getStatus }) {
   function renderSteps() {
     const wrap = $('steps');
     wrap.innerHTML = '';
-    $('grid-empty').hidden = editing.steps.length > 0;
-    editing.steps.forEach((step, i) => wrap.appendChild(buildRow(step, i)));
+    if (!editing.steps.length) {
+      const empty = document.createElement('div');
+      empty.className = 'steps-empty';
+      empty.textContent = '스텝이 없습니다 — 왼쪽 “동작”을 끌어다 놓거나 클릭해 추가하세요.';
+      wrap.appendChild(empty);
+    } else {
+      editing.steps.forEach((step, i) => wrap.appendChild(buildRow(step, i)));
+      renderPairLines();
+    }
     applySel();
     updateStats();
+  }
+
+  // 키 Down↔Up 같은 키끼리 스택 매칭 → 좌측 거터에 한 세트 연결선
+  function renderPairLines() {
+    const gutters = [...$('steps').querySelectorAll('.step .step-pair')];
+    const stack = [], pairs = [];
+    editing.steps.forEach((s, i) => {
+      const ev = s.event;
+      if (ev['$type'] !== 'keyboard') return;
+      if ((ev.state & 1) === 1) { // Up → 가장 가까운 같은 키 Down과 짝
+        for (let k = stack.length - 1; k >= 0; k--) {
+          if (stack[k].code === ev.code) { pairs.push({ down: stack[k].i, up: i }); stack.splice(k, 1); break; }
+        }
+      } else stack.push({ code: ev.code, i });
+    });
+    // 겹치는 짝은 레인 분리(최대 3레인)
+    pairs.sort((a, b) => a.down - b.down);
+    const laneEnds = [];
+    pairs.forEach((p) => {
+      let lane = laneEnds.findIndex((end) => p.down > end);
+      if (lane === -1) { lane = laneEnds.length; laneEnds.push(p.up); } else laneEnds[lane] = p.up;
+      p.lane = Math.min(lane, 2);
+    });
+    const COLORS = ['#6b8cff', '#34d399', '#c084fc', '#f0a93b', '#f472b6'];
+    pairs.forEach((p, pi) => {
+      const color = COLORS[pi % COLORS.length];
+      const x = 3 + p.lane * 5;
+      for (let i = p.down; i <= p.up; i++) {
+        const g = gutters[i]; if (!g) continue;
+        const seg = document.createElement('div');
+        seg.className = 'pair-seg'; seg.style.left = x + 'px'; seg.style.background = color;
+        if (i === p.down) { seg.style.top = '50%'; seg.style.bottom = '-8px'; }
+        else if (i === p.up) { seg.style.top = '-8px'; seg.style.bottom = '50%'; }
+        else { seg.style.top = '-8px'; seg.style.bottom = '-8px'; }
+        g.appendChild(seg);
+        if (i === p.down || i === p.up) {
+          const node = document.createElement('div');
+          node.className = 'pair-node'; node.style.left = (x + 1) + 'px'; node.style.background = color;
+          g.appendChild(node);
+        }
+      }
+    });
   }
 
   function buildRow(step, i) {
@@ -88,10 +138,13 @@ export function createEditor({ log, onSaved, getStatus }) {
     row.className = 'step';
     row.dataset.i = i;
 
+    // 한 세트 연결선 거터(렌더 후 renderPairLines가 채움)
+    const pairCell = document.createElement('span'); pairCell.className = 'step-pair'; row.appendChild(pairCell);
+
     // 드래그 핸들
     const drag = document.createElement('span');
     drag.className = 'step-drag'; drag.textContent = '⠿'; drag.draggable = true; drag.title = '드래그로 이동';
-    drag.addEventListener('dragstart', (e) => { dragSrc = i; row.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
+    drag.addEventListener('dragstart', (e) => { dragSrc = i; dragType = null; row.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'move:' + i); });
     drag.addEventListener('dragend', () => { dragSrc = -1; row.classList.remove('dragging'); });
     row.appendChild(drag);
 
@@ -133,7 +186,8 @@ export function createEditor({ log, onSaved, getStatus }) {
     row.addEventListener('dragover', (e) => { e.preventDefault(); row.classList.add('dragover'); });
     row.addEventListener('dragleave', () => row.classList.remove('dragover'));
     row.addEventListener('drop', (e) => {
-      e.preventDefault(); row.classList.remove('dragover');
+      e.preventDefault(); e.stopPropagation(); row.classList.remove('dragover');
+      if (dragType) { insertTypeAt(dragType, i); dragType = null; return; } // 팔레트 → 이 행 위치에 삽입
       if (dragSrc < 0 || dragSrc === i) return;
       const [moved] = editing.steps.splice(dragSrc, 1);
       const dst = dragSrc < i ? i - 1 : i;
@@ -274,12 +328,15 @@ export function createEditor({ log, onSaved, getStatus }) {
       default: return [];
     }
   }
-  function insert(type) {
-    const at = selected.size ? Math.max(...selIdxs()) + 1 : editing.steps.length;
+  function insertTypeAt(type, at) {
     const made = makeSteps(type);
+    if (!made.length) return;
     editing.steps.splice(at, 0, ...made);
     selected = new Set(made.map((_, k) => at + k)); lastIdx = at;
     renderSteps();
+  }
+  function insert(type) {
+    insertTypeAt(type, selected.size ? Math.max(...selIdxs()) + 1 : editing.steps.length);
   }
 
   // ---------- 일괄 작업 ----------
@@ -365,7 +422,22 @@ export function createEditor({ log, onSaved, getStatus }) {
   $('btn-save').onclick = save;
   $('btn-cancel').onclick = close;
   $('btn-play').onclick = play;
-  $('btn-insert').onclick = () => insert($('insert-type').value);
+  // 동작 팔레트: 클릭=추가, 드래그=원하는 위치(행/끝)에 드롭
+  document.querySelectorAll('#palette .pal-item').forEach((el) => {
+    const type = el.dataset.type;
+    el.onclick = () => insert(type);
+    el.addEventListener('dragstart', (e) => { dragType = type; dragSrc = -1; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', 'add:' + type); el.classList.add('dragging'); });
+    el.addEventListener('dragend', () => { dragType = null; el.classList.remove('dragging'); });
+  });
+  // 행이 아닌 빈 영역에 드롭 → 맨 뒤에 추가/이동
+  const stepsEl = $('steps');
+  stepsEl.addEventListener('dragover', (e) => { if (dragType || dragSrc >= 0) e.preventDefault(); });
+  stepsEl.addEventListener('drop', (e) => {
+    if (e.target.closest('.step')) return; // 행에서 처리됨
+    e.preventDefault();
+    if (dragType) { insertTypeAt(dragType, editing.steps.length); dragType = null; }
+    else if (dragSrc >= 0) { const [m] = editing.steps.splice(dragSrc, 1); editing.steps.push(m); dragSrc = -1; selectOnly(editing.steps.length - 1); renderSteps(); }
+  });
   $('btn-selall').onclick = () => { selected = new Set(editing.steps.map((_, i) => i)); applySel(); };
   $('btn-dup').onclick = duplicateSel;
   $('btn-del').onclick = deleteSel;
