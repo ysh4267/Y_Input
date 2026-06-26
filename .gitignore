@@ -3,6 +3,8 @@ bin/
 obj/
 dist/
 dist-single/
+publish-single/
+Build/
 *.zip
 
 # Visual Studio / Rider
