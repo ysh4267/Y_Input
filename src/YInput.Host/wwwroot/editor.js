@@ -5,23 +5,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-// 트리거 핫키(Win32 VK) — 스캔코드와 별개
-function eventToVk(e) {
-  const k = e.key;
-  if (/^F([1-9]|1[0-2])$/.test(k)) return 0x6F + parseInt(k.slice(1), 10);
-  if (/^[a-zA-Z]$/.test(k)) return k.toUpperCase().charCodeAt(0);
-  if (/^[0-9]$/.test(k)) return k.charCodeAt(0);
-  if (k === ' ') return 0x20;
-  if (k === 'Enter') return 0x0D;
-  if (k === 'Escape') return 0x1B;
-  return null;
-}
-function vkName(vk) {
-  if (vk >= 0x70 && vk <= 0x7B) return 'F' + (vk - 0x6F);
-  if ((vk >= 0x30 && vk <= 0x39) || (vk >= 0x41 && vk <= 0x5A)) return String.fromCharCode(vk);
-  if (vk === 0x20) return 'Space'; if (vk === 0x0D) return 'Enter'; if (vk === 0x1B) return 'Esc';
-  return 'VK_0x' + vk.toString(16);
-}
+// 트리거 핫키 VK 매핑/표시는 keymap.js(km.eventToVk / km.vkLabel) — IME 안전(e.code 기반)
 function mouseTriggerName(m) {
   return ({ Left: 'Mouse좌', Right: 'Mouse우', Middle: 'Mouse휠', X1: 'Mouse X1(엄지뒤로)', X2: 'Mouse X2(엄지앞으로)' })[m] || ('Mouse ' + m);
 }
@@ -29,7 +13,7 @@ function hotkeyToString(t) {
   if (!t || (!t.virtualKey && !t.mouse && !t.gamepad)) return '(없음)';
   const p = []; if (t.ctrl) p.push('Ctrl'); if (t.alt) p.push('Alt');
   if (t.shift) p.push('Shift'); if (t.win) p.push('Win');
-  p.push(t.gamepad ? ('Pad ' + t.gamepad) : t.mouse ? mouseTriggerName(t.mouse) : vkName(t.virtualKey));
+  p.push(t.gamepad ? ('Pad ' + t.gamepad) : t.mouse ? mouseTriggerName(t.mouse) : km.vkLabel(t.virtualKey));
   return p.join('+');
 }
 
@@ -339,7 +323,7 @@ export function createEditor({ log, onSaved, getStatus }) {
   hk.addEventListener('blur', () => { capHk = false; hk.value = hotkeyToString(editing && editing.trigger); });
   hk.addEventListener('keydown', (e) => {
     if (!capHk) return; e.preventDefault();
-    const vk = eventToVk(e); if (vk == null) return;
+    const vk = km.eventToVk(e); if (vk == null) return; // 모디파이어 단독/미지원 키는 대기 유지
     editing.trigger = { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: vk, mouse: null, gamepad: null };
     hk.value = hotkeyToString(editing.trigger); hk.blur();
   });

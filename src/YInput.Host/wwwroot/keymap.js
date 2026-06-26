@@ -88,6 +88,76 @@ export function kbEventsFromKey(code, mode /* 'down'|'up'|'press' */) {
   return [down, up];
 }
 
+// ---------- 트리거 핫키: KeyboardEvent.code → Win32 Virtual-Key ----------
+// 한글 IME가 켜져 있으면 e.key가 'Process'(keyCode 229)로 와서 글자/숫자 키를 못 잡는다.
+// 물리 키 식별자인 e.code는 IME·키보드 레이아웃과 무관하므로 이걸로 매핑한다.
+export const CODE_TO_VK = {
+  // 글자 A–Z (VK 0x41–0x5A)
+  KeyA: 0x41, KeyB: 0x42, KeyC: 0x43, KeyD: 0x44, KeyE: 0x45, KeyF: 0x46, KeyG: 0x47,
+  KeyH: 0x48, KeyI: 0x49, KeyJ: 0x4A, KeyK: 0x4B, KeyL: 0x4C, KeyM: 0x4D, KeyN: 0x4E,
+  KeyO: 0x4F, KeyP: 0x50, KeyQ: 0x51, KeyR: 0x52, KeyS: 0x53, KeyT: 0x54, KeyU: 0x55,
+  KeyV: 0x56, KeyW: 0x57, KeyX: 0x58, KeyY: 0x59, KeyZ: 0x5A,
+  // 숫자 행 0–9 (VK 0x30–0x39)
+  Digit0: 0x30, Digit1: 0x31, Digit2: 0x32, Digit3: 0x33, Digit4: 0x34,
+  Digit5: 0x35, Digit6: 0x36, Digit7: 0x37, Digit8: 0x38, Digit9: 0x39,
+  // 기능키 F1–F12 (VK 0x70–0x7B)
+  F1: 0x70, F2: 0x71, F3: 0x72, F4: 0x73, F5: 0x74, F6: 0x75,
+  F7: 0x76, F8: 0x77, F9: 0x78, F10: 0x79, F11: 0x7A, F12: 0x7B,
+  // 편집/이동
+  Space: 0x20, Enter: 0x0D, Escape: 0x1B, Tab: 0x09, Backspace: 0x08,
+  ArrowLeft: 0x25, ArrowUp: 0x26, ArrowRight: 0x27, ArrowDown: 0x28,
+  Home: 0x24, End: 0x23, PageUp: 0x21, PageDown: 0x22, Insert: 0x2D, Delete: 0x2E,
+  // 넘패드
+  Numpad0: 0x60, Numpad1: 0x61, Numpad2: 0x62, Numpad3: 0x63, Numpad4: 0x64,
+  Numpad5: 0x65, Numpad6: 0x66, Numpad7: 0x67, Numpad8: 0x68, Numpad9: 0x69,
+  NumpadMultiply: 0x6A, NumpadAdd: 0x6B, NumpadSubtract: 0x6D,
+  NumpadDecimal: 0x6E, NumpadDivide: 0x6F, NumpadEnter: 0x0D,
+  // OEM(기호)
+  Semicolon: 0xBA, Equal: 0xBB, Comma: 0xBC, Minus: 0xBD, Period: 0xBE, Slash: 0xBF,
+  Backquote: 0xC0, BracketLeft: 0xDB, Backslash: 0xDC, BracketRight: 0xDD, Quote: 0xDE,
+  // 토글/기타
+  CapsLock: 0x14, NumLock: 0x90, ScrollLock: 0x91, Pause: 0x13, PrintScreen: 0x2C,
+};
+
+// 단독으로는 트리거가 될 수 없는 순수 모디파이어(누르면 무시 → 조합키의 베이스로만 사용)
+const MODIFIER_CODES = new Set([
+  'ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight',
+  'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight',
+]);
+
+const VK_LABELS = {
+  0x20: 'Space', 0x0D: 'Enter', 0x1B: 'Esc', 0x09: 'Tab', 0x08: 'Backspace',
+  0x25: '←', 0x26: '↑', 0x27: '→', 0x28: '↓',
+  0x24: 'Home', 0x23: 'End', 0x21: 'PgUp', 0x22: 'PgDn', 0x2D: 'Ins', 0x2E: 'Del',
+  0x6A: 'Num*', 0x6B: 'Num+', 0x6D: 'Num-', 0x6E: 'Num.', 0x6F: 'Num/',
+  0xBA: ';', 0xBB: '=', 0xBC: ',', 0xBD: '-', 0xBE: '.', 0xBF: '/',
+  0xC0: '`', 0xDB: '[', 0xDC: '\\', 0xDD: ']', 0xDE: "'",
+  0x14: 'Caps', 0x90: 'NumLk', 0x91: 'ScrLk', 0x13: 'Pause', 0x2C: 'PrtSc',
+};
+
+/** KeyboardEvent → Win32 VK. IME 무관(e.code 우선). 모디파이어 단독/미지원 키는 null. */
+export function eventToVk(e) {
+  if (MODIFIER_CODES.has(e.code)) return null;
+  const vk = CODE_TO_VK[e.code];
+  if (vk) return vk;
+  // 폴백: e.code가 비어있는 구형 환경 — IME가 아닐 때만 의미 있음
+  const k = e.key;
+  if (!k || k === 'Process' || k === 'Unidentified') return null;
+  if (/^F([1-9]|1[0-2])$/.test(k)) return 0x6F + parseInt(k.slice(1), 10);
+  if (/^[a-zA-Z]$/.test(k)) return k.toUpperCase().charCodeAt(0);
+  if (/^[0-9]$/.test(k)) return k.charCodeAt(0);
+  return null;
+}
+
+/** Win32 VK → 표시 이름 */
+export function vkLabel(vk) {
+  if (VK_LABELS[vk]) return VK_LABELS[vk];
+  if (vk >= 0x70 && vk <= 0x7B) return 'F' + (vk - 0x6F);
+  if (vk >= 0x60 && vk <= 0x69) return 'Num' + (vk - 0x60);
+  if ((vk >= 0x30 && vk <= 0x39) || (vk >= 0x41 && vk <= 0x5A)) return String.fromCharCode(vk);
+  return 'VK_0x' + vk.toString(16).toUpperCase();
+}
+
 // ---------- 마우스 ----------
 export const MOUSE = {
   LeftDown: 0x001, LeftUp: 0x002, RightDown: 0x004, RightUp: 0x008,

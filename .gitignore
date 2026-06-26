@@ -6,6 +6,7 @@ dist-single/
 publish-single/
 publish-exe/
 verify-exe/
+artifacts/
 Build/
 *.zip
 app.noadmin.manifest
