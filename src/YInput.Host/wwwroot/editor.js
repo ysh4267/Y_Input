@@ -22,10 +22,14 @@ function vkName(vk) {
   if (vk === 0x20) return 'Space'; if (vk === 0x0D) return 'Enter'; if (vk === 0x1B) return 'Esc';
   return 'VK_0x' + vk.toString(16);
 }
+function mouseTriggerName(m) {
+  return ({ Left: 'Mouse좌', Right: 'Mouse우', Middle: 'Mouse휠', X1: 'Mouse X1(엄지뒤로)', X2: 'Mouse X2(엄지앞으로)' })[m] || ('Mouse ' + m);
+}
 function hotkeyToString(t) {
-  if (!t || !t.virtualKey) return '(없음)';
+  if (!t || (!t.virtualKey && !t.mouse)) return '(없음)';
   const p = []; if (t.ctrl) p.push('Ctrl'); if (t.alt) p.push('Alt');
-  if (t.shift) p.push('Shift'); if (t.win) p.push('Win'); p.push(vkName(t.virtualKey));
+  if (t.shift) p.push('Shift'); if (t.win) p.push('Win');
+  p.push(t.mouse ? mouseTriggerName(t.mouse) : vkName(t.virtualKey));
   return p.join('+');
 }
 
@@ -330,14 +334,28 @@ export function createEditor({ log, onSaved, getStatus }) {
   // 트리거 핫키 캡처
   let capHk = false;
   const hk = $('ed-hotkey');
-  hk.addEventListener('focus', () => { capHk = true; hk.value = '키 입력 대기…'; });
+  const MOUSE_BTN = { 0: 'Left', 1: 'Middle', 2: 'Right', 3: 'X1', 4: 'X2' };
+  hk.addEventListener('focus', () => { capHk = true; hk.value = '키 또는 마우스 버튼 입력 대기…'; });
   hk.addEventListener('blur', () => { capHk = false; hk.value = hotkeyToString(editing && editing.trigger); });
   hk.addEventListener('keydown', (e) => {
     if (!capHk) return; e.preventDefault();
     const vk = eventToVk(e); if (vk == null) return;
-    editing.trigger = { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: vk };
+    editing.trigger = { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: vk, mouse: null };
     hk.value = hotkeyToString(editing.trigger); hk.blur();
   });
+  // 마우스 버튼 트리거 캡처(엄지 사이드 버튼 X1/X2 포함). 포커스용 첫 클릭은 capHk=false라 무시됨.
+  hk.addEventListener('mousedown', (e) => {
+    if (!capHk) return;
+    const m = MOUSE_BTN[e.button];
+    if (!m) return;
+    e.preventDefault();
+    editing.trigger = { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: 0, mouse: m };
+    hk.value = hotkeyToString(editing.trigger);
+    setTimeout(() => hk.blur(), 0);
+  });
+  // 캡처 중 엄지 버튼의 뒤로/앞으로 탐색·우클릭 메뉴 차단
+  hk.addEventListener('contextmenu', (e) => { if (capHk) e.preventDefault(); });
+  hk.addEventListener('auxclick', (e) => { if (capHk) e.preventDefault(); });
   $('ed-hotkey-clear').onclick = () => { if (editing) editing.trigger = null; hk.value = '(없음)'; };
 
   return { open, close, isOpen, current, onStatus };

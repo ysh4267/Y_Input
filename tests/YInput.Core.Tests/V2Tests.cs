@@ -26,6 +26,31 @@ public class DelayEventTests
     }
 }
 
+public class MouseTriggerTests
+{
+    [Fact]
+    public void MouseHotkey_RoundTripsAndFormats()
+    {
+        var macro = new Macro { Name = "m", Trigger = new Hotkey { Mouse = MouseTriggerButton.X1 } };
+
+        var r = MacroStore.Deserialize(MacroStore.Serialize(macro));
+
+        Assert.NotNull(r.Trigger);
+        Assert.True(r.Trigger!.IsMouse);
+        Assert.False(r.Trigger.IsEmpty);
+        Assert.Equal(MouseTriggerButton.X1, r.Trigger.Mouse);
+        Assert.Contains("X1", r.Trigger.ToString());
+    }
+
+    [Fact]
+    public void KeyboardHotkey_NotMouse()
+    {
+        var hk = new Hotkey { VirtualKey = 0x77 };
+        Assert.False(hk.IsMouse);
+        Assert.False(hk.IsEmpty);
+    }
+}
+
 public class MouseClassifyTests
 {
     [Fact]

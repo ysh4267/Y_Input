@@ -1,7 +1,18 @@
 namespace YInput.Core.Models;
 
+/// <summary>트리거로 쓸 수 있는 마우스 버튼(엄지 사이드 버튼 X1/X2 포함).</summary>
+public enum MouseTriggerButton
+{
+    Left,
+    Right,
+    Middle,
+    X1, // 엄지 뒤로 버튼
+    X2, // 엄지 앞으로 버튼
+}
+
 /// <summary>
-/// 전역 핫키 정의. Win32 RegisterHotKey 용 수정자 + 가상 키.
+/// 전역 핫키 정의. 키보드(Win32 RegisterHotKey) 또는 마우스 버튼(WH_MOUSE_LL) 트리거.
+/// <see cref="Mouse"/>가 설정되면 마우스 트리거이고, 그렇지 않으면 <see cref="VirtualKey"/> 키보드 트리거다.
 /// </summary>
 public sealed class Hotkey
 {
@@ -10,12 +21,16 @@ public sealed class Hotkey
     public bool Shift { get; set; }
     public bool Win { get; set; }
 
-    /// <summary>Win32 Virtual-Key 코드(VK_*). 예: F8 = 0x77.</summary>
+    /// <summary>Win32 Virtual-Key 코드(VK_*). 예: F8 = 0x77. 마우스 트리거면 무시.</summary>
     public uint VirtualKey { get; set; }
 
-    public bool IsEmpty => VirtualKey == 0;
+    /// <summary>설정 시 마우스 버튼 트리거. null이면 키보드 트리거.</summary>
+    public MouseTriggerButton? Mouse { get; set; }
 
-    /// <summary>"Ctrl+Alt+F8" 형태의 표시 문자열.</summary>
+    public bool IsMouse => Mouse is not null;
+    public bool IsEmpty => Mouse is null && VirtualKey == 0;
+
+    /// <summary>"Ctrl+Alt+F8" / "Mouse X1" 형태의 표시 문자열.</summary>
     public override string ToString()
     {
         if (IsEmpty) return "(none)";
@@ -24,9 +39,19 @@ public sealed class Hotkey
         if (Alt) parts.Add("Alt");
         if (Shift) parts.Add("Shift");
         if (Win) parts.Add("Win");
-        parts.Add(KeyName.FromVirtualKey(VirtualKey));
+        parts.Add(IsMouse ? MouseName(Mouse!.Value) : KeyName.FromVirtualKey(VirtualKey));
         return string.Join("+", parts);
     }
+
+    public static string MouseName(MouseTriggerButton b) => b switch
+    {
+        MouseTriggerButton.Left => "Mouse좌",
+        MouseTriggerButton.Right => "Mouse우",
+        MouseTriggerButton.Middle => "Mouse휠",
+        MouseTriggerButton.X1 => "Mouse X1(엄지뒤로)",
+        MouseTriggerButton.X2 => "Mouse X2(엄지앞으로)",
+        _ => "Mouse?",
+    };
 }
 
 /// <summary>가상 키 코드 → 표시 이름(요약용 최소 매핑).</summary>

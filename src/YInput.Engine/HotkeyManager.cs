@@ -19,7 +19,16 @@ public sealed class HotkeyManager : IDisposable
 
     private const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_SHIFT = 0x4, MOD_WIN = 0x8, MOD_NOREPEAT = 0x4000;
 
+    // 저수준 마우스 훅(WH_MOUSE_LL) — RegisterHotKey가 지원하지 않는 마우스 버튼 트리거용
+    private const int WH_MOUSE_LL = 14;
+    private const uint WM_LBUTTONDOWN = 0x0201, WM_RBUTTONDOWN = 0x0204, WM_MBUTTONDOWN = 0x0207, WM_XBUTTONDOWN = 0x020B;
+    private const uint LLMHF_INJECTED = 0x00000001;
+    private const int VK_SHIFT = 0x10, VK_CONTROL = 0x11, VK_MENU = 0x12, VK_LWIN = 0x5B, VK_RWIN = 0x5C;
+
     private readonly Dictionary<int, Action> _callbacks = new();
+    private readonly Dictionary<int, (MouseTriggerButton button, Hotkey hk, Action cb)> _mouseTriggers = new();
+    private LowLevelMouseProc? _mouseProc; // GC 방지
+    private IntPtr _mouseHook;
     private readonly ConcurrentQueue<Action> _queue = new();
     private readonly ManualResetEventSlim _ready = new(false);
     private readonly string _className = "YInputHotkeyWnd_" + Guid.NewGuid().ToString("N");
@@ -64,12 +73,46 @@ public sealed class HotkeyManager : IDisposable
         });
     }
 
+    /// <summary>마우스 버튼 트리거를 등록한다(WH_MOUSE_LL). 첫 등록 시 훅을 설치한다.</summary>
+    public int RegisterMouse(Hotkey hk, Action callback)
+    {
+        if (hk.Mouse is null) throw new ArgumentException("마우스 트리거가 아닙니다.");
+        return InvokeOnLoop(() =>
+        {
+            EnsureMouseHook();
+            int id = _nextId++;
+            _mouseTriggers[id] = (hk.Mouse.Value, hk, callback);
+            return id;
+        });
+    }
+
+    private void EnsureMouseHook()
+    {
+        if (_mouseHook != IntPtr.Zero) return;
+        _mouseProc = MouseHookProc;
+        _mouseHook = SetWindowsHookEx(WH_MOUSE_LL, _mouseProc, GetModuleHandle(null), 0);
+        if (_mouseHook == IntPtr.Zero)
+            throw new InvalidOperationException($"마우스 훅 설치 실패 (Win32 0x{Marshal.GetLastWin32Error():X}).");
+    }
+
+    private void RemoveMouseHookIfIdle()
+    {
+        if (_mouseTriggers.Count == 0 && _mouseHook != IntPtr.Zero)
+        {
+            UnhookWindowsHookEx(_mouseHook);
+            _mouseHook = IntPtr.Zero;
+            _mouseProc = null;
+        }
+    }
+
     public void Unregister(int id)
     {
         InvokeOnLoop<object?>(() =>
         {
             if (_callbacks.Remove(id))
                 UnregisterHotKey(_hwnd, id);
+            if (_mouseTriggers.Remove(id))
+                RemoveMouseHookIfIdle();
             return null;
         });
     }
@@ -81,6 +124,8 @@ public sealed class HotkeyManager : IDisposable
             foreach (var id in _callbacks.Keys.ToList())
                 UnregisterHotKey(_hwnd, id);
             _callbacks.Clear();
+            _mouseTriggers.Clear();
+            RemoveMouseHookIfIdle();
             return null;
         });
     }
@@ -148,6 +193,47 @@ public sealed class HotkeyManager : IDisposable
         return DefWindowProc(hWnd, msg, wParam, lParam);
     }
 
+    private IntPtr MouseHookProc(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0 && _mouseTriggers.Count > 0)
+        {
+            uint msg = (uint)wParam.ToInt32();
+            var data = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+            if ((data.flags & LLMHF_INJECTED) == 0) // 주입된 입력(매크로 재생 등)은 무시
+            {
+                MouseTriggerButton? btn = msg switch
+                {
+                    WM_LBUTTONDOWN => MouseTriggerButton.Left,
+                    WM_RBUTTONDOWN => MouseTriggerButton.Right,
+                    WM_MBUTTONDOWN => MouseTriggerButton.Middle,
+                    WM_XBUTTONDOWN => ((data.mouseData >> 16) & 0xFFFF) == 1 ? MouseTriggerButton.X1 : MouseTriggerButton.X2,
+                    _ => (MouseTriggerButton?)null,
+                };
+                if (btn is not null)
+                {
+                    foreach (var (button, hk, cb) in _mouseTriggers.Values.ToList())
+                    {
+                        if (button == btn.Value && ModifiersHeld(hk))
+                        {
+                            try { cb(); } catch { /* 콜백 예외 무시 */ }
+                        }
+                    }
+                }
+            }
+        }
+        return CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam); // 통과(차단 안 함)
+    }
+
+    private static bool ModifiersHeld(Hotkey hk)
+    {
+        static bool Down(int vk) => (GetAsyncKeyState(vk) & 0x8000) != 0;
+        if (hk.Ctrl && !Down(VK_CONTROL)) return false;
+        if (hk.Alt && !Down(VK_MENU)) return false;
+        if (hk.Shift && !Down(VK_SHIFT)) return false;
+        if (hk.Win && !(Down(VK_LWIN) || Down(VK_RWIN))) return false;
+        return true;
+    }
+
     public void Dispose()
     {
         if (_hwnd != IntPtr.Zero)
@@ -162,6 +248,29 @@ public sealed class HotkeyManager : IDisposable
 
     // ---- Win32 ----
     private delegate IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int x; public int y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MSLLHOOKSTRUCT
+    {
+        public POINT pt;
+        public uint mouseData;
+        public uint flags;
+        public uint time;
+        public UIntPtr dwExtraInfo;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+    [DllImport("user32.dll")]
+    private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct WNDCLASSEX

@@ -192,8 +192,11 @@ public sealed class MacroService
             {
                 try
                 {
-                    int id = _hotkeys.Register(hk, () => OnHotkey(m.Id));
-                    _hotkeyToMacro[id] = m.Id;
+                    string macroId = m.Id;
+                    int id = hk.IsMouse
+                        ? _hotkeys.RegisterMouse(hk, () => OnHotkey(macroId))
+                        : _hotkeys.Register(hk, () => OnHotkey(macroId));
+                    _hotkeyToMacro[id] = macroId;
                 }
                 catch (Exception ex)
                 {
