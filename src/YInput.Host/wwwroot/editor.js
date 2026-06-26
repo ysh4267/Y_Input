@@ -57,7 +57,7 @@ export function createEditor({ log, onSaved, getStatus }) {
     onStatus(getStatus());
   }
 
-  function close() { editing = null; $('editor').hidden = true; $('empty-state').hidden = false; }
+  function close() { open(null); } // 닫기=현재 매크로 비우고 새 매크로 모드로
   function isOpen() { return editing !== null; }
   function current() { return editing; }
 

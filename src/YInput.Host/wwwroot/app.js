@@ -171,6 +171,7 @@ async function init() {
   connectWs();
   try { renderStatus(await api.status()); } catch (e) { log('error', e.message); }
   await loadMacros();
+  editor.open(null); // 기본: 새 매크로 추가 모드로 시작
   log('info', 'Y_Input UI 준비됨.');
 }
 
