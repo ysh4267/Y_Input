@@ -18,26 +18,34 @@ public sealed class MacroService
     private readonly Player _player;
     private readonly Recorder _recorder;
     private readonly HotkeyManager _hotkeys;
+    private readonly RawInputMonitor _rawInput;
     private readonly SocketHub _hub;
 
     private readonly object _gate = new();
     private readonly Dictionary<int, string> _hotkeyToMacro = new();
+    private readonly List<(string macroId, GamepadControl control)> _gamepadTriggers = new();
 
     private AppState _state = AppState.Idle;
     private string? _currentMacroId;
+    private volatile bool _listenActive;
+    private volatile bool _monitorActive;
 
     /// <summary>웹 UI 주소(상태에 포함).</summary>
     public string Url { get; set; } = "";
 
     public MacroService(InputBackend backend, MacroLibrary library, Player player,
-                        Recorder recorder, HotkeyManager hotkeys, SocketHub hub)
+                        Recorder recorder, HotkeyManager hotkeys, RawInputMonitor rawInput, SocketHub hub)
     {
         _backend = backend;
         _library = library;
         _player = player;
         _recorder = recorder;
         _hotkeys = hotkeys;
+        _rawInput = rawInput;
         _hub = hub;
+
+        _backend.GamepadInput += OnGamepadInput;
+        _rawInput.Detected += OnRawDetected;
 
         _player.Stopped += (_, _) =>
         {
@@ -71,6 +79,8 @@ public sealed class MacroService
             url = Url,
             state,
             currentMacroId = _currentMacroId,
+            listening = _listenActive,
+            monitoring = _monitorActive,
             driver = new { interception = ds.InterceptionInstalled, vigem = ds.ViGEmInstalled, admin = ds.IsAdministrator },
             backend = new
             {
@@ -79,6 +89,7 @@ public sealed class MacroService
                 mouseReady = _backend.MouseReady,
                 gamepadAvailable = _backend.GamepadAvailable,
                 gamepadConnected = _backend.GamepadConnected,
+                gamepadDevicePresent = _backend.GamepadDevicePresent,
             },
         };
     }
@@ -186,6 +197,7 @@ public sealed class MacroService
     {
         _hotkeys.UnregisterAll();
         _hotkeyToMacro.Clear();
+        lock (_gate) _gamepadTriggers.Clear();
         foreach (var m in _library.LoadAll())
         {
             if (m.Trigger is { IsEmpty: false } hk)
@@ -193,10 +205,17 @@ public sealed class MacroService
                 try
                 {
                     string macroId = m.Id;
-                    int id = hk.IsMouse
-                        ? _hotkeys.RegisterMouse(hk, () => OnHotkey(macroId))
-                        : _hotkeys.Register(hk, () => OnHotkey(macroId));
-                    _hotkeyToMacro[id] = macroId;
+                    if (hk.IsGamepad)
+                    {
+                        lock (_gate) _gamepadTriggers.Add((macroId, hk.Gamepad!.Value));
+                    }
+                    else
+                    {
+                        int id = hk.IsMouse
+                            ? _hotkeys.RegisterMouse(hk, () => OnHotkey(macroId))
+                            : _hotkeys.Register(hk, () => OnHotkey(macroId));
+                        _hotkeyToMacro[id] = macroId;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -204,6 +223,74 @@ public sealed class MacroService
                 }
             }
         }
+    }
+
+    // ---------- 입력 감지(게임패드 트리거 / 아무 입력 잡기 / 입력 모니터) ----------
+    private static bool IsPress(GamepadEvent e) => GamepadControls.KindOf(e.Control) switch
+    {
+        GamepadControlKind.Button => e.Value != 0,
+        GamepadControlKind.Trigger => e.Value >= 128,
+        _ => false, // 스틱 축은 트리거로 사용하지 않음
+    };
+
+    private void OnGamepadInput(object? sender, GamepadEvent e)
+    {
+        if (_monitorActive)
+            _hub.Broadcast("inputMonitor", new { source = "gamepad", label = $"{e.Control}={e.Value}", time = DateTime.Now.ToString("HH:mm:ss") });
+
+        if (_listenActive && IsPress(e))
+        {
+            if (TryConsumeListen())
+                _hub.Broadcast("inputDetected", new { source = "gamepad", bindable = true, label = $"Pad {e.Control}", trigger = new { gamepad = e.Control.ToString() } });
+            return;
+        }
+
+        if (IsPress(e))
+        {
+            List<string> hits;
+            lock (_gate) hits = _gamepadTriggers.Where(t => t.control == e.Control).Select(t => t.macroId).ToList();
+            foreach (var id in hits) OnHotkey(id);
+        }
+    }
+
+    private void OnRawDetected(object? sender, DetectedInput d)
+    {
+        if (_monitorActive)
+            _hub.Broadcast("inputMonitor", new { source = d.Kind.ToString().ToLowerInvariant(), label = d.Label, time = DateTime.Now.ToString("HH:mm:ss") });
+    }
+
+    /// <summary>게임패드 버튼을 트리거로 잡는 학습 모드 시작(다음 버튼 입력을 inputDetected로 전송).</summary>
+    public void StartListen()
+    {
+        _listenActive = true;
+        Log("info", "게임패드 버튼 입력 대기 중… 패드 버튼을 누르세요.");
+        BroadcastStatus();
+    }
+
+    public void StopListen()
+    {
+        _listenActive = false;
+        BroadcastStatus();
+    }
+
+    private bool TryConsumeListen()
+    {
+        lock (_gate)
+        {
+            if (!_listenActive) return false;
+            _listenActive = false;
+        }
+        BroadcastStatus();
+        return true;
+    }
+
+    /// <summary>입력 모니터 on/off — 켜면 키보드·마우스·게임패드·HID 입력을 인식해 스트림.</summary>
+    public void SetMonitor(bool on)
+    {
+        _monitorActive = on;
+        if (on) _rawInput.Enable(); else _rawInput.Disable();
+        Log("info", on ? "입력 모니터 켜짐 — 들어오는 모든 입력을 인식해 표시합니다." : "입력 모니터 꺼짐.");
+        BroadcastStatus();
     }
 
     private void OnHotkey(string macroId)

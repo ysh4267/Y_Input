@@ -76,6 +76,8 @@ body {
 .log .time { color: var(--muted); flex-shrink: 0; }
 .log .info { color: var(--text); } .log .warn { color: var(--warn); }
 .log .error { color: var(--rec); } .log .step { color: var(--accent2); }
+.log .monitor { color: #c9a3ff; }
+.btn.ghost.active { border-color: var(--accent); color: var(--accent); }
 .progress { margin-bottom: 8px; }
 .progress .bar { height: 6px; background: var(--card2); border-radius: 4px; overflow: hidden; }
 .progress .bar span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .05s linear; }

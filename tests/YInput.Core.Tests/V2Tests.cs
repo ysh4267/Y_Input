@@ -140,3 +140,51 @@ public class RecorderFilterTests
         Assert.Equal(50, macro.Steps[2].DelayBeforeMs);
     }
 }
+
+public class XInputDiffTests
+{
+    [Fact]
+    public void DetectsButtonPressAndRelease()
+    {
+        var none = new XGamepad();
+        var aDown = new XGamepad { Buttons = 0x1000 }; // A
+        Assert.Contains(XInputPoller.Diff(none, aDown), e => e.Control == GamepadControl.A && e.Value == 1);
+        Assert.Contains(XInputPoller.Diff(aDown, none), e => e.Control == GamepadControl.A && e.Value == 0);
+    }
+
+    [Fact]
+    public void IgnoresStickWithinDeadzone()
+    {
+        var a = new XGamepad { LX = 1000 };
+        var b = new XGamepad { LX = 2000 };
+        Assert.Empty(XInputPoller.Diff(a, b)); // 둘 다 데드존(8000) 내
+    }
+
+    [Fact]
+    public void DetectsStickBeyondDeadzone()
+    {
+        Assert.Contains(XInputPoller.Diff(new XGamepad(), new XGamepad { LX = 20000 }),
+            e => e.Control == GamepadControl.LeftStickX);
+    }
+
+    [Fact]
+    public void DetectsTriggerChange()
+    {
+        Assert.Contains(XInputPoller.Diff(new XGamepad { LeftTrigger = 0 }, new XGamepad { LeftTrigger = 200 }),
+            e => e.Control == GamepadControl.LeftTrigger && e.Value == 200);
+    }
+}
+
+public class GamepadTriggerTests
+{
+    [Fact]
+    public void GamepadHotkey_RoundTripsAndFormats()
+    {
+        var m = new Macro { Trigger = new Hotkey { Gamepad = GamepadControl.A } };
+        var r = MacroStore.Deserialize(MacroStore.Serialize(m));
+        Assert.True(r.Trigger!.IsGamepad);
+        Assert.False(r.Trigger.IsMouse);
+        Assert.Equal(GamepadControl.A, r.Trigger.Gamepad);
+        Assert.Contains("Pad A", r.Trigger.ToString());
+    }
+}

@@ -40,8 +40,9 @@ internal static class Program
         var player = new Player(backend);
         var recorder = new Recorder(backend);
         using var hotkeys = new HotkeyManager();
+        using var rawInput = new RawInputMonitor();
         var hub = new SocketHub();
-        var service = new MacroService(backend, library, player, recorder, hotkeys, hub);
+        var service = new MacroService(backend, library, player, recorder, hotkeys, rawInput, hub);
 
         // 로컬 웹서버 (127.0.0.1 전용)
         int port = FindFreePort(PreferredPort);

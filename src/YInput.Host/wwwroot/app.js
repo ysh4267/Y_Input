@@ -51,6 +51,8 @@ function renderStatus(s) {
   $('btn-pad-test').disabled = !b.gamepadConnected;
   $('btn-record').classList.toggle('active', s.state === 'recording');
   $('btn-record').textContent = s.state === 'recording' ? '■ 정지' : '● 녹화';
+  $('btn-monitor').classList.toggle('active', !!s.monitoring);
+  $('btn-monitor').textContent = s.monitoring ? '■ 모니터 끄기' : '입력 모니터';
 
   $('foot-url').textContent = s.url || '';
   editor.onStatus(s);
@@ -124,6 +126,8 @@ function connectWs() {
       case 'log': log(msg.data.level, msg.data.message, msg.data.time); break;
       case 'recordedStep': log('step', `+ ${msg.data.summary} (${Math.round(msg.data.delayBeforeMs)}ms)`); break;
       case 'progress': showProgress(msg.data); break;
+      case 'inputDetected': editor.onInputDetected(msg.data); break;
+      case 'inputMonitor': log('monitor', `[${msg.data.source}] ${msg.data.label}`, msg.data.time); break;
     }
   };
 }
@@ -146,6 +150,10 @@ function wire() {
     recorder.start();
   };
   $('btn-clear-log').onclick = () => { $('log').innerHTML = ''; };
+  $('btn-monitor').onclick = async () => {
+    try { if (state.status?.monitoring) await api.monitorOff(); else await api.monitorOn(); }
+    catch (e) { log('error', e.message); }
+  };
   $('btn-install').onclick = async () => {
     log('info', '드라이버 설치/점검 중… (수 분 걸릴 수 있습니다)');
     try { const r = await api.installDrivers(); if (r.rebootRequired) log('warn', '재부팅이 필요합니다.'); }

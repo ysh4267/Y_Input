@@ -38,4 +38,9 @@ export const api = {
   gamepadSend: (control, value) => request('POST', '/api/gamepad/send', { control, value }),
 
   reloadHotkeys: () => request('POST', '/api/hotkeys/reload'),
+
+  listenStart: () => request('POST', '/api/listen/start'),
+  listenStop: () => request('POST', '/api/listen/stop'),
+  monitorOn: () => request('POST', '/api/monitor/on'),
+  monitorOff: () => request('POST', '/api/monitor/off'),
 };

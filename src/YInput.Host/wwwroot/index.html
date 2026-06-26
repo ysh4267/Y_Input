@@ -51,7 +51,10 @@
       <div class="card compact">
         <div class="card-head">
           <h2>로그</h2>
-          <button id="btn-clear-log" class="btn ghost sm">지우기</button>
+          <div class="row">
+            <button id="btn-monitor" class="btn ghost sm" title="모든 입력(키보드·마우스·게임패드·HID) 인식 표시">입력 모니터</button>
+            <button id="btn-clear-log" class="btn ghost sm">지우기</button>
+          </div>
         </div>
         <div id="progress" class="progress" hidden>
           <div class="bar"><span id="progress-bar"></span></div>
@@ -97,6 +100,7 @@
             <label class="fld">트리거 핫키
               <span class="inline">
                 <input id="ed-hotkey" type="text" readonly placeholder="클릭 후 키 또는 마우스 버튼(엄지 X1/X2)" />
+                <button id="ed-hotkey-pad" class="btn ghost sm" title="게임패드 버튼을 트리거로 잡기">🎮 패드</button>
                 <button id="ed-hotkey-clear" class="btn ghost sm">지우기</button>
               </span>
             </label>
@@ -116,6 +120,7 @@
               <label class="chk"><input id="opt-mbtn" type="checkbox" checked /> 마우스 클릭</label>
               <label class="chk"><input id="opt-mmove" type="checkbox" /> 마우스 이동</label>
               <label class="chk"><input id="opt-mwheel" type="checkbox" checked /> 휠</label>
+              <label class="chk"><input id="opt-gamepad" type="checkbox" /> 게임패드</label>
               <label class="chk"><input id="opt-countdown" type="checkbox" checked /> 3초 카운트다운</label>
               <label class="chk"><input id="opt-fixed-enable" type="checkbox" /> 고정 지연(ms)
                 <input id="opt-fixed-ms" type="number" min="0" step="10" value="50" class="mini" disabled />

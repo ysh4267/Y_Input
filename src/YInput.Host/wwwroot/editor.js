@@ -26,10 +26,10 @@ function mouseTriggerName(m) {
   return ({ Left: 'Mouse좌', Right: 'Mouse우', Middle: 'Mouse휠', X1: 'Mouse X1(엄지뒤로)', X2: 'Mouse X2(엄지앞으로)' })[m] || ('Mouse ' + m);
 }
 function hotkeyToString(t) {
-  if (!t || (!t.virtualKey && !t.mouse)) return '(없음)';
+  if (!t || (!t.virtualKey && !t.mouse && !t.gamepad)) return '(없음)';
   const p = []; if (t.ctrl) p.push('Ctrl'); if (t.alt) p.push('Alt');
   if (t.shift) p.push('Shift'); if (t.win) p.push('Win');
-  p.push(t.mouse ? mouseTriggerName(t.mouse) : vkName(t.virtualKey));
+  p.push(t.gamepad ? ('Pad ' + t.gamepad) : t.mouse ? mouseTriggerName(t.mouse) : vkName(t.virtualKey));
   return p.join('+');
 }
 
@@ -340,7 +340,7 @@ export function createEditor({ log, onSaved, getStatus }) {
   hk.addEventListener('keydown', (e) => {
     if (!capHk) return; e.preventDefault();
     const vk = eventToVk(e); if (vk == null) return;
-    editing.trigger = { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: vk, mouse: null };
+    editing.trigger = { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: vk, mouse: null, gamepad: null };
     hk.value = hotkeyToString(editing.trigger); hk.blur();
   });
   // 마우스 버튼 트리거 캡처(엄지 사이드 버튼 X1/X2 포함). 포커스용 첫 클릭은 capHk=false라 무시됨.
@@ -349,7 +349,7 @@ export function createEditor({ log, onSaved, getStatus }) {
     const m = MOUSE_BTN[e.button];
     if (!m) return;
     e.preventDefault();
-    editing.trigger = { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: 0, mouse: m };
+    editing.trigger = { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: 0, mouse: m, gamepad: null };
     hk.value = hotkeyToString(editing.trigger);
     setTimeout(() => hk.blur(), 0);
   });
@@ -358,5 +358,29 @@ export function createEditor({ log, onSaved, getStatus }) {
   hk.addEventListener('auxclick', (e) => { if (capHk) e.preventDefault(); });
   $('ed-hotkey-clear').onclick = () => { if (editing) editing.trigger = null; hk.value = '(없음)'; };
 
-  return { open, close, isOpen, current, onStatus };
+  // 게임패드 버튼 잡기(서버 listen) — 다음 패드 버튼을 트리거로
+  let padListening = false;
+  $('ed-hotkey-pad').onclick = async () => {
+    try {
+      if (padListening) { padListening = false; await api.listenStop(); hk.value = hotkeyToString(editing && editing.trigger); return; }
+      padListening = true; hk.value = '패드 버튼 대기…'; await api.listenStart();
+    } catch (e) { padListening = false; log('error', e.message); }
+  };
+
+  // 서버에서 입력 감지(inputDetected) 수신 시 트리거 바인딩
+  function onInputDetected(data) {
+    if (!data) return;
+    if (!data.bindable) { log('info', '감지: ' + data.label); return; }
+    if (!editing) return;
+    const t = { ctrl: false, alt: false, shift: false, win: false, virtualKey: 0, mouse: null, gamepad: null };
+    if (data.trigger?.gamepad) t.gamepad = data.trigger.gamepad;
+    else if (data.trigger?.virtualKey) t.virtualKey = data.trigger.virtualKey;
+    else if (data.trigger?.mouse) t.mouse = data.trigger.mouse;
+    editing.trigger = t;
+    padListening = false;
+    hk.value = hotkeyToString(t);
+    log('info', '트리거 설정: ' + hk.value);
+  }
+
+  return { open, close, isOpen, current, onStatus, onInputDetected };
 }

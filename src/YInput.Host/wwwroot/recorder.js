@@ -13,6 +13,7 @@ export function createRecorder({ log, onRecorded, getStatus }) {
       mouseButtons: $('opt-mbtn').checked,
       mouseMove: $('opt-mmove').checked,
       mouseWheel: $('opt-mwheel').checked,
+      gamepad: $('opt-gamepad').checked,
       fixedDelayMs: fixedOn ? (parseFloat($('opt-fixed-ms').value) || 0) : null,
     };
   }

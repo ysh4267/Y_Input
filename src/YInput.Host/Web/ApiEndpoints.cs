@@ -124,6 +124,30 @@ public static class ApiEndpoints
             return Task.FromResult(Results.Ok(new { ok = true }));
         }));
 
+        // ---- 아무 입력 잡기(게임패드 버튼) ----
+        app.MapPost("/api/listen/start", () => Guard(() =>
+        {
+            service.StartListen();
+            return Task.FromResult(Results.Ok(new { ok = true }));
+        }));
+        app.MapPost("/api/listen/stop", () => Guard(() =>
+        {
+            service.StopListen();
+            return Task.FromResult(Results.Ok(new { ok = true }));
+        }));
+
+        // ---- 입력 모니터(모든 입력 인식 스트림) ----
+        app.MapPost("/api/monitor/on", () => Guard(() =>
+        {
+            service.SetMonitor(true);
+            return Task.FromResult(Results.Ok(new { ok = true }));
+        }));
+        app.MapPost("/api/monitor/off", () => Guard(() =>
+        {
+            service.SetMonitor(false);
+            return Task.FromResult(Results.Ok(new { ok = true }));
+        }));
+
         // ---- WebSocket ----
         app.Map("/ws", async (HttpContext ctx) =>
         {
@@ -188,8 +212,9 @@ public static class ApiEndpoints
         bool MouseButtons = true,
         bool MouseMove = false,
         bool MouseWheel = true,
+        bool Gamepad = false,
         double? FixedDelayMs = null)
     {
-        public RecordOptions ToOptions() => new(Keyboard, MouseButtons, MouseMove, MouseWheel, FixedDelayMs);
+        public RecordOptions ToOptions() => new(Keyboard, MouseButtons, MouseMove, MouseWheel, Gamepad, FixedDelayMs);
     }
 }

@@ -27,10 +27,14 @@ public sealed class Hotkey
     /// <summary>설정 시 마우스 버튼 트리거. null이면 키보드 트리거.</summary>
     public MouseTriggerButton? Mouse { get; set; }
 
-    public bool IsMouse => Mouse is not null;
-    public bool IsEmpty => Mouse is null && VirtualKey == 0;
+    /// <summary>설정 시 게임패드 버튼/트리거 트리거(우선순위 최상).</summary>
+    public GamepadControl? Gamepad { get; set; }
 
-    /// <summary>"Ctrl+Alt+F8" / "Mouse X1" 형태의 표시 문자열.</summary>
+    public bool IsGamepad => Gamepad is not null;
+    public bool IsMouse => !IsGamepad && Mouse is not null;
+    public bool IsEmpty => Gamepad is null && Mouse is null && VirtualKey == 0;
+
+    /// <summary>"Ctrl+Alt+F8" / "Mouse X1" / "Pad A" 형태의 표시 문자열.</summary>
     public override string ToString()
     {
         if (IsEmpty) return "(none)";
@@ -39,7 +43,7 @@ public sealed class Hotkey
         if (Alt) parts.Add("Alt");
         if (Shift) parts.Add("Shift");
         if (Win) parts.Add("Win");
-        parts.Add(IsMouse ? MouseName(Mouse!.Value) : KeyName.FromVirtualKey(VirtualKey));
+        parts.Add(IsGamepad ? $"Pad {Gamepad}" : IsMouse ? MouseName(Mouse!.Value) : KeyName.FromVirtualKey(VirtualKey));
         return string.Join("+", parts);
     }
 

@@ -10,6 +10,7 @@ public sealed record RecordOptions(
     bool MouseButtons = true,
     bool MouseMove = false,
     bool MouseWheel = true,
+    bool Gamepad = false,
     double? FixedDelayMs = null)
 {
     public static RecordOptions Default { get; } = new();
@@ -65,6 +66,7 @@ public sealed class Recorder
             MouseEventKind.Wheel => _options.MouseWheel,
             _ => true,
         },
+        GamepadEvent => _options.Gamepad,
         _ => true,
     };
 
