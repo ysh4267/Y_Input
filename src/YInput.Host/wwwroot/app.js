@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { createEditor } from './editor.js';
 import { createRecorder } from './recorder.js';
+import { confirmDialog, installLockdown } from './ui.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
@@ -109,7 +110,8 @@ async function togglePlay(id) {
   } catch (e) { log('error', e.message); }
 }
 async function removeMacro(id, name) {
-  if (!confirm(`'${name}' 매크로를 휴지통으로 보낼까요?`)) return;
+  const ok = await confirmDialog(`'${name}' 매크로를 휴지통으로 보낼까요?`, { title: '매크로 삭제', ok: '휴지통으로', cancel: '취소' });
+  if (!ok) return;
   try { await api.deleteMacro(id); await loadMacros(); if (editor.current()?.id === id) editor.close(); }
   catch (e) { log('error', e.message); }
 }
@@ -167,6 +169,7 @@ function wire() {
 }
 
 async function init() {
+  installLockdown(); // 텍스트 드래그·브라우저 단축키·우클릭 차단
   wire();
   connectWs();
   try { renderStatus(await api.status()); } catch (e) { log('error', e.message); }

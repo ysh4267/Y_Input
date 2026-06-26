@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import * as km from './keymap.js';
+import { promptDialog } from './ui.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -363,13 +364,17 @@ export function createEditor({ log, onSaved, getStatus }) {
     selected = new Set(idxs.map((i) => i + dir)); lastIdx = -1;
     renderSteps();
   }
-  function bulkSet() {
-    const ms = parseFloat(prompt('선택(없으면 전체) 스텝의 지연(ms):', '50'));
+  async function bulkSet() {
+    const v = await promptDialog('선택(없으면 전체) 스텝의 지연(ms):', '50', { title: '지연 설정' });
+    if (v === null) return;
+    const ms = parseFloat(v);
     if (isNaN(ms)) return;
     targets().forEach((i) => editing.steps[i].delayBeforeMs = ms); renderSteps();
   }
-  function bulkScale() {
-    const f = parseFloat(prompt('지연 배율(예: 0.5=절반, 2=두배):', '1'));
+  async function bulkScale() {
+    const v = await promptDialog('지연 배율(예: 0.5=절반, 2=두배):', '1', { title: '지연 배율' });
+    if (v === null) return;
+    const f = parseFloat(v);
     if (isNaN(f) || f <= 0) return;
     targets().forEach((i) => editing.steps[i].delayBeforeMs = Math.round((editing.steps[i].delayBeforeMs || 0) * f));
     renderSteps();
