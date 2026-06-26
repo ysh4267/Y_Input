@@ -2,25 +2,31 @@ import { api } from './api.js';
 import * as km from './keymap.js';
 
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
-  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // 트리거 핫키 VK 매핑/표시는 keymap.js(km.eventToVk / km.vkLabel) — IME 안전(e.code 기반)
 function mouseTriggerName(m) {
   return ({ Left: 'Mouse좌', Right: 'Mouse우', Middle: 'Mouse휠', X1: 'Mouse X1(엄지뒤로)', X2: 'Mouse X2(엄지앞으로)' })[m] || ('Mouse ' + m);
 }
 function hotkeyToString(t) {
-  if (!t || (!t.virtualKey && !t.mouse && !t.gamepad)) return '(없음)';
+  if (!t || (!t.virtualKey && !t.mouse && !t.gamepad)) return '없음';
   const p = []; if (t.ctrl) p.push('Ctrl'); if (t.alt) p.push('Alt');
   if (t.shift) p.push('Shift'); if (t.win) p.push('Win');
   p.push(t.gamepad ? ('Pad ' + t.gamepad) : t.mouse ? mouseTriggerName(t.mouse) : km.vkLabel(t.virtualKey));
   return p.join('+');
 }
 
+const TYPE_NAME = { keyboard: '키', mouse: '마우스', gamepad: '패드', text: '텍스트', delay: '지연' };
+const fmtMs = (ms) => ms >= 1000 ? (ms / 1000).toFixed(2) + ' s' : Math.round(ms) + ' ms';
+
+// 세그먼트 컨트롤 헬퍼
+const setSeg = (el, val) => el.querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('on', b.dataset.val === val));
+const getSeg = (el) => el.querySelector('.seg-btn.on')?.dataset.val ?? null;
+
 export function createEditor({ log, onSaved, getStatus }) {
   let editing = null;
+  let selected = new Set();
+  let lastIdx = -1;
   let dragSrc = -1;
-  let lastChecked = -1;
 
   function blank() {
     return { id: '', name: '새 매크로', loopCount: 1, speedMultiplier: 1.0, randomizeDelayPercent: 0, trigger: null, steps: [] };
@@ -29,19 +35,24 @@ export function createEditor({ log, onSaved, getStatus }) {
   function open(macro) {
     editing = structuredClone(macro || blank());
     editing.steps ||= [];
+    selected = new Set(); lastIdx = -1;
     $('empty-state').hidden = true;
     $('editor').hidden = false;
     $('ed-name').value = editing.name || '';
-    const inf = (editing.loopCount || 0) <= 0;
-    $('ed-loop-inf').checked = inf;
-    $('ed-loop').value = inf ? 1 : editing.loopCount;
-    $('ed-loop').disabled = inf;
+
+    // 반복 모드: 0=무한, 1=한 번, >1=반복
+    const lc = editing.loopCount || 0;
+    const mode = lc <= 0 ? 'inf' : lc === 1 ? 'once' : 'count';
+    setSeg($('seg-repeat'), mode);
+    $('ed-loop').value = lc > 1 ? lc : 1;
+    syncLoopInput();
+
     $('ed-speed').value = editing.speedMultiplier || 1;
     $('ed-speed-val').textContent = (editing.speedMultiplier || 1).toFixed(1) + 'x';
     $('ed-random').value = editing.randomizeDelayPercent || 0;
     $('ed-random-val').textContent = (editing.randomizeDelayPercent || 0) + '%';
     $('ed-hotkey').value = hotkeyToString(editing.trigger);
-    renderGrid();
+    renderSteps();
     onStatus(getStatus());
   }
 
@@ -49,76 +60,87 @@ export function createEditor({ log, onSaved, getStatus }) {
   function isOpen() { return editing !== null; }
   function current() { return editing; }
 
-  // ---------- 그리드 ----------
-  function renderGrid() {
-    const body = $('grid-body');
-    body.innerHTML = '';
-    $('ed-step-count').textContent = editing.steps.length;
+  function syncLoopInput() {
+    $('ed-loop').hidden = getSeg($('seg-repeat')) !== 'count';
+  }
+
+  function updateStats() {
+    if (!editing) return;
+    $('ed-stat-steps').textContent = editing.steps.length;
+    const dur = editing.steps.reduce((a, s) => a + (s.delayBeforeMs || 0), 0);
+    $('ed-stat-dur').textContent = fmtMs(dur);
+    $('ed-stat-trigger').textContent = hotkeyToString(editing.trigger);
+  }
+
+  // ---------- 스텝 리스트 ----------
+  function renderSteps() {
+    const wrap = $('steps');
+    wrap.innerHTML = '';
     $('grid-empty').hidden = editing.steps.length > 0;
-    editing.steps.forEach((step, i) => body.appendChild(buildRow(step, i)));
-    $('chk-all').checked = false;
+    editing.steps.forEach((step, i) => wrap.appendChild(buildRow(step, i)));
+    applySel();
+    updateStats();
   }
 
   function buildRow(step, i) {
-    const tr = document.createElement('tr');
-    tr.draggable = true;
-    tr.dataset.i = i;
+    const t = step.event['$type'];
+    const row = document.createElement('div');
+    row.className = 'step';
+    row.dataset.i = i;
 
-    // 선택 체크박스
-    const tdChk = document.createElement('td');
-    const chk = document.createElement('input'); chk.type = 'checkbox'; chk.className = 'rowchk';
-    chk.onclick = (e) => {
-      if (e.shiftKey && lastChecked >= 0) {
-        const [a, b] = [Math.min(lastChecked, i), Math.max(lastChecked, i)];
-        body_rowchecks().forEach((c, idx) => { if (idx >= a && idx <= b) c.checked = chk.checked; });
-      }
-      lastChecked = i;
-      syncRowSel();
+    // 드래그 핸들
+    const drag = document.createElement('span');
+    drag.className = 'step-drag'; drag.textContent = '⠿'; drag.draggable = true; drag.title = '드래그로 이동';
+    drag.addEventListener('dragstart', (e) => { dragSrc = i; row.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
+    drag.addEventListener('dragend', () => { dragSrc = -1; row.classList.remove('dragging'); });
+    row.appendChild(drag);
+
+    const num = document.createElement('span'); num.className = 'step-num'; num.textContent = i + 1; row.appendChild(num);
+
+    // 타입(아이콘 + 이름)
+    const type = document.createElement('span'); type.className = 'step-type';
+    const ico = document.createElement('span'); ico.className = 'step-ico type-' + t; ico.textContent = km.TYPE_ICON[t] || '?';
+    const tn = document.createElement('span'); tn.className = 'tname'; tn.textContent = TYPE_NAME[t] || t;
+    type.append(ico, tn); row.appendChild(type);
+
+    // 동작(인라인 편집)
+    const detail = document.createElement('div'); detail.className = 'step-detail';
+    buildDetail(detail, step); row.appendChild(detail);
+
+    // 지연
+    const dly = document.createElement('div'); dly.className = 'step-delay';
+    const din = document.createElement('input'); din.type = 'number'; din.min = '0'; din.step = '1';
+    din.value = Math.round(step.delayBeforeMs || 0);
+    din.onchange = () => { step.delayBeforeMs = parseFloat(din.value) || 0; updateStats(); };
+    const unit = document.createElement('span'); unit.className = 'unit'; unit.textContent = 'ms';
+    dly.append(din, unit); row.appendChild(dly);
+
+    // 행 액션
+    const act = document.createElement('div'); act.className = 'step-act';
+    const bDup = document.createElement('button'); bDup.className = 'rowbtn'; bDup.title = '복제'; bDup.textContent = '⎘';
+    bDup.onclick = (e) => { e.stopPropagation(); editing.steps.splice(i + 1, 0, structuredClone(step)); selectOnly(i + 1); renderSteps(); };
+    const bDel = document.createElement('button'); bDel.className = 'rowbtn del'; bDel.title = '삭제'; bDel.textContent = '✕';
+    bDel.onclick = (e) => { e.stopPropagation(); editing.steps.splice(i, 1); selected.delete(i); renderSteps(); };
+    act.append(bDup, bDel); row.appendChild(act);
+
+    // 선택(행 클릭) — 입력/버튼/드래그핸들 클릭은 제외
+    row.onclick = (e) => {
+      if (e.target.closest('input,select,button,textarea,.keycap,.dir-badge,.step-drag')) return;
+      onRowClick(i, e);
     };
-    tdChk.appendChild(chk); tr.appendChild(tdChk);
 
-    const tdIdx = document.createElement('td'); tdIdx.className = 'c-idx'; tdIdx.textContent = i + 1; tr.appendChild(tdIdx);
-
-    const tdType = document.createElement('td');
-    tdType.className = 'type-cell'; tdType.title = '드래그로 이동';
-    tdType.textContent = km.TYPE_ICON[step.event['$type']] || '?';
-    tr.appendChild(tdType);
-
-    const tdDetail = document.createElement('td');
-    tdDetail.className = 'detail-cell';
-    buildDetail(tdDetail, step);
-    tr.appendChild(tdDetail);
-
-    const tdDelay = document.createElement('td');
-    const delay = document.createElement('input');
-    delay.type = 'number'; delay.min = '0'; delay.step = '1'; delay.className = 'delay-inp';
-    delay.value = Math.round(step.delayBeforeMs || 0);
-    delay.onchange = () => { step.delayBeforeMs = parseFloat(delay.value) || 0; };
-    tdDelay.appendChild(delay); tr.appendChild(tdDelay);
-
-    const tdAct = document.createElement('td');
-    tdAct.innerHTML = `<button class="rowbtn up" title="위로">↑</button>
-      <button class="rowbtn down" title="아래로">↓</button>
-      <button class="rowbtn dup" title="복제">⎘</button>
-      <button class="rowbtn del" title="삭제">✕</button>`;
-    tdAct.querySelector('.up').onclick = () => move(i, -1);
-    tdAct.querySelector('.down').onclick = () => move(i, +1);
-    tdAct.querySelector('.dup').onclick = () => { editing.steps.splice(i + 1, 0, structuredClone(step)); renderGrid(); };
-    tdAct.querySelector('.del').onclick = () => { editing.steps.splice(i, 1); renderGrid(); };
-    tr.appendChild(tdAct);
-
-    // 드래그 재정렬
-    tr.addEventListener('dragstart', () => { dragSrc = i; });
-    tr.addEventListener('dragover', (e) => { e.preventDefault(); tr.classList.add('dragover'); });
-    tr.addEventListener('dragleave', () => tr.classList.remove('dragover'));
-    tr.addEventListener('drop', (e) => {
-      e.preventDefault(); tr.classList.remove('dragover');
+    // 드롭 대상
+    row.addEventListener('dragover', (e) => { e.preventDefault(); row.classList.add('dragover'); });
+    row.addEventListener('dragleave', () => row.classList.remove('dragover'));
+    row.addEventListener('drop', (e) => {
+      e.preventDefault(); row.classList.remove('dragover');
       if (dragSrc < 0 || dragSrc === i) return;
       const [moved] = editing.steps.splice(dragSrc, 1);
-      editing.steps.splice(i, 0, moved);
-      dragSrc = -1; renderGrid();
+      const dst = dragSrc < i ? i - 1 : i;
+      editing.steps.splice(dst, 0, moved);
+      selectOnly(dst); renderSteps();
     });
-    return tr;
+    return row;
   }
 
   function buildDetail(td, step) {
@@ -127,28 +149,38 @@ export function createEditor({ log, onSaved, getStatus }) {
     if (t === 'keyboard') {
       const cap = document.createElement('button');
       cap.className = 'keycap'; cap.textContent = km.keyName(ev);
-      cap.onclick = () => captureKey(cap, ev);
-      const dir = mkSelect([['0', '누름 ↓'], ['1', '뗌 ↑']], (ev.state & 1).toString());
-      dir.onchange = () => { ev.state = (ev.state & 0x02) | (dir.value === '1' ? 1 : 0); };
+      cap.onclick = (e) => { e.stopPropagation(); captureKey(cap, ev); };
+      const isUp = (ev.state & 1) === 1;
+      const dir = document.createElement('span');
+      dir.className = 'dir-badge ' + (isUp ? 'dir-up' : 'dir-down');
+      dir.textContent = isUp ? '↑ 뗌' : '↓ 누름'; dir.title = '누름/뗌 전환';
+      dir.onclick = (e) => {
+        e.stopPropagation();
+        const nowUp = (ev.state & 1) === 1;
+        ev.state = (ev.state & 0x02) | (nowUp ? 0 : 1);
+        dir.className = 'dir-badge ' + (nowUp ? 'dir-down' : 'dir-up');
+        dir.textContent = nowUp ? '↓ 누름' : '↑ 뗌';
+      };
       td.append(cap, dir);
     } else if (t === 'mouse') {
-      const kind = km.MOUSE; // bits
-      if ((ev.buttonState & kind.ScrollV) || ev.rolling) {
-        td.append(numInput(ev.rolling, (v) => ev.rolling = v, '휠량'));
+      const m = km.MOUSE;
+      if ((ev.buttonState & m.ScrollV) || ev.rolling) {
+        td.append(labelTag('휠'), numInput(ev.rolling, (v) => ev.rolling = v, '휠량(±)'));
       } else if (ev.buttonState !== 0) {
         const btn = mkSelect([['left', '좌'], ['right', '우'], ['middle', '중']], curMouseBtn(ev));
         const dir = mkSelect([['down', '누름'], ['up', '뗌']], curMouseDir(ev));
         const apply = () => { Object.assign(ev, km.mouseButtonEvent(btn.value, dir.value === 'down')); };
         btn.onchange = apply; dir.onchange = apply;
-        td.append(btn, dir);
+        td.append(labelTag('클릭'), btn, dir);
       } else {
         const x = numInput(ev.x, (v) => ev.x = v, 'dx');
         const y = numInput(ev.y, (v) => ev.y = v, 'dy');
-        const abs = document.createElement('label'); abs.className = 'chk';
+        const abs = document.createElement('label'); abs.className = 'chip';
         const ac = document.createElement('input'); ac.type = 'checkbox'; ac.checked = !!(ev.flags & 1);
+        ac.style.marginRight = '4px';
         ac.onchange = () => ev.flags = ac.checked ? 1 : 0;
-        abs.append(ac, document.createTextNode(' 절대'));
-        td.append(x, y, abs);
+        abs.append(ac, document.createTextNode('절대좌표'));
+        td.append(labelTag('이동'), x, y, abs);
       }
     } else if (t === 'gamepad') {
       const sel = mkSelect(km.GAMEPAD_CONTROLS.map((c) => [c, c]), ev.control);
@@ -159,12 +191,14 @@ export function createEditor({ log, onSaved, getStatus }) {
       txt.placeholder = '입력할 텍스트'; txt.onchange = () => ev.text = txt.value;
       td.append(txt, numInput(ev.perKeyDelayMs || 0, (v) => ev.perKeyDelayMs = v, '키당ms'));
     } else if (t === 'delay') {
-      td.append(document.createTextNode('대기 — 지연(ms) 열 사용'));
+      const span = document.createElement('span'); span.className = 'muted';
+      span.textContent = '대기 — 오른쪽 지연(ms) 값만큼 멈춤';
+      td.append(span);
     }
   }
 
   function captureKey(cap, ev) {
-    cap.classList.add('capturing'); cap.textContent = '키 입력…';
+    cap.classList.add('capturing'); cap.textContent = '키…';
     const handler = (e) => {
       e.preventDefault();
       const info = km.scanInfo(e.code);
@@ -176,13 +210,14 @@ export function createEditor({ log, onSaved, getStatus }) {
   }
 
   // 헬퍼
+  const labelTag = (txt) => { const s = document.createElement('span'); s.className = 'muted'; s.textContent = txt; return s; };
   const mkSelect = (opts, val) => {
     const s = document.createElement('select'); s.className = 'sel';
     for (const [v, label] of opts) { const o = document.createElement('option'); o.value = v; o.textContent = label; s.appendChild(o); }
     s.value = val; return s;
   };
   const numInput = (val, set, title) => {
-    const n = document.createElement('input'); n.type = 'number'; n.value = val | 0; n.title = title || '';
+    const n = document.createElement('input'); n.type = 'number'; n.value = val | 0; n.title = title || ''; n.placeholder = title || '';
     n.onchange = () => set(parseInt(n.value, 10) || 0); return n;
   };
   const curMouseBtn = (ev) => {
@@ -195,18 +230,32 @@ export function createEditor({ log, onSaved, getStatus }) {
     const m = km.MOUSE;
     return (ev.buttonState & (m.LeftDown | m.RightDown | m.MidDown)) ? 'down' : 'up';
   };
-  const body_rowchecks = () => Array.from(document.querySelectorAll('#grid-body .rowchk'));
-  const getSelected = () => body_rowchecks().map((c, i) => c.checked ? i : -1).filter((i) => i >= 0);
-  function syncRowSel() {
-    body_rowchecks().forEach((c) => c.closest('tr').classList.toggle('sel', c.checked));
-  }
 
-  function move(i, dir) {
-    const j = i + dir;
-    if (j < 0 || j >= editing.steps.length) return;
-    [editing.steps[i], editing.steps[j]] = [editing.steps[j], editing.steps[i]];
-    renderGrid();
+  // ---------- 선택 ----------
+  function onRowClick(i, e) {
+    if (e.shiftKey && lastIdx >= 0) {
+      const [a, b] = [Math.min(lastIdx, i), Math.max(lastIdx, i)];
+      for (let k = a; k <= b; k++) selected.add(k);
+    } else if (e.ctrlKey || e.metaKey) {
+      if (selected.has(i)) selected.delete(i); else selected.add(i);
+      lastIdx = i;
+    } else {
+      if (selected.size === 1 && selected.has(i)) selected.clear();
+      else { selected = new Set([i]); }
+      lastIdx = i;
+    }
+    applySel();
   }
+  function selectOnly(i) { selected = new Set([i]); lastIdx = i; }
+  function applySel() {
+    document.querySelectorAll('#steps .step').forEach((el) => {
+      el.classList.toggle('sel', selected.has(+el.dataset.i));
+    });
+    const n = selected.size;
+    $('sel-bar').hidden = n === 0;
+    if (n) $('sel-count').textContent = n;
+  }
+  const selIdxs = () => [...selected].sort((a, b) => a - b);
 
   // ---------- 삽입 ----------
   function makeSteps(type) {
@@ -226,44 +275,54 @@ export function createEditor({ log, onSaved, getStatus }) {
     }
   }
   function insert(type) {
-    const sel = getSelected();
-    const at = sel.length ? Math.max(...sel) + 1 : editing.steps.length;
-    editing.steps.splice(at, 0, ...makeSteps(type));
-    renderGrid();
+    const at = selected.size ? Math.max(...selIdxs()) + 1 : editing.steps.length;
+    const made = makeSteps(type);
+    editing.steps.splice(at, 0, ...made);
+    selected = new Set(made.map((_, k) => at + k)); lastIdx = at;
+    renderSteps();
   }
 
   // ---------- 일괄 작업 ----------
-  function targets() { const s = getSelected(); return s.length ? s : editing.steps.map((_, i) => i); }
+  function targets() { return selected.size ? selIdxs() : editing.steps.map((_, i) => i); }
   function duplicateSel() {
-    const s = getSelected(); if (!s.length) return;
+    const s = selIdxs(); if (!s.length) return;
     const copies = s.map((i) => structuredClone(editing.steps[i]));
-    editing.steps.splice(Math.max(...s) + 1, 0, ...copies); renderGrid();
+    const at = Math.max(...s) + 1;
+    editing.steps.splice(at, 0, ...copies);
+    selected = new Set(copies.map((_, k) => at + k)); lastIdx = at;
+    renderSteps();
   }
   function deleteSel() {
-    const s = new Set(getSelected()); if (!s.size) return;
-    editing.steps = editing.steps.filter((_, i) => !s.has(i)); renderGrid();
+    const s = new Set(selected); if (!s.size) return;
+    editing.steps = editing.steps.filter((_, i) => !s.has(i));
+    selected = new Set(); lastIdx = -1; renderSteps();
   }
   function moveSel(dir) {
-    const s = getSelected(); if (!s.length) return;
-    const order = dir < 0 ? s : s.slice().reverse();
-    for (const i of order) move(i, dir);
+    const idxs = selIdxs(); if (!idxs.length) return;
+    if (dir < 0 && idxs[0] === 0) return;
+    if (dir > 0 && idxs[idxs.length - 1] === editing.steps.length - 1) return;
+    const order = dir < 0 ? idxs : idxs.slice().reverse();
+    for (const i of order) { const j = i + dir; [editing.steps[i], editing.steps[j]] = [editing.steps[j], editing.steps[i]]; }
+    selected = new Set(idxs.map((i) => i + dir)); lastIdx = -1;
+    renderSteps();
   }
   function bulkSet() {
     const ms = parseFloat(prompt('선택(없으면 전체) 스텝의 지연(ms):', '50'));
     if (isNaN(ms)) return;
-    targets().forEach((i) => editing.steps[i].delayBeforeMs = ms); renderGrid();
+    targets().forEach((i) => editing.steps[i].delayBeforeMs = ms); renderSteps();
   }
   function bulkScale() {
     const f = parseFloat(prompt('지연 배율(예: 0.5=절반, 2=두배):', '1'));
     if (isNaN(f) || f <= 0) return;
     targets().forEach((i) => editing.steps[i].delayBeforeMs = Math.round((editing.steps[i].delayBeforeMs || 0) * f));
-    renderGrid();
+    renderSteps();
   }
 
   // ---------- 저장/재생 ----------
   function collect() {
     editing.name = $('ed-name').value.trim() || '제목 없음';
-    editing.loopCount = $('ed-loop-inf').checked ? 0 : (parseInt($('ed-loop').value, 10) || 1);
+    const mode = getSeg($('seg-repeat'));
+    editing.loopCount = mode === 'inf' ? 0 : mode === 'once' ? 1 : (parseInt($('ed-loop').value, 10) || 1);
     editing.speedMultiplier = parseFloat($('ed-speed').value) || 1.0;
     editing.randomizeDelayPercent = parseInt($('ed-random').value, 10) || 0;
     return editing;
@@ -299,21 +358,22 @@ export function createEditor({ log, onSaved, getStatus }) {
 
   // ---------- 와이어링 ----------
   $('ed-name').oninput = () => { if (editing) editing.name = $('ed-name').value; };
-  $('ed-loop-inf').onchange = () => { $('ed-loop').disabled = $('ed-loop-inf').checked; };
+  $('seg-repeat').querySelectorAll('.seg-btn').forEach((b) => b.onclick = () => { setSeg($('seg-repeat'), b.dataset.val); syncLoopInput(); });
+  $('ed-loop').onchange = () => { if (parseInt($('ed-loop').value, 10) < 1) $('ed-loop').value = 1; };
   $('ed-speed').oninput = () => { $('ed-speed-val').textContent = parseFloat($('ed-speed').value).toFixed(1) + 'x'; };
   $('ed-random').oninput = () => { $('ed-random-val').textContent = $('ed-random').value + '%'; };
   $('btn-save').onclick = save;
   $('btn-cancel').onclick = close;
   $('btn-play').onclick = play;
   $('btn-insert').onclick = () => insert($('insert-type').value);
+  $('btn-selall').onclick = () => { selected = new Set(editing.steps.map((_, i) => i)); applySel(); };
   $('btn-dup').onclick = duplicateSel;
   $('btn-del').onclick = deleteSel;
   $('btn-up').onclick = () => moveSel(-1);
   $('btn-down').onclick = () => moveSel(+1);
-  $('btn-selall').onclick = () => { const all = body_rowchecks(); const on = !all.every((c) => c.checked); all.forEach((c) => c.checked = on); syncRowSel(); };
   $('btn-bulk-set').onclick = bulkSet;
   $('btn-bulk-scale').onclick = bulkScale;
-  $('chk-all').onchange = () => { body_rowchecks().forEach((c) => c.checked = $('chk-all').checked); syncRowSel(); };
+  $('btn-selclear').onclick = () => { selected = new Set(); applySel(); };
 
   // 트리거 핫키 캡처
   let capHk = false;
@@ -325,22 +385,21 @@ export function createEditor({ log, onSaved, getStatus }) {
     if (!capHk) return; e.preventDefault();
     const vk = km.eventToVk(e); if (vk == null) return; // 모디파이어 단독/미지원 키는 대기 유지
     editing.trigger = { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: vk, mouse: null, gamepad: null };
-    hk.value = hotkeyToString(editing.trigger); hk.blur();
+    hk.value = hotkeyToString(editing.trigger); updateStats(); hk.blur();
   });
-  // 마우스 버튼 트리거 캡처(엄지 사이드 버튼 X1/X2 포함). 포커스용 첫 클릭은 capHk=false라 무시됨.
+  // 마우스 버튼 트리거(엄지 X1/X2 포함). 포커스용 첫 클릭은 capHk=false라 무시됨.
   hk.addEventListener('mousedown', (e) => {
     if (!capHk) return;
     const m = MOUSE_BTN[e.button];
     if (!m) return;
     e.preventDefault();
     editing.trigger = { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: 0, mouse: m, gamepad: null };
-    hk.value = hotkeyToString(editing.trigger);
+    hk.value = hotkeyToString(editing.trigger); updateStats();
     setTimeout(() => hk.blur(), 0);
   });
-  // 캡처 중 엄지 버튼의 뒤로/앞으로 탐색·우클릭 메뉴 차단
   hk.addEventListener('contextmenu', (e) => { if (capHk) e.preventDefault(); });
   hk.addEventListener('auxclick', (e) => { if (capHk) e.preventDefault(); });
-  $('ed-hotkey-clear').onclick = () => { if (editing) editing.trigger = null; hk.value = '(없음)'; };
+  $('ed-hotkey-clear').onclick = () => { if (editing) editing.trigger = null; hk.value = '없음'; updateStats(); };
 
   // 게임패드 버튼 잡기(서버 listen) — 다음 패드 버튼을 트리거로
   let padListening = false;
@@ -362,7 +421,7 @@ export function createEditor({ log, onSaved, getStatus }) {
     else if (data.trigger?.mouse) t.mouse = data.trigger.mouse;
     editing.trigger = t;
     padListening = false;
-    hk.value = hotkeyToString(t);
+    hk.value = hotkeyToString(t); updateStats();
     log('info', '트리거 설정: ' + hk.value);
   }
 

@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Y_Input — 드라이버급 입력 매크로</title>
+  <title>Y_Input</title>
   <link rel="stylesheet" href="app.css" />
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">Y_Input <span class="sub">드라이버급 입력 매크로</span></div>
+    <div class="brand">Y_Input</div>
     <div class="status-pills">
       <span id="state-badge" class="badge idle">대기</span>
       <span id="ws-dot" class="ws-dot off" title="실시간 연결"></span>
@@ -57,7 +57,7 @@
           </div>
         </div>
         <div id="progress" class="progress" hidden>
-          <div class="bar"><span id="progress-bar"></span></div>
+          <div class="bar-line"><span id="progress-bar"></span></div>
           <span id="progress-text"></span>
         </div>
         <div id="log" class="log"></div>
@@ -73,105 +73,126 @@
       <div id="editor" class="editor" hidden>
         <!-- 편집기 헤더 -->
         <div class="editor-head">
-          <input id="ed-name" class="ed-name" type="text" placeholder="매크로 이름" />
-          <div class="row">
-            <button id="btn-play" class="btn">▶ 재생</button>
+          <div class="editor-title">
+            <input id="ed-name" class="ed-name" type="text" placeholder="매크로 이름" />
+            <div class="editor-sub">
+              <span><b id="ed-stat-steps">0</b> 스텝</span>
+              <span class="dot-sep">·</span>
+              <span>약 <b id="ed-stat-dur">0 ms</b></span>
+              <span class="dot-sep">·</span>
+              <span>트리거 <b id="ed-stat-trigger" class="trigger-chip">없음</b></span>
+            </div>
+          </div>
+          <div class="editor-actions">
+            <button id="btn-play" class="btn primary">▶ 재생</button>
             <button id="btn-save" class="btn">저장</button>
             <button id="btn-cancel" class="btn ghost">닫기</button>
           </div>
         </div>
 
-        <!-- 설정 패널 -->
-        <details class="panel" open>
-          <summary>설정</summary>
-          <div class="panel-body settings">
-            <label class="fld">반복
-              <span class="inline">
-                <input id="ed-loop" type="number" min="1" step="1" />
-                <label class="chk"><input id="ed-loop-inf" type="checkbox" /> ∞(정지키까지)</label>
-              </span>
-            </label>
-            <label class="fld">속도 <span id="ed-speed-val" class="val">1.0x</span>
-              <input id="ed-speed" type="range" min="0.1" max="5" step="0.1" value="1" />
-            </label>
-            <label class="fld">랜덤 지연 <span id="ed-random-val" class="val">0%</span>
-              <input id="ed-random" type="range" min="0" max="90" step="5" value="0" />
-            </label>
-            <label class="fld">트리거 핫키
-              <span class="inline">
-                <input id="ed-hotkey" type="text" readonly placeholder="클릭 후 키 또는 마우스 버튼(엄지 X1/X2)" />
-                <button id="ed-hotkey-pad" class="btn ghost sm" title="게임패드 버튼을 트리거로 잡기">🎮 패드</button>
-                <button id="ed-hotkey-clear" class="btn ghost sm">지우기</button>
-              </span>
-            </label>
-          </div>
-        </details>
-
-        <!-- 녹화 패널 -->
-        <details class="panel" id="recorder-panel">
-          <summary>녹화</summary>
-          <div class="panel-body recorder">
-            <div class="rec-controls">
-              <button id="rec-toggle" class="btn rec">● 녹화 시작</button>
-              <span id="rec-status" class="rec-status"></span>
+        <!-- 재생 설정 바 -->
+        <div class="bar">
+          <div class="bar-group">
+            <span class="bar-label">반복</span>
+            <div class="seg" id="seg-repeat">
+              <button class="seg-btn" data-val="once" title="한 번 재생">한 번</button>
+              <button class="seg-btn" data-val="count" title="지정 횟수만큼 반복">반복</button>
+              <button class="seg-btn" data-val="inf" title="정지키를 누를 때까지 반복(토글)">무한 ∞</button>
             </div>
-            <div class="rec-opts">
-              <label class="chk"><input id="opt-kbd" type="checkbox" checked /> 키보드</label>
-              <label class="chk"><input id="opt-mbtn" type="checkbox" checked /> 마우스 클릭</label>
-              <label class="chk"><input id="opt-mmove" type="checkbox" /> 마우스 이동</label>
-              <label class="chk"><input id="opt-mwheel" type="checkbox" checked /> 휠</label>
-              <label class="chk"><input id="opt-gamepad" type="checkbox" /> 게임패드</label>
-              <label class="chk"><input id="opt-countdown" type="checkbox" checked /> 3초 카운트다운</label>
-              <label class="chk"><input id="opt-fixed-enable" type="checkbox" /> 고정 지연(ms)
-                <input id="opt-fixed-ms" type="number" min="0" step="10" value="50" class="mini" disabled />
-              </label>
-            </div>
+            <input id="ed-loop" type="number" min="1" step="1" value="1" class="mini" title="반복 횟수" />
           </div>
-        </details>
-
-        <!-- 편집 툴바 -->
-        <div class="toolbar">
-          <select id="insert-type" class="sel">
-            <option value="key-press">키 누름</option>
-            <option value="key-down">키 Down</option>
-            <option value="key-up">키 Up</option>
-            <option value="mouse-click">마우스 클릭</option>
-            <option value="mouse-move">마우스 이동</option>
-            <option value="mouse-wheel">마우스 휠</option>
-            <option value="delay">지연(Wait)</option>
-            <option value="gamepad">게임패드</option>
-            <option value="text">텍스트</option>
-          </select>
-          <button id="btn-insert" class="btn sm">삽입</button>
-          <span class="sep"></span>
-          <button id="btn-dup" class="btn ghost sm">복제</button>
-          <button id="btn-del" class="btn ghost sm">삭제</button>
-          <button id="btn-up" class="btn ghost sm">↑</button>
-          <button id="btn-down" class="btn ghost sm">↓</button>
-          <span class="sep"></span>
-          <button id="btn-selall" class="btn ghost sm">전체선택</button>
-          <button id="btn-bulk-set" class="btn ghost sm">지연 설정</button>
-          <button id="btn-bulk-scale" class="btn ghost sm">지연 스케일</button>
-          <span class="spacer"></span>
-          <span class="muted">스텝 <b id="ed-step-count">0</b></span>
+          <div class="bar-group">
+            <span class="bar-label">속도 <b id="ed-speed-val">1.0x</b></span>
+            <input id="ed-speed" type="range" min="0.1" max="5" step="0.1" value="1" />
+          </div>
+          <div class="bar-group">
+            <span class="bar-label">휴머나이즈 <b id="ed-random-val">0%</b></span>
+            <input id="ed-random" type="range" min="0" max="90" step="5" value="0" />
+          </div>
+          <div class="bar-group grow">
+            <span class="bar-label">트리거</span>
+            <input id="ed-hotkey" type="text" readonly placeholder="클릭 후 키·마우스(엄지 X1/X2)" />
+            <button id="ed-hotkey-pad" class="btn ghost sm" title="게임패드 버튼을 트리거로 잡기">🎮</button>
+            <button id="ed-hotkey-clear" class="btn ghost sm" title="트리거 지우기">✕</button>
+          </div>
         </div>
 
-        <!-- 스텝 그리드 -->
-        <div class="grid-wrap">
-          <table class="grid">
-            <thead>
-              <tr>
-                <th class="c-chk"><input id="chk-all" type="checkbox" /></th>
-                <th class="c-idx">#</th>
-                <th class="c-type">타입</th>
-                <th class="c-detail">상세</th>
-                <th class="c-delay">지연(ms)</th>
-                <th class="c-act"></th>
-              </tr>
-            </thead>
-            <tbody id="grid-body"></tbody>
-          </table>
-          <p id="grid-empty" class="hint">스텝이 없습니다. 녹화하거나 위에서 삽입하세요.</p>
+        <!-- 녹화 바 -->
+        <div class="bar" id="recorder-panel">
+          <div class="bar-group">
+            <button id="rec-toggle" class="btn rec">● 녹화 시작</button>
+            <span id="rec-status" class="rec-status"></span>
+          </div>
+          <div class="bar-group">
+            <span class="bar-label">지연</span>
+            <div class="seg" id="seg-recdelay">
+              <button class="seg-btn" data-val="record" title="실제 입력 간격을 그대로 기록">실제</button>
+              <button class="seg-btn" data-val="fixed" title="모든 스텝에 고정 간격">고정</button>
+              <button class="seg-btn" data-val="none" title="간격 없이 즉시 연속">없음</button>
+            </div>
+            <input id="opt-fixed-ms" type="number" min="0" step="10" value="50" class="mini" title="고정 지연(ms)" />
+          </div>
+          <div class="bar-group grow">
+            <span class="bar-label">기록 대상</span>
+            <div class="chips" id="rec-targets">
+              <button class="chip on" data-t="keyboard">⌨ 키보드</button>
+              <button class="chip on" data-t="mouseButtons">🖱 클릭</button>
+              <button class="chip" data-t="mouseMove">↔ 이동</button>
+              <button class="chip on" data-t="mouseWheel">⊙ 휠</button>
+              <button class="chip" data-t="gamepad">🎮 패드</button>
+            </div>
+          </div>
+          <div class="bar-group">
+            <button class="chip on" id="opt-countdown" title="녹화 시작 전 3초 카운트다운">⏱ 3초</button>
+          </div>
+        </div>
+
+        <!-- 스텝 툴바 -->
+        <div class="steps-toolbar">
+          <div class="ins">
+            <select id="insert-type" class="sel">
+              <option value="key-press">⌨ 키 누름(↓↑)</option>
+              <option value="key-down">⌨ 키 Down</option>
+              <option value="key-up">⌨ 키 Up</option>
+              <option value="mouse-click">🖱 마우스 클릭</option>
+              <option value="mouse-move">🖱 마우스 이동</option>
+              <option value="mouse-wheel">🖱 마우스 휠</option>
+              <option value="delay">⏱ 지연(Wait)</option>
+              <option value="gamepad">🎮 게임패드</option>
+              <option value="text">🔤 텍스트</option>
+            </select>
+            <button id="btn-insert" class="btn sm">+ 추가</button>
+          </div>
+          <div class="spacer"></div>
+          <button id="btn-selall" class="btn ghost sm">전체 선택</button>
+        </div>
+
+        <!-- 선택 액션바 -->
+        <div id="sel-bar" class="sel-bar" hidden>
+          <span class="sel-count"><b id="sel-count">0</b>개 선택</span>
+          <span class="sep"></span>
+          <button id="btn-dup" class="btn ghost sm">⎘ 복제</button>
+          <button id="btn-up" class="btn ghost sm">↑ 위로</button>
+          <button id="btn-down" class="btn ghost sm">↓ 아래로</button>
+          <button id="btn-bulk-set" class="btn ghost sm">지연 설정</button>
+          <button id="btn-bulk-scale" class="btn ghost sm">지연 배율</button>
+          <span class="spacer"></span>
+          <button id="btn-del" class="btn ghost sm danger">✕ 삭제</button>
+          <button id="btn-selclear" class="btn ghost sm">선택 해제</button>
+        </div>
+
+        <!-- 스텝 리스트(타임라인) -->
+        <div class="steps-wrap">
+          <div class="steps-head">
+            <span class="sh-drag"></span>
+            <span class="sh-num">#</span>
+            <span class="sh-type">타입</span>
+            <span class="sh-detail">동작</span>
+            <span class="sh-delay">지연</span>
+            <span class="sh-act"></span>
+          </div>
+          <div id="steps" class="steps"></div>
+          <p id="grid-empty" class="hint">스텝이 없습니다. 녹화하거나 위에서 <b>+ 추가</b>로 만드세요.</p>
         </div>
       </div>
     </section>
@@ -179,7 +200,6 @@
 
   <footer class="footer">
     <span>로컬 전용 · <code id="foot-url"></code></span>
-    <span class="warn">⚠ 온라인 경쟁 게임에서의 사용은 약관 위반·탐지 대상이 될 수 있습니다.</span>
   </footer>
 
   <script type="module" src="app.js"></script>

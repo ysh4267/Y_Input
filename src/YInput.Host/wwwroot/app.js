@@ -146,7 +146,6 @@ function wire() {
   $('btn-record').onclick = () => {
     if (state.status?.state === 'recording') { recorder.stop(); return; }
     editor.open(null);
-    $('recorder-panel').open = true;
     recorder.start();
   };
   $('btn-clear-log').onclick = () => { $('log').innerHTML = ''; };
