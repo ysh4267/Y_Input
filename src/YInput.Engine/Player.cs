@@ -1,0 +1,84 @@
+using YInput.Core.Models;
+using YInput.Input;
+
+namespace YInput.Engine;
+
+/// <summary>재생 진행 상황(루프 인덱스, 현재 스텝/전체).</summary>
+public readonly record struct PlaybackProgress(int Loop, int StepIndex, int StepCount);
+
+/// <summary>
+/// 매크로를 <see cref="IInputSink"/>로 순차 재생한다. 속도 배율·반복·취소를 지원하며
+/// 스텝 간 지연은 <see cref="PreciseDelay"/>로 정밀하게 대기한다.
+/// </summary>
+public sealed class Player
+{
+    private readonly IInputSink _sink;
+    private CancellationTokenSource? _cts;
+
+    public bool IsPlaying { get; private set; }
+
+    public event EventHandler? Started;
+    public event EventHandler? Stopped;
+    public event EventHandler<PlaybackProgress>? Progress;
+    public event EventHandler<Exception>? Failed;
+
+    public Player(IInputSink sink) => _sink = sink;
+
+    /// <summary>지연(ms)에 속도 배율을 적용한 실제 대기 시간. (순수 함수 — 테스트 대상)</summary>
+    public static double EffectiveDelayMs(double delayBeforeMs, double speedMultiplier)
+    {
+        var speed = speedMultiplier <= 0 ? 1.0 : speedMultiplier;
+        return delayBeforeMs <= 0 ? 0 : delayBeforeMs / speed;
+    }
+
+    /// <summary>매크로를 재생한다. 이미 재생 중이면 무시. 백그라운드에서 완료될 때까지 대기 가능.</summary>
+    public async Task PlayAsync(Macro macro, CancellationToken external = default)
+    {
+        if (IsPlaying) return;
+
+        _cts = CancellationTokenSource.CreateLinkedTokenSource(external);
+        var ct = _cts.Token;
+        IsPlaying = true;
+        Started?.Invoke(this, EventArgs.Empty);
+
+        using var _ = MultimediaTimerScope.HighResolution();
+        try
+        {
+            double speed = macro.SpeedMultiplier;
+            int loops = macro.IsInfinite ? int.MaxValue : Math.Max(1, macro.LoopCount);
+
+            for (int loop = 0; loop < loops && !ct.IsCancellationRequested; loop++)
+            {
+                for (int i = 0; i < macro.Steps.Count; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var step = macro.Steps[i];
+
+                    var delay = EffectiveDelayMs(step.DelayBeforeMs, speed);
+                    if (delay > 0)
+                        await PreciseDelay.WaitAsync(delay, ct).ConfigureAwait(false);
+
+                    _sink.Send(step.Event);
+                    Progress?.Invoke(this, new PlaybackProgress(loop, i, macro.Steps.Count));
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 정상 정지
+        }
+        catch (Exception ex)
+        {
+            Failed?.Invoke(this, ex);
+        }
+        finally
+        {
+            IsPlaying = false;
+            _cts?.Dispose();
+            _cts = null;
+            Stopped?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    public void Stop() => _cts?.Cancel();
+}

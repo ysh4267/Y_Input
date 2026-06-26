@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Y_Input — 드라이버급 입력 매크로</title>
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Y_Input <span class="sub">드라이버급 입력 매크로</span></div>
+    <div class="status-pills">
+      <span id="state-badge" class="badge idle">대기</span>
+      <span id="ws-dot" class="ws-dot off" title="실시간 연결"></span>
+    </div>
+  </header>
+
+  <main class="grid">
+    <!-- 왼쪽: 드라이버 + 매크로 -->
+    <section class="col">
+      <div class="card" id="driver-card">
+        <h2>드라이버 / 장치</h2>
+        <ul class="kv">
+          <li><span>Interception (키보드·마우스)</span><b id="d-interception">—</b></li>
+          <li><span>ViGEmBus (게임패드)</span><b id="d-vigem">—</b></li>
+          <li><span>관리자 권한</span><b id="d-admin">—</b></li>
+        </ul>
+        <p id="device-hint" class="hint"></p>
+        <div class="row">
+          <button id="btn-install" class="btn">드라이버 설치/점검</button>
+        </div>
+        <div class="row">
+          <button id="btn-pad-connect" class="btn">게임패드 연결</button>
+          <button id="btn-pad-disconnect" class="btn ghost">해제</button>
+          <button id="btn-pad-test" class="btn ghost" title="A 버튼 0.2초">패드 A 테스트</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>매크로</h2>
+          <div class="row">
+            <button id="btn-record" class="btn rec">● 녹화</button>
+            <button id="btn-new" class="btn ghost">+ 새 매크로</button>
+          </div>
+        </div>
+        <ul id="macro-list" class="macro-list"></ul>
+        <p id="macro-empty" class="hint">저장된 매크로가 없습니다. 녹화하거나 새로 만드세요.</p>
+      </div>
+    </section>
+
+    <!-- 오른쪽: 에디터 + 로그 -->
+    <section class="col">
+      <div class="card" id="editor-card" hidden>
+        <div class="card-head">
+          <h2>편집</h2>
+          <div class="row">
+            <button id="btn-save" class="btn">저장</button>
+            <button id="btn-cancel" class="btn ghost">닫기</button>
+          </div>
+        </div>
+        <div class="form">
+          <label>이름 <input id="ed-name" type="text" /></label>
+          <div class="form-row">
+            <label>반복 <input id="ed-loop" type="number" min="0" step="1" title="0=무한" /></label>
+            <label>속도 <input id="ed-speed" type="number" min="0.1" step="0.1" /></label>
+          </div>
+          <label>트리거 핫키
+            <div class="hotkey-input">
+              <input id="ed-hotkey" type="text" readonly placeholder="여기를 클릭 후 키 조합 입력" />
+              <button id="ed-hotkey-clear" class="btn ghost sm">지우기</button>
+            </div>
+          </label>
+        </div>
+        <div class="steps-head">
+          <span>스텝 (<b id="ed-step-count">0</b>)</span>
+          <button id="btn-add-text" class="btn ghost sm">+ 텍스트 입력</button>
+        </div>
+        <ol id="ed-steps" class="steps"></ol>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>실시간 로그</h2>
+          <button id="btn-clear-log" class="btn ghost sm">지우기</button>
+        </div>
+        <div id="progress" class="progress" hidden>
+          <div class="bar"><span id="progress-bar"></span></div>
+          <span id="progress-text"></span>
+        </div>
+        <div id="log" class="log"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>로컬 전용 · <code id="foot-url"></code></span>
+    <span class="warn">⚠ 온라인 경쟁 게임에서의 사용은 해당 게임 약관 위반·탐지 대상이 될 수 있습니다.</span>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+# 빌드 산출물
+bin/
+obj/
+dist/
+dist-single/
+*.zip
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# 테스트 결과
+[Tt]est[Rr]esults/
+*.trx
+*.coverage
+*.coveragexml
+
+# 기타
+*.log
+Thumbs.db
+desktop.ini

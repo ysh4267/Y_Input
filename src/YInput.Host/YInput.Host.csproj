@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>true</UseWindowsForms>
+    <OutputType>WinExe</OutputType>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RootNamespace>YInput.Host</RootNamespace>
+    <AssemblyName>YInput</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\YInput.Core\YInput.Core.csproj" />
+    <ProjectReference Include="..\YInput.Input\YInput.Input.csproj" />
+    <ProjectReference Include="..\YInput.Engine\YInput.Engine.csproj" />
+  </ItemGroup>
+
+  <!-- 웹 UI를 출력 폴더에도 복사(ContentRoot=실행 폴더이므로 dev/배포 모두 wwwroot 서빙) -->
+  <ItemGroup>
+    <Content Update="wwwroot\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- 동봉 드라이버 설치 파일을 출력/게시 폴더의 drivers\ 로 복사 -->
+  <ItemGroup>
+    <None Remove="drivers\**\*" />
+    <Content Include="drivers\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

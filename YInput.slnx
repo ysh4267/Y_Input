@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/YInput.Core/YInput.Core.csproj" />
+    <Project Path="src/YInput.Engine/YInput.Engine.csproj" />
+    <Project Path="src/YInput.Host/YInput.Host.csproj" />
+    <Project Path="src/YInput.Input/YInput.Input.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/YInput.Core.Tests/YInput.Core.Tests.csproj" />
+  </Folder>
+</Solution>
