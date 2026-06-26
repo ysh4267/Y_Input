@@ -4,8 +4,11 @@ obj/
 dist/
 dist-single/
 publish-single/
+publish-exe/
+verify-exe/
 Build/
 *.zip
+app.noadmin.manifest
 
 # Visual Studio / Rider
 .vs/

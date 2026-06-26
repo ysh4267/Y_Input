@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using Microsoft.Extensions.FileProviders;
 using YInput.Core.Persistence;
 using YInput.Engine;
 using YInput.Host.Services;
@@ -73,8 +74,15 @@ internal static class Program
 
         var app = builder.Build();
         app.UseWebSockets();
-        app.UseDefaultFiles();
-        app.UseStaticFiles();
+
+        // 웹 UI는 어셈블리에 임베디드된 wwwroot에서 서빙(단일 exe에 포함됨)
+        var webUi = new ManifestEmbeddedFileProvider(typeof(Program).Assembly, "wwwroot");
+        var defaultFiles = new DefaultFilesOptions { FileProvider = webUi };
+        defaultFiles.DefaultFileNames.Clear();
+        defaultFiles.DefaultFileNames.Add("index.html");
+        app.UseDefaultFiles(defaultFiles);
+        app.UseStaticFiles(new StaticFileOptions { FileProvider = webUi });
+
         app.MapApi(service, hub);
         return app;
     }

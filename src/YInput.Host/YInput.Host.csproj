@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0-windows</TargetFramework>
@@ -9,7 +9,14 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <RootNamespace>YInput.Host</RootNamespace>
     <AssemblyName>YInput</AssemblyName>
+    <!-- 웹 UI를 exe에 내장하기 위한 매니페스트 생성 -->
+    <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
   </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.0" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\YInput.Core\YInput.Core.csproj" />
@@ -17,15 +24,21 @@
     <ProjectReference Include="..\YInput.Engine\YInput.Engine.csproj" />
   </ItemGroup>
 
-  <!-- 웹 UI를 출력 폴더에도 복사(ContentRoot=실행 폴더이므로 dev/배포 모두 wwwroot 서빙) -->
+  <!-- 웹 UI(wwwroot)를 어셈블리에 임베디드 → 단일 exe에 포함 -->
   <ItemGroup>
-    <Content Update="wwwroot\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <EmbeddedResource Include="wwwroot\**\*" />
   </ItemGroup>
 
-  <!-- 동봉 드라이버 설치 파일을 출력/게시 폴더의 drivers\ 로 복사 -->
+  <!-- Web SDK가 자동 제공하던 ASP.NET Core 암묵적 using 복원 -->
   <ItemGroup>
-    <None Remove="drivers\**\*" />
-    <Content Include="drivers\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Using Include="Microsoft.AspNetCore.Builder" />
+    <Using Include="Microsoft.AspNetCore.Hosting" />
+    <Using Include="Microsoft.AspNetCore.Http" />
+    <Using Include="Microsoft.AspNetCore.Routing" />
+    <Using Include="Microsoft.Extensions.Configuration" />
+    <Using Include="Microsoft.Extensions.DependencyInjection" />
+    <Using Include="Microsoft.Extensions.Hosting" />
+    <Using Include="Microsoft.Extensions.Logging" />
   </ItemGroup>
 
 </Project>
