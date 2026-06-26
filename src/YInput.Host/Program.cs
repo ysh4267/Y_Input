@@ -54,6 +54,7 @@ internal static class Program
 
         // 트레이 + 드라이버 부트스트랩(백그라운드)
         var tray = new TrayAppContext(service);
+        tray.OpenUi(); // 실행 즉시 기본 브라우저로 편집 UI 열기
         RunBootstrap(service, tray);
 
         // 메시지 루프(블로킹) — 종료 시까지
@@ -101,7 +102,7 @@ internal static class Program
                 if (result.RebootRequired)
                     tray.ShowBalloon("드라이버 설치 완료", "키보드·마우스 드라이버 적용을 위해 PC를 재부팅하세요.");
                 else
-                    tray.ShowBalloon("Y_Input 준비됨", "트레이 아이콘을 더블클릭하거나 'UI 열기'를 누르세요.");
+                    tray.ShowBalloon("Y_Input 준비됨", "편집 UI가 브라우저에 열렸습니다. (트레이에서 다시 열 수 있어요)");
             }
             catch (Exception ex)
             {

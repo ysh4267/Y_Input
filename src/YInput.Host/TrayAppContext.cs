@@ -33,13 +33,13 @@ internal sealed class TrayAppContext : ApplicationContext
         {
             Icon = SystemIcons.Application,
             Visible = true,
-            Text = "Y_Input — 드라이버급 입력 매크로",
+            Text = "Y_Input",
             ContextMenuStrip = menu,
         };
         _icon.DoubleClick += (_, _) => OpenUi();
     }
 
-    private void OpenUi()
+    public void OpenUi()
     {
         try
         {

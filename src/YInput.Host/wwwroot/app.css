@@ -169,7 +169,8 @@ input[type=range] { accent-color: var(--accent); }
 
 /* 스텝 리스트(타임라인) */
 .steps-wrap { border: 1px solid var(--border); border-radius: 11px; overflow: hidden; }
-.steps-head, .step { display: grid; grid-template-columns: 18px 30px 42px 92px 1fr 116px 78px; align-items: center; gap: 8px; padding: 7px 12px; }
+.steps-head, .step { display: grid; grid-template-columns: 30px 42px 88px minmax(190px, 340px) 96px 58px minmax(90px, 1fr); align-items: center; gap: 8px; padding: 7px 12px; }
+.sh-pair { padding-left: 4px; }
 .steps-head { background: var(--card2); border-bottom: 1px solid var(--border); font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
 .steps { max-height: 48vh; overflow-y: auto; min-height: 64px; }
 .steps-empty { padding: 30px 16px; text-align: center; color: var(--muted); font-size: 13px; }
@@ -201,7 +202,7 @@ input[type=range] { accent-color: var(--accent); }
 
 .step-detail { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; min-width: 0; }
 .step-detail input[type=number] { width: 66px; }
-.step-detail input[type=text] { width: 100%; min-width: 90px; max-width: 280px; }
+.step-detail input[type=text] { width: 100%; min-width: 90px; max-width: 220px; }
 .step-detail .sel { padding: 4px 7px; }
 
 /* 키캡 */

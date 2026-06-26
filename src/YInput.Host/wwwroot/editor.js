@@ -109,12 +109,12 @@ export function createEditor({ log, onSaved, getStatus }) {
     pairs.forEach((p) => {
       let lane = laneEnds.findIndex((end) => p.down > end);
       if (lane === -1) { lane = laneEnds.length; laneEnds.push(p.up); } else laneEnds[lane] = p.up;
-      p.lane = Math.min(lane, 2);
+      p.lane = Math.min(lane, 7);
     });
     const COLORS = ['#6b8cff', '#34d399', '#c084fc', '#f0a93b', '#f472b6'];
     pairs.forEach((p, pi) => {
       const color = COLORS[pi % COLORS.length];
-      const x = 3 + p.lane * 5;
+      const x = 10 + p.lane * 16; // 우측 트랙: 넓은 레인 간격(git 그래프 느낌)
       for (let i = p.down; i <= p.up; i++) {
         const g = gutters[i]; if (!g) continue;
         const seg = document.createElement('div');
@@ -137,9 +137,6 @@ export function createEditor({ log, onSaved, getStatus }) {
     const row = document.createElement('div');
     row.className = 'step';
     row.dataset.i = i;
-
-    // 한 세트 연결선 거터(렌더 후 renderPairLines가 채움)
-    const pairCell = document.createElement('span'); pairCell.className = 'step-pair'; row.appendChild(pairCell);
 
     // 드래그 핸들
     const drag = document.createElement('span');
@@ -175,6 +172,9 @@ export function createEditor({ log, onSaved, getStatus }) {
     const bDel = document.createElement('button'); bDel.className = 'rowbtn del'; bDel.title = '삭제'; bDel.textContent = '✕';
     bDel.onclick = (e) => { e.stopPropagation(); editing.steps.splice(i, 1); selected.delete(i); renderSteps(); };
     act.append(bDup, bDel); row.appendChild(act);
+
+    // 한 세트(키 Down↔Up) 연결선 트랙 — 우측. renderPairLines가 채움
+    const pairCell = document.createElement('span'); pairCell.className = 'step-pair'; row.appendChild(pairCell);
 
     // 선택(행 클릭) — 입력/버튼/드래그핸들 클릭은 제외
     row.onclick = (e) => {
