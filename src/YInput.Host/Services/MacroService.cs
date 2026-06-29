@@ -395,8 +395,12 @@ public sealed class MacroService
         }
         if (startPlay)
         {
-            try { Play(macroId); }
-            catch (Exception ex) { Log("error", ex.Message); }
+            // 저수준 훅 콜백을 막지 않도록 로드/전개/재생은 백그라운드에서(훅 타임아웃에 의한 트리거 누락 방지)
+            _ = Task.Run(() =>
+            {
+                try { Play(macroId); }
+                catch (Exception ex) { Log("error", ex.Message); }
+            });
         }
     }
 }

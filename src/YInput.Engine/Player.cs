@@ -89,11 +89,12 @@ public sealed class Player
                         case DelayEvent de:
                             // 대기는 '지연' 블록에서만 발생(속도·휴머나이즈 적용). 다른 블록은 즉시 실행.
                             // 휴머나이즈는 각 지연 블록이 개별로 가진다(없으면 0 = 흔들림 없음).
+                            // 진행 보고는 '대기 시작 시점'에 — 그래야 대기 중 하이라이트가 직전 입력이 아닌 이 지연 행에 간다.
+                            Progress?.Invoke(this, new PlaybackProgress(loop, ip, steps.Count));
                             var delay = EffectiveDelayMs(step.DelayBeforeMs, speed);
                             delay = ApplyJitter(delay, de.RandomizePercent, Random.Shared);
                             if (delay > 0)
                                 await PreciseDelay.WaitAsync(delay, ct).ConfigureAwait(false);
-                            Progress?.Invoke(this, new PlaybackProgress(loop, ip, steps.Count));
                             ip++;
                             break;
                         default:
