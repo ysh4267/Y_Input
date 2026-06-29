@@ -8,7 +8,12 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">Y_Input</div>
+    <div class="topbar-left">
+      <button id="btn-settings" class="icon-btn" title="설정 (드라이버·업데이트)" aria-label="설정 메뉴">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3.5 6.5h17M3.5 12h17M3.5 17.5h17"/></svg>
+      </button>
+      <div class="brand">Y_Input</div>
+    </div>
     <nav class="tabs" id="tabs">
       <button class="tab-btn" data-tab="run">매크로 실행</button>
       <button class="tab-btn active" data-tab="edit">매크로 편집</button>
@@ -16,9 +21,6 @@
     <div class="status-pills">
       <span id="state-badge" class="badge idle">대기</span>
       <span id="ws-dot" class="ws-dot off" title="실시간 연결"></span>
-      <button id="btn-settings" class="icon-btn" title="설정 (드라이버·업데이트)" aria-label="설정">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.6v3.1M12 18.3v3.1M21.4 12h-3.1M5.7 12H2.6M18.6 5.4l-2.2 2.2M7.6 16.4l-2.2 2.2M18.6 18.6l-2.2-2.2M7.6 7.6 5.4 5.4"/></svg>
-      </button>
     </div>
   </header>
 
