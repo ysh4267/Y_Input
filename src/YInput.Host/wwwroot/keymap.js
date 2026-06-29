@@ -221,6 +221,53 @@ export function loopEndEvent() {
   return { '$type': 'loopEnd' };
 }
 
+// ---------- 유니버설 입력(키보드·마우스 버튼·게임패드) 공통 ----------
+const MOUSE_BTN_NAME = { left: '마우스 좌', right: '마우스 우', middle: '마우스 중' };
+export function mouseButtonOf(ev) {
+  if (ev.buttonState & (MOUSE.RightDown | MOUSE.RightUp)) return 'right';
+  if (ev.buttonState & (MOUSE.MidDown | MOUSE.MidUp)) return 'middle';
+  return 'left';
+}
+export function isMouseButton(ev) {
+  if (ev['$type'] !== 'mouse') return false;
+  const bits = MOUSE.LeftDown | MOUSE.LeftUp | MOUSE.RightDown | MOUSE.RightUp | MOUSE.MidDown | MOUSE.MidUp;
+  return (ev.buttonState & bits) !== 0;
+}
+/** 입력 블록이 유니버설(키/마우스버튼/패드) 캡처 대상인가 */
+export function isUniversalInput(ev) {
+  const t = ev['$type'];
+  return t === 'keyboard' || t === 'gamepad' || isMouseButton(ev);
+}
+/** 표시 라벨(키캡/버튼명/패드명) */
+export function inputLabel(ev) {
+  const t = ev['$type'];
+  if (t === 'keyboard') return keyName(ev);
+  if (t === 'mouse') return MOUSE_BTN_NAME[mouseButtonOf(ev)] || '마우스';
+  if (t === 'gamepad') return 'Pad ' + ev.control;
+  return '?';
+}
+/** 누름(true)/뗌(false) */
+export function inputDirection(ev) {
+  const t = ev['$type'];
+  if (t === 'keyboard') return (ev.state & 1) === 0;
+  if (t === 'mouse') return (ev.buttonState & (MOUSE.LeftDown | MOUSE.RightDown | MOUSE.MidDown)) !== 0;
+  if (t === 'gamepad') return (ev.value | 0) !== 0;
+  return true;
+}
+/** 방향을 in-place로 설정(키 state 비트 / 마우스 Down↔Up / 패드 value 1↔0) */
+export function setInputDirection(ev, down) {
+  const t = ev['$type'];
+  if (t === 'keyboard') ev.state = (ev.state & 0x02) | (down ? 0 : 1);
+  else if (t === 'mouse') Object.assign(ev, mouseButtonEvent(mouseButtonOf(ev), down));
+  else if (t === 'gamepad') ev.value = down ? 1 : 0;
+}
+/** 브라우저 keydown(code) → 키보드 입력 이벤트(방향 지정) */
+export function keyEventFromCode(code, down) {
+  const info = scanInfo(code);
+  if (!info) return null;
+  return { '$type': 'keyboard', code: info.scan, state: (info.e0 ? 0x02 : 0) | (down ? 0 : 1) };
+}
+
 // ---------- 공통 요약 ----------
 export function summarizeEvent(ev) {
   switch (ev['$type']) {

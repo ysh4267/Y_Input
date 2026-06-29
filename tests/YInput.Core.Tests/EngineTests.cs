@@ -94,12 +94,12 @@ public class RecorderTests
     }
 
     [Fact]
-    public void RecordsEventsWithFirstDelayZero()
+    public void InsertsDelayBlocksBetweenInputs()
     {
         var source = new FakeSource();
         var rec = new Recorder(source);
 
-        rec.Start();
+        rec.Start(new RecordOptions(FixedDelayMs: 50));
         Assert.True(source.IsCapturing);
         source.Emit(new KeyboardEvent { Code = 30, State = 0 });
         source.Emit(new KeyboardEvent { Code = 30, State = 1 });
@@ -107,8 +107,13 @@ public class RecorderTests
 
         Assert.False(source.IsCapturing);
         Assert.Equal("captured", macro.Name);
-        Assert.Equal(2, macro.Steps.Count);
-        Assert.Equal(0, macro.Steps[0].DelayBeforeMs); // 첫 스텝 지연 0
-        Assert.True(macro.Steps[1].DelayBeforeMs >= 0);
+        // 입력 스텝은 지연 0, 입력 사이 간격은 별도 '지연' 블록
+        Assert.Equal(3, macro.Steps.Count);
+        Assert.IsType<KeyboardEvent>(macro.Steps[0].Event);
+        Assert.Equal(0, macro.Steps[0].DelayBeforeMs); // 첫 입력 앞에는 지연 블록 없음
+        Assert.IsType<DelayEvent>(macro.Steps[1].Event);
+        Assert.Equal(50, macro.Steps[1].DelayBeforeMs);
+        Assert.IsType<KeyboardEvent>(macro.Steps[2].Event);
+        Assert.Equal(0, macro.Steps[2].DelayBeforeMs);
     }
 }

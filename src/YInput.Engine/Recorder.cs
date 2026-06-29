@@ -17,9 +17,9 @@ public sealed record RecordOptions(
 }
 
 /// <summary>
-/// <see cref="IInputSource"/>에서 캡처되는 입력을 타임스탬프와 함께 매크로로 기록한다.
-/// 첫 스텝의 지연은 0, 이후는 직전(기록된) 이벤트와의 실제 간격(ms)으로 채운다.
-/// <see cref="RecordOptions"/>로 기록 대상·지연 모드를 제어한다.
+/// <see cref="IInputSource"/>에서 캡처되는 입력을 매크로로 기록한다.
+/// 지연은 입력 스텝에 싣지 않고, 입력 사이 간격을 **별도의 '지연'(<see cref="DelayEvent"/>) 블록**으로 삽입한다
+/// (첫 입력 앞에는 없음). <see cref="RecordOptions"/>로 기록 대상·지연 모드를 제어한다.
 /// </summary>
 public sealed class Recorder
 {
@@ -75,15 +75,23 @@ public sealed class Recorder
         lock (_gate)
         {
             if (!IsRecording || _steps is null) return;
-            if (!ShouldRecord(e)) return; // 필터된 이벤트는 _lastMs도 갱신하지 않음(다음 스텝 지연에 누적)
+            if (!ShouldRecord(e)) return; // 필터된 이벤트는 _lastMs도 갱신하지 않음(다음 지연에 누적)
 
             double now = _clock.Elapsed.TotalMilliseconds;
-            double delay = _steps.Count == 0
-                ? 0
-                : (_options.FixedDelayMs ?? (now - _lastMs));
+            // 입력 사이 간격은 별도 '지연' 블록으로 삽입(첫 입력 앞에는 없음). 입력 스텝 자체의 지연은 0.
+            if (_steps.Count > 0)
+            {
+                double gap = _options.FixedDelayMs ?? (now - _lastMs);
+                if (gap > 0)
+                {
+                    var delayStep = new MacroStep(new DelayEvent(), gap);
+                    _steps.Add(delayStep);
+                    StepRecorded?.Invoke(this, delayStep);
+                }
+            }
             _lastMs = now;
 
-            var step = new MacroStep(e, delay);
+            var step = new MacroStep(e, 0);
             _steps.Add(step);
             StepRecorded?.Invoke(this, step);
         }

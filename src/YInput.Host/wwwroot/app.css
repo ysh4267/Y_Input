@@ -170,26 +170,31 @@ input[type=range] { accent-color: var(--accent); }
 .pal-item:active { cursor: grabbing; }
 .pal-item.dragging { opacity: .5; }
 .pal-ico { width: 24px; height: 24px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0; }
+.pal-sub { margin-left: auto; font-size: 10px; color: var(--muted); font-weight: 600; }
 
 /* 스텝 리스트(타임라인) */
 .steps-wrap { border: 1px solid var(--border); border-radius: 11px; overflow: hidden; }
-.steps-head, .step { display: grid; grid-template-columns: 30px 42px 88px minmax(190px, 340px) 96px 58px minmax(90px, 1fr); align-items: center; gap: 8px; padding: 7px 12px; }
+.steps-head, .step { display: grid; grid-template-columns: 58px 40px 84px minmax(180px, 360px) minmax(90px, 1fr); align-items: center; gap: 8px; padding: 7px 12px; }
 .sh-pair { padding-left: 4px; }
 .steps-head { background: var(--card2); border-bottom: 1px solid var(--border); font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
-.steps { max-height: 48vh; overflow-y: auto; min-height: 64px; }
+.steps { max-height: 48vh; overflow-y: auto; min-height: 72px; position: relative; }
 .steps-empty { padding: 30px 16px; text-align: center; color: var(--muted); font-size: 13px; }
+.marquee { position: absolute; border: 1px solid var(--accent); background: rgba(79,140,255,.12); pointer-events: none; z-index: 5; border-radius: 3px; }
 
 /* 키 누름↔뗌 한 세트 연결선(좌측 거터) */
 .step-pair { align-self: stretch; position: relative; }
 .pair-seg { position: absolute; width: 2px; border-radius: 1px; }
 .pair-node { position: absolute; top: 50%; width: 7px; height: 7px; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 2px var(--card); }
-.step { border-bottom: 1px solid var(--border); background: var(--card); transition: background .1s; }
+.step { border-bottom: 1px solid var(--border); background: var(--card); transition: background .1s; cursor: grab; }
+.step:active { cursor: grabbing; }
+.step input, .step textarea { cursor: text; }
+.step select, .step button, .step .keycap, .step .dir-badge, .step label { cursor: pointer; }
 .step:last-child { border-bottom: none; }
 .step:hover { background: var(--card2); }
 .step.sel { background: rgba(79,140,255,.12); }
 .step.sel:hover { background: rgba(79,140,255,.16); }
 .step.dragover { box-shadow: inset 0 2px 0 var(--accent); }
-.step.dragging { opacity: .4; }
+.step.dragging { opacity: .55; background: var(--card3); }
 /* 반복(루프) 블록 */
 .step.in-loop { box-shadow: inset 3px 0 0 var(--t-loop); }
 .step.loop-marker { background: rgba(251,146,60,.10); }
@@ -230,9 +235,8 @@ input[type=range] { accent-color: var(--accent); }
 .step-delay input { width: 64px; text-align: right; }
 .step-delay .unit { font-size: 11px; color: var(--muted); }
 
-/* 행 액션(호버) */
-.step-act { display: flex; gap: 2px; justify-content: flex-end; opacity: 0; transition: opacity .1s; }
-.step:hover .step-act, .step.sel .step-act { opacity: 1; }
+/* 행 액션(복제/삭제) — 맨 왼쪽 상시 표시 */
+.step-act { display: flex; gap: 2px; justify-content: flex-start; }
 .rowbtn { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 3px 5px; border-radius: 6px; }
 .rowbtn:hover { color: var(--text); background: var(--card3); }
 .rowbtn.del:hover { color: var(--rec); }

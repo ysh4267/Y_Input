@@ -110,7 +110,8 @@ public class RecorderFilterTests
     {
         var src = new FakeCaptureSource();
         var rec = new Recorder(src);
-        rec.Start(new RecordOptions(Keyboard: true, MouseButtons: true, MouseMove: false, MouseWheel: true));
+        // 지연 블록 삽입은 별도 테스트 — 여기선 FixedDelayMs:0으로 끄고 필터만 검증
+        rec.Start(new RecordOptions(Keyboard: true, MouseButtons: true, MouseMove: false, MouseWheel: true, FixedDelayMs: 0));
 
         src.Emit(new MouseEvent { X = 10 });               // move → 제외
         src.Emit(new KeyboardEvent { Code = 30, State = 0 }); // 키 → 기록
@@ -124,7 +125,7 @@ public class RecorderFilterTests
     }
 
     [Fact]
-    public void AppliesFixedDelay()
+    public void InsertsFixedDelayBlocksBetweenInputs()
     {
         var src = new FakeCaptureSource();
         var rec = new Recorder(src);
@@ -135,10 +136,13 @@ public class RecorderFilterTests
         src.Emit(new KeyboardEvent { Code = 31, State = 0 });
 
         var macro = rec.Stop("t");
-        Assert.Equal(3, macro.Steps.Count);
-        Assert.Equal(0, macro.Steps[0].DelayBeforeMs);   // 첫 스텝 0
-        Assert.Equal(50, macro.Steps[1].DelayBeforeMs);
-        Assert.Equal(50, macro.Steps[2].DelayBeforeMs);
+        // 입력 3개 + 그 사이 지연 블록 2개 = 5스텝, 입력은 지연 0
+        Assert.Equal(5, macro.Steps.Count);
+        Assert.IsType<KeyboardEvent>(macro.Steps[0].Event);
+        Assert.IsType<DelayEvent>(macro.Steps[1].Event); Assert.Equal(50, macro.Steps[1].DelayBeforeMs);
+        Assert.IsType<KeyboardEvent>(macro.Steps[2].Event);
+        Assert.IsType<DelayEvent>(macro.Steps[3].Event); Assert.Equal(50, macro.Steps[3].DelayBeforeMs);
+        Assert.IsType<KeyboardEvent>(macro.Steps[4].Event);
     }
 }
 

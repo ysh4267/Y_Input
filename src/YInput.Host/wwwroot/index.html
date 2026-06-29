@@ -172,26 +172,19 @@
         <div class="editor-body">
           <aside class="palette" id="palette">
             <div class="palette-title">동작</div>
-            <button class="pal-item" data-type="key-press" draggable="true"><span class="pal-ico type-keyboard">⌨</span> 키 누름 (↓↑)</button>
-            <button class="pal-item" data-type="key-down" draggable="true"><span class="pal-ico type-keyboard">⌨</span> 키 Down</button>
-            <button class="pal-item" data-type="key-up" draggable="true"><span class="pal-ico type-keyboard">⌨</span> 키 Up</button>
-            <button class="pal-item" data-type="mouse-click" draggable="true"><span class="pal-ico type-mouse">🖱</span> 마우스 클릭</button>
-            <button class="pal-item" data-type="mouse-move" draggable="true"><span class="pal-ico type-mouse">🖱</span> 마우스 이동</button>
-            <button class="pal-item" data-type="mouse-wheel" draggable="true"><span class="pal-ico type-mouse">🖱</span> 마우스 휠</button>
+            <button class="pal-item" data-type="input-down" draggable="true"><span class="pal-ico type-keyboard">⌨</span> 입력 Down <span class="pal-sub">키·마우스·패드</span></button>
+            <button class="pal-item" data-type="input-up" draggable="true"><span class="pal-ico type-keyboard">⌨</span> 입력 Up <span class="pal-sub">키·마우스·패드</span></button>
             <button class="pal-item" data-type="delay" draggable="true"><span class="pal-ico type-delay">⏱</span> 지연 (Wait)</button>
-            <button class="pal-item" data-type="gamepad" draggable="true"><span class="pal-ico type-gamepad">🎮</span> 게임패드</button>
             <button class="pal-item" data-type="text" draggable="true"><span class="pal-ico type-text">🔤</span> 텍스트</button>
             <button class="pal-item" data-type="loop" draggable="true"><span class="pal-ico type-loopStart">🔁</span> 반복 (N회)</button>
           </aside>
 
           <div class="steps-wrap">
             <div class="steps-head">
-              <span class="sh-drag"></span>
+              <span class="sh-act"></span>
               <span class="sh-num">#</span>
               <span class="sh-type">타입</span>
               <span class="sh-detail">동작</span>
-              <span class="sh-delay">지연</span>
-              <span class="sh-act"></span>
               <span class="sh-pair">세트</span>
             </div>
             <div id="steps" class="steps"></div>

@@ -71,12 +71,6 @@ public sealed class Player
                     ct.ThrowIfCancellationRequested();
                     var step = steps[ip];
 
-                    // 지연은 모든 스텝 공통(반복 끝 지연 = 반복 사이 간격으로 동작).
-                    var delay = EffectiveDelayMs(step.DelayBeforeMs, speed);
-                    delay = ApplyJitter(delay, macro.RandomizeDelayPercent, Random.Shared);
-                    if (delay > 0)
-                        await PreciseDelay.WaitAsync(delay, ct).ConfigureAwait(false);
-
                     switch (step.Event)
                     {
                         case LoopStartEvent ls:
@@ -91,6 +85,15 @@ public sealed class Player
                                 else ip++;
                             }
                             else ip++; // 짝 없는 끝 → 무시
+                            break;
+                        case DelayEvent:
+                            // 대기는 '지연' 블록에서만 발생(속도·휴머나이즈 적용). 다른 블록은 즉시 실행.
+                            var delay = EffectiveDelayMs(step.DelayBeforeMs, speed);
+                            delay = ApplyJitter(delay, macro.RandomizeDelayPercent, Random.Shared);
+                            if (delay > 0)
+                                await PreciseDelay.WaitAsync(delay, ct).ConfigureAwait(false);
+                            Progress?.Invoke(this, new PlaybackProgress(loop, ip, steps.Count));
+                            ip++;
                             break;
                         default:
                             _sink.Send(step.Event);
