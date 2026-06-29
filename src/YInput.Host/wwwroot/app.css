@@ -102,6 +102,8 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 .btn.rec { background: var(--rec); border-color: var(--rec); color: #fff; }
 .btn.rec.active { animation: pulse 1s infinite; }
 .btn.sm { padding: 5px 10px; font-size: 12px; }
+.btn-new-macro { background: rgba(52,211,153,.16); border-color: var(--accent2); color: #7af0c8; font-weight: 700; }
+.btn-new-macro:hover { background: rgba(52,211,153,.28); color: #aef7dd; }
 .btn.danger:hover { background: rgba(255,84,112,.16); border-color: var(--rec); color: var(--rec); }
 @keyframes pulse { 50% { opacity: .55; } }
 
@@ -131,11 +133,21 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 .mbtn-trig:hover { color: var(--text); border-color: var(--accent); }
 .mbtn-trig.capturing { color: var(--accent); border-color: var(--accent); animation: pulse 1s infinite; }
 
-/* 삭제 인라인 확인 오버레이(항목 위) — 거의 불투명한 빨강으로 아래 글자 가림 */
-.macro-del-overlay { position: absolute; inset: 0; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: rgba(255,84,112,.92); border: 1px solid var(--rec); border-radius: 10px; z-index: 4; }
+/* 삭제 인라인 확인 오버레이(항목 위) — 어두운 빨강 불투명(아래 글자 완전히 가림) */
+.macro-del-overlay { position: absolute; inset: 0; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: #8c1d2b; border: 1px solid #8c1d2b; border-radius: 10px; z-index: 4; }
 .macro-del-overlay .q { margin-right: auto; color: #fff; font-weight: 700; font-size: 12.5px; }
 .macro-del-overlay .ov-yes { background: #fff; color: var(--rec); border-color: #fff; }
 .macro-del-overlay .ov-no { color: #fff; border-color: rgba(255,255,255,.55); }
+
+/* 실행 항목: 2줄(메인 + 반복/속도) */
+.macro-item.run { flex-direction: column; align-items: stretch; gap: 6px; }
+.mi-main { display: flex; align-items: center; gap: 8px; }
+.mi-play { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-left: 2px; }
+.mi-play .pl-label { font-size: 11.5px; color: var(--muted); }
+.mi-play .pl-count, .mi-play .pl-speed { width: 54px; }
+.mi-play .pl-x { font-size: 11.5px; color: var(--muted); margin-left: -4px; }
+.mi-play .seg { padding: 2px; }
+.mi-play .seg-btn { padding: 3px 8px; font-size: 11.5px; }
 
 /* on/off 토글 스위치(적용 여부) */
 .toggle { position: relative; display: inline-block; width: 34px; height: 18px; flex-shrink: 0; cursor: pointer; }

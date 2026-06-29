@@ -91,29 +91,44 @@ function renderMacroList(listEl, emptyEl, mode) {
   if (emptyEl) emptyEl.hidden = state.macros.length > 0;
   for (const m of state.macros) {
     const li = document.createElement('li');
-    li.className = 'macro-item';
+    li.className = 'macro-item' + (mode === 'run' ? ' run' : '');
     li.dataset.id = m.id;
     if (mode === 'run' && m.enabled) li.classList.add('enabled'); // 활성(적용 ON) 항목 전체 하이라이트
-    // 트리거 글자는 (실행 목록) 트리거 버튼 안으로 합침. 편집 목록은 상세줄에 표기.
-    const subBase = `${m.stepCount}스텝 · ${m.loopCount === 0 ? '∞' : m.loopCount}회 · ${m.speedMultiplier}x`;
-    const sub = mode === 'run' ? subBase : `${subBase} · 🔑${esc(m.trigger || '없음')}`;
-    // 적용 on/off 토글은 항목 '왼쪽'. 재생 버튼 없음(트리거 핫키 전용).
-    const left = mode === 'run'
-      ? `<label class="toggle" title="적용(트리거 활성)"><input type="checkbox" class="act-toggle" ${m.enabled ? 'checked' : ''}><span class="track"></span><span class="knob"></span></label>`
-      : '';
-    const actions = mode === 'run'
-      ? `<button class="mbtn-trig act-trigger" title="트리거 설정(클릭 후 키/마우스/패드 입력)">${ICON.trigger}<span class="trig-val">${esc(m.trigger || '없음')}</span></button>
-         <button class="mbtn act-edit" title="편집">${ICON.edit}</button>
-         <button class="mbtn act-del" title="삭제">${ICON.del}</button>`
-      : `<button class="mbtn act-dup" title="복제">${ICON.dup}</button>
-         <button class="mbtn act-del" title="삭제">${ICON.del}</button>`;
-    li.innerHTML = `
-      ${left}
-      <div class="macro-meta">
-        <span class="name">${esc(m.name)}</span>
-        <span class="macro-sub">${sub}</span>
-      </div>
-      <div class="macro-actions">${actions}</div>`;
+    if (mode === 'run') {
+      // 트리거는 버튼 안, 반복/속도는 아랫줄 컨트롤 → 상세줄은 스텝 수만
+      const repMode = m.loopCount <= 0 ? 'inf' : m.loopCount === 1 ? 'once' : 'count';
+      const repCount = m.loopCount > 1 ? m.loopCount : 2;
+      const speedVal = m.speedMultiplier || 1;
+      li.innerHTML = `
+        <div class="mi-main">
+          <label class="toggle" title="적용(트리거 활성)"><input type="checkbox" class="act-toggle" ${m.enabled ? 'checked' : ''}><span class="track"></span><span class="knob"></span></label>
+          <div class="macro-meta"><span class="name">${esc(m.name)}</span><span class="macro-sub">${m.stepCount}스텝</span></div>
+          <div class="macro-actions">
+            <button class="mbtn-trig act-trigger" title="트리거 설정(클릭 후 키/마우스/패드 입력)">${ICON.trigger}<span class="trig-val">${esc(m.trigger || '없음')}</span></button>
+            <button class="mbtn act-edit" title="편집">${ICON.edit}</button>
+            <button class="mbtn act-del" title="삭제">${ICON.del}</button>
+          </div>
+        </div>
+        <div class="mi-play">
+          <span class="pl-label">반복</span>
+          <div class="seg pl-rep">
+            <button class="seg-btn ${repMode === 'once' ? 'on' : ''}" data-val="once">한번</button>
+            <button class="seg-btn ${repMode === 'count' ? 'on' : ''}" data-val="count">반복</button>
+            <button class="seg-btn ${repMode === 'inf' ? 'on' : ''}" data-val="inf">무한∞</button>
+          </div>
+          <input type="number" class="mini pl-count" min="1" value="${repCount}" ${repMode === 'count' ? '' : 'hidden'} title="반복 횟수">
+          <span class="pl-label">속도</span>
+          <input type="number" class="mini pl-speed" min="0.1" max="5" step="0.1" value="${speedVal}" title="속도 배율"><span class="pl-x">x</span>
+        </div>`;
+    } else {
+      const sub = `${m.stepCount}스텝 · ${m.loopCount === 0 ? '∞' : m.loopCount}회 · ${m.speedMultiplier}x · 🔑${esc(m.trigger || '없음')}`;
+      li.innerHTML = `
+        <div class="macro-meta"><span class="name">${esc(m.name)}</span><span class="macro-sub">${sub}</span></div>
+        <div class="macro-actions">
+          <button class="mbtn act-dup" title="복제">${ICON.dup}</button>
+          <button class="mbtn act-del" title="삭제">${ICON.del}</button>
+        </div>`;
+    }
     li.onclick = (e) => {
       if (e.target.closest('button, label, input')) return;
       if (mode === 'run') selectRunMacro(m.id); else openMacro(m.id);
@@ -128,6 +143,18 @@ function renderMacroList(listEl, emptyEl, mode) {
       };
       li.querySelector('.act-edit').onclick = () => { openMacro(m.id); switchTab('edit'); };
       li.querySelector('.act-trigger').onclick = (e) => beginTriggerCapture(m.id, m.name, e.currentTarget);
+      // 반복/속도
+      const seg = li.querySelector('.pl-rep');
+      const countEl = li.querySelector('.pl-count');
+      const speedEl = li.querySelector('.pl-speed');
+      seg.querySelectorAll('.seg-btn').forEach((b) => b.onclick = (e) => {
+        e.stopPropagation();
+        seg.querySelectorAll('.seg-btn').forEach((x) => x.classList.toggle('on', x === b));
+        countEl.hidden = b.dataset.val !== 'count';
+        saveRunPlayback(m.id, seg, countEl, speedEl);
+      });
+      countEl.onchange = () => saveRunPlayback(m.id, seg, countEl, speedEl);
+      speedEl.onchange = () => saveRunPlayback(m.id, seg, countEl, speedEl);
     }
     listEl.appendChild(li);
   }
@@ -139,6 +166,15 @@ function renderMacroActive() {
     const playing = st && st.state === 'playing' && st.currentMacroId === el.dataset.id;
     el.classList.toggle('active', playing);
   });
+}
+
+// 실행 항목 반복/속도 저장
+function saveRunPlayback(id, seg, countEl, speedEl) {
+  const mode = seg.querySelector('.seg-btn.on')?.dataset.val || 'once';
+  const loopCount = mode === 'inf' ? 0 : mode === 'once' ? 1 : Math.max(1, parseInt(countEl.value, 10) || 1);
+  let speed = parseFloat(speedEl.value); if (!(speed > 0)) speed = 1;
+  speed = Math.min(5, Math.max(0.1, speed)); speedEl.value = speed;
+  api.setPlayback(id, loopCount, speed).catch((e) => log('error', e.message));
 }
 
 // ---------- 실행 목록: 트리거 핫키 직접 설정(키/마우스/패드 캡처) ----------
@@ -337,6 +373,7 @@ function wire() {
   $('btn-update-check').onclick = onUpdateCheck;
   $('btn-update-apply').onclick = onUpdateApply;
   $('btn-new').onclick = () => { editor.open(null); switchTab('edit'); };
+  $('btn-new-run').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-clear-log').onclick = () => { $('log').innerHTML = ''; };
   $('btn-monitor').onclick = async () => {
     try { if (state.status?.monitoring) await api.monitorOff(); else await api.monitorOn(); }

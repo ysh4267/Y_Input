@@ -29,6 +29,7 @@ export const api = {
   deleteMacro: (id) => request('DELETE', `/api/macros/${id}`),
   setEnabled: (id, enabled) => request('POST', `/api/macros/${id}/enabled`, { enabled }),
   setTrigger: (id, trigger) => request('POST', `/api/macros/${id}/trigger`, trigger ?? null),
+  setPlayback: (id, loopCount, speedMultiplier) => request('POST', `/api/macros/${id}/playback`, { loopCount, speedMultiplier }),
 
   recordStart: (options) => request('POST', '/api/record/start', options || {}),
   recordStop: (name, persist = true) => request('POST', '/api/record/stop', { name, persist }),

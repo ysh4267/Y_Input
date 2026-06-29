@@ -55,7 +55,10 @@
 
         <!-- 가운데: 매크로 목록(재생) -->
         <div class="card compact run-list-card">
-          <div class="card-head"><h2>매크로 목록</h2></div>
+          <div class="card-head">
+            <h2>매크로 목록</h2>
+            <button id="btn-new-run" class="btn sm btn-new-macro">＋ 새 매크로 생성</button>
+          </div>
           <ul id="macro-list-run" class="macro-list"></ul>
           <p id="macro-empty-run" class="hint">저장된 매크로가 없습니다.</p>
         </div>
@@ -78,7 +81,7 @@
             <div class="card-head">
               <h2>매크로</h2>
               <div class="row">
-                <button id="btn-new" class="btn ghost sm">+ 새로</button>
+                <button id="btn-new" class="btn sm btn-new-macro">＋ 새 매크로 생성</button>
               </div>
             </div>
             <ul id="macro-list-edit" class="macro-list"></ul>
@@ -126,28 +129,7 @@
               </div>
             </div>
 
-            <!-- 재생 설정 바 -->
-            <div class="bar">
-              <div class="bar-group">
-                <span class="bar-label">반복</span>
-                <div class="seg" id="seg-repeat">
-                  <button class="seg-btn" data-val="once" title="한 번 재생">한 번</button>
-                  <button class="seg-btn" data-val="count" title="지정 횟수만큼 반복">반복</button>
-                  <button class="seg-btn" data-val="inf" title="정지키를 누를 때까지 반복(토글)">무한 ∞</button>
-                </div>
-                <input id="ed-loop" type="number" min="1" step="1" value="1" class="mini" title="반복 횟수" />
-              </div>
-              <div class="bar-group">
-                <span class="bar-label">속도 <b id="ed-speed-val">1.0x</b></span>
-                <input id="ed-speed" type="range" min="0.1" max="5" step="0.1" value="1" />
-              </div>
-              <div class="bar-group grow">
-                <span class="bar-label">트리거</span>
-                <input id="ed-hotkey" type="text" readonly placeholder="클릭 후 키·마우스(엄지 X1/X2)" />
-                <button id="ed-hotkey-pad" class="btn ghost sm" title="게임패드 버튼을 트리거로 잡기">🎮</button>
-                <button id="ed-hotkey-clear" class="btn ghost sm" title="트리거 지우기">✕</button>
-              </div>
-            </div>
+            <!-- (반복/속도/트리거 바 제거 — 실행 페이지의 매크로 항목에서 관리) -->
 
             <!-- 스텝 툴바: 선택 시 액션바(좌) + 전체 선택(우, 항상) -->
             <div class="steps-toolbar">

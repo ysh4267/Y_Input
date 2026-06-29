@@ -25,10 +25,6 @@ const ICON = {
   del: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.3H13.4"/><path d="M6.4 4.3V3.2A1.1 1.1 0 0 1 7.5 2.1H8.5A1.1 1.1 0 0 1 9.6 3.2V4.3"/><path d="M3.9 4.3 4.6 13A1.3 1.3 0 0 0 5.9 14.2H10.1A1.3 1.3 0 0 0 11.4 13L12.1 4.3"/><path d="M6.6 6.9V11.3M9.4 6.9V11.3"/></svg>',
 };
 
-// 세그먼트 컨트롤 헬퍼
-const setSeg = (el, val) => el.querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('on', b.dataset.val === val));
-const getSeg = (el) => el.querySelector('.seg-btn.on')?.dataset.val ?? null;
-
 export function createEditor({ log, onSaved, getStatus }) {
   let editing = null;
   let selected = new Set();   // 선택된 스텝의 _uid 집합
@@ -78,16 +74,6 @@ export function createEditor({ log, onSaved, getStatus }) {
     $('empty-state').hidden = true;
     $('editor').hidden = false;
     $('ed-name').value = editing.name || '';
-
-    const lc = editing.loopCount || 0;
-    const mode = lc <= 0 ? 'inf' : lc === 1 ? 'once' : 'count';
-    setSeg($('seg-repeat'), mode);
-    $('ed-loop').value = lc > 1 ? lc : 1;
-    syncLoopInput();
-
-    $('ed-speed').value = editing.speedMultiplier || 1;
-    $('ed-speed-val').textContent = (editing.speedMultiplier || 1).toFixed(1) + 'x';
-    $('ed-hotkey').value = hotkeyToString(editing.trigger);
     renderSteps();
     onStatus(getStatus());
   }
@@ -95,8 +81,6 @@ export function createEditor({ log, onSaved, getStatus }) {
   function close() { open(null); } // 닫기=현재 비우고 새 매크로 모드
   function isOpen() { return editing !== null; }
   function current() { return editing; }
-
-  function syncLoopInput() { $('ed-loop').hidden = getSeg($('seg-repeat')) !== 'count'; }
 
   function updateStats() {
     if (!editing) return;
@@ -852,11 +836,9 @@ export function createEditor({ log, onSaved, getStatus }) {
   // ---------- 저장/재생 ----------
   function collect() {
     editing.name = $('ed-name').value.trim() || '제목 없음';
-    const mode = getSeg($('seg-repeat'));
-    editing.loopCount = mode === 'inf' ? 0 : mode === 'once' ? 1 : (parseInt($('ed-loop').value, 10) || 1);
-    editing.speedMultiplier = parseFloat($('ed-speed').value) || 1.0;
-    // 휴머나이즈는 각 '지연' 블록(event.randomizePercent)에 개별 저장 — 전역 값 없음
-    // _uid는 직렬화에서 제외, 녹화하기 카드(record)는 저장 대상 아님
+    // 반복/속도/트리거는 편집기에서 제거 — 실행 페이지에서 관리(editing의 기존 값 유지).
+    // 휴머나이즈는 각 '지연' 블록(event.randomizePercent)에 개별 저장.
+    // _uid는 직렬화에서 제외, 녹화하기 카드(record)는 저장 대상 아님.
     return { ...editing, steps: editing.steps.filter((s) => s.event['$type'] !== 'record').map((s) => ({ delayBeforeMs: s.delayBeforeMs || 0, event: s.event })) };
   }
   async function save() {
@@ -877,9 +859,6 @@ export function createEditor({ log, onSaved, getStatus }) {
 
   // ---------- 와이어링 ----------
   $('ed-name').oninput = () => { if (editing) editing.name = $('ed-name').value; };
-  $('seg-repeat').querySelectorAll('.seg-btn').forEach((b) => b.onclick = () => { setSeg($('seg-repeat'), b.dataset.val); syncLoopInput(); });
-  $('ed-loop').onchange = () => { if (parseInt($('ed-loop').value, 10) < 1) $('ed-loop').value = 1; };
-  $('ed-speed').oninput = () => { $('ed-speed-val').textContent = parseFloat($('ed-speed').value).toFixed(1) + 'x'; };
   $('btn-save').onclick = save;
   $('btn-cancel').onclick = close;
   // 동작 팔레트: 클릭=추가, 드래그=원하는 위치(행/끝)에 드롭(HTML5)
@@ -924,54 +903,10 @@ export function createEditor({ log, onSaved, getStatus }) {
     else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
   });
 
-  // 트리거 핫키 캡처
-  let capHk = false;
-  const hk = $('ed-hotkey');
-  const MOUSE_BTN = { 0: 'Left', 1: 'Middle', 2: 'Right', 3: 'X1', 4: 'X2' };
-  hk.addEventListener('focus', () => { capHk = true; hk.value = '키 또는 마우스 버튼 입력 대기…'; });
-  hk.addEventListener('blur', () => { capHk = false; hk.value = hotkeyToString(editing && editing.trigger); });
-  hk.addEventListener('keydown', (e) => {
-    if (!capHk) return; e.preventDefault();
-    const vk = km.eventToVk(e); if (vk == null) return;
-    editing.trigger = { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: vk, mouse: null, gamepad: null };
-    hk.value = hotkeyToString(editing.trigger); updateStats(); hk.blur();
-  });
-  hk.addEventListener('mousedown', (e) => {
-    if (!capHk) return;
-    const m = MOUSE_BTN[e.button];
-    if (!m) return;
-    e.preventDefault();
-    editing.trigger = { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: 0, mouse: m, gamepad: null };
-    hk.value = hotkeyToString(editing.trigger); updateStats();
-    setTimeout(() => hk.blur(), 0);
-  });
-  hk.addEventListener('contextmenu', (e) => { if (capHk) e.preventDefault(); });
-  hk.addEventListener('auxclick', (e) => { if (capHk) e.preventDefault(); });
-  $('ed-hotkey-clear').onclick = () => { if (editing) editing.trigger = null; hk.value = '없음'; updateStats(); };
-
-  // 게임패드 버튼 잡기(서버 listen) — 다음 패드 버튼을 트리거로
-  let padListening = false;
-  $('ed-hotkey-pad').onclick = async () => {
-    try {
-      if (padListening) { padListening = false; await api.listenStop(); hk.value = hotkeyToString(editing && editing.trigger); return; }
-      padListening = true; hk.value = '패드 버튼 대기…'; await api.listenStart();
-    } catch (e) { padListening = false; log('error', e.message); }
-  };
-
-  // 서버 입력 감지(inputDetected): 스텝 캡처 중이면 그쪽으로, 아니면 트리거 바인딩
+  // 서버 입력 감지(inputDetected): 입력 블록 게임패드 캡처에만 사용(트리거 설정은 실행 페이지로 이동).
   function onInputDetected(data) {
     if (!data) return;
     if (stepCapture && data.trigger?.gamepad) { stepCapture(data.trigger.gamepad); return; }
-    if (!data.bindable) { log('info', '감지: ' + data.label); return; }
-    if (!editing) return;
-    const t = { ctrl: false, alt: false, shift: false, win: false, virtualKey: 0, mouse: null, gamepad: null };
-    if (data.trigger?.gamepad) t.gamepad = data.trigger.gamepad;
-    else if (data.trigger?.virtualKey) t.virtualKey = data.trigger.virtualKey;
-    else if (data.trigger?.mouse) t.mouse = data.trigger.mouse;
-    editing.trigger = t;
-    padListening = false;
-    hk.value = hotkeyToString(t); updateStats();
-    log('info', '트리거 설정: ' + hk.value);
   }
 
   return { open, close, isOpen, current, onStatus, onInputDetected, onRecordedStep };
