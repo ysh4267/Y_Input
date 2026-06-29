@@ -369,8 +369,9 @@ input[type=range] { accent-color: var(--accent); }
 .step-detail .hz-label { margin-left: 16px; } /* 휴머나이즈 묶음을 조금 더 오른쪽으로 */
 .step-detail .hz-val { font-size: 11px; color: var(--muted); min-width: 30px; font-variant-numeric: tabular-nums; }
 
-.footer { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 9px 18px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
-.footer code { color: var(--text); }
+/* 설정 드로어 하단 URL 라벨(기존 페이지 푸터 이동) */
+.drawer-foot { margin-top: auto; border-top: 1px solid var(--border); padding-top: 14px; color: var(--muted); font-size: 12px; }
+.drawer-foot code { color: var(--text); }
 
 /* CSS 모달(시스템 alert/confirm/prompt 대체) */
 .modal-overlay { position: fixed; inset: 0; background: rgba(6,8,12,.62); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; z-index: 1000; animation: modal-fade .12s ease-out; }
