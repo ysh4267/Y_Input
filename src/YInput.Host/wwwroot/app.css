@@ -285,7 +285,7 @@ input[type=range] { accent-color: var(--accent); }
 .step select, .step button, .step .keycap, .step .dir-badge, .step label { cursor: pointer; }
 .step:hover { background: var(--card2); }
 /* 틴트는 불투명 카드 색 위에 합성(see-through 방지) */
-.step.sel { background: linear-gradient(rgba(79,140,255,.18), rgba(79,140,255,.18)), var(--card); box-shadow: inset 0 0 0 2px #6ea8ff; } /* 선택: 안쪽 링(레이아웃 영향 0 → 크기 동일) */
+.step.sel { background: linear-gradient(rgba(79,140,255,.18), rgba(79,140,255,.18)), var(--card); box-shadow: 0 0 0 2px #6ea8ff; } /* 선택: 카드 바깥 링(외곽에 그려 내부 레이아웃·크기 변동 0) */
 .step.sel:hover { background: linear-gradient(rgba(79,140,255,.24), rgba(79,140,255,.24)), var(--card2); }
 .step.dragover { box-shadow: inset 0 2px 0 var(--accent); }
 .step.dragging { background: var(--card3); }

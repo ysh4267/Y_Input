@@ -275,7 +275,7 @@ export function createEditor({ log, onSaved, getStatus }) {
     } else if (t === 'text') {
       const txt = document.createElement('input'); txt.type = 'text'; txt.value = ev.text || '';
       txt.placeholder = '입력할 텍스트'; txt.onchange = () => { pushUndo(); ev.text = txt.value; };
-      td.append(txt, labelTag('글자 간격'), numInput(ev.perKeyDelayMs || 0, (v) => ev.perKeyDelayMs = v, '글자 사이 입력 간격(ms) — 0이면 즉시'), labelTag('ms'));
+      td.append(txt, labelTag('입력 간격'), numInput(ev.perKeyDelayMs || 0, (v) => ev.perKeyDelayMs = v, '입력 간격(ms) — 글자 사이 간격, 0이면 즉시'), labelTag('ms'));
     } else if (t === 'delay') {
       const n = document.createElement('input');
       n.type = 'number'; n.min = '0'; n.step = '1'; n.value = Math.round(step.delayBeforeMs || 0); n.title = '대기 시간(ms)';
