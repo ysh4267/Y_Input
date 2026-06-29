@@ -220,9 +220,9 @@ input[type=range] { accent-color: var(--accent); }
 .rec-status { color: var(--warn); font-weight: 700; min-width: 30px; }
 
 /* 스텝 툴바 */
-.steps-toolbar { display: flex; align-items: center; gap: 8px; }
-.steps-toolbar .ins { display: flex; gap: 6px; }
+.steps-toolbar { display: flex; align-items: center; gap: 8px; padding: 0 12px; min-height: 30px; flex-shrink: 0; }
 .steps-toolbar .spacer { flex: 1; }
+.steps-divider { height: 1px; background: var(--border); margin: 6px 12px 8px; flex-shrink: 0; } /* 스텝 영역 상단 가로 구분선 */
 
 /* 선택 액션바 */
 .sel-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }

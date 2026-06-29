@@ -548,7 +548,7 @@ export function createEditor({ log, onSaved, getStatus }) {
   function applySel() {
     stepsEl().querySelectorAll('.step').forEach((el) => el.classList.toggle('sel', selected.has(+el.dataset.uid)));
     const n = selected.size;
-    $('sel-bar').hidden = n === 0;
+    $('sel-info').hidden = n === 0;
     if (n) $('sel-count').textContent = n;
   }
 
@@ -889,13 +889,6 @@ export function createEditor({ log, onSaved, getStatus }) {
   stepsEl().addEventListener('pointerdown', onPointerDown);
 
   $('btn-selall').onclick = () => { selected = new Set(editing.steps.map((s) => s._uid)); applySel(); };
-  $('btn-dup').onclick = duplicateSel;
-  $('btn-del').onclick = deleteSel;
-  $('btn-up').onclick = () => moveSel(-1);
-  $('btn-down').onclick = () => moveSel(+1);
-  $('btn-delay-before').onclick = () => addDelay(false);
-  $('btn-delay-after').onclick = () => addDelay(true);
-  $('btn-selclear').onclick = () => { selected = new Set(); applySel(); };
 
   // 클립보드(Ctrl+C/X/V) + 언두/리두(Ctrl+Z / Ctrl+Shift+Z·Ctrl+Y) — 입력칸 포커스 시 네이티브 양보
   document.addEventListener('keydown', (e) => {

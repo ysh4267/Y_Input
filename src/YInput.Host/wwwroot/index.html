@@ -129,25 +129,6 @@
 
             <!-- (반복/속도/트리거 바 제거 — 실행 페이지의 매크로 항목에서 관리) -->
 
-            <!-- 스텝 툴바: 선택 시 액션바(좌) + 전체 선택(우, 항상) -->
-            <div class="steps-toolbar">
-              <div id="sel-bar" class="sel-bar" hidden>
-                <span class="sel-count"><b id="sel-count">0</b>개 선택</span>
-                <span class="vsep"></span>
-                <button id="btn-dup" class="btn ghost sm">⧉ 복제</button>
-                <button id="btn-up" class="btn ghost sm">↑ 위로</button>
-                <button id="btn-down" class="btn ghost sm">↓ 아래로</button>
-                <span class="vsep"></span>
-                <button id="btn-delay-before" class="btn ghost sm">＋이전 지연</button>
-                <button id="btn-delay-after" class="btn ghost sm">＋이후 지연</button>
-                <span class="vsep"></span>
-                <button id="btn-del" class="btn ghost sm danger">✕ 삭제</button>
-                <button id="btn-selclear" class="btn ghost sm">선택 해제</button>
-              </div>
-              <div class="spacer"></div>
-              <button id="btn-selall" class="btn ghost sm">전체 선택</button>
-            </div>
-
             <!-- 동작 팔레트(좌) + 스텝 리스트(우) -->
             <div class="editor-body">
               <aside class="palette" id="palette">
@@ -161,6 +142,13 @@
               </aside>
 
               <div class="steps-wrap">
+                <!-- 스텝 영역 상단: 선택 개수 + 전체 선택 + 가로 구분선 -->
+                <div class="steps-toolbar">
+                  <span class="sel-count" id="sel-info" hidden><b id="sel-count">0</b>개 선택</span>
+                  <div class="spacer"></div>
+                  <button id="btn-selall" class="btn ghost sm">전체 선택</button>
+                </div>
+                <div class="steps-divider"></div>
                 <div class="steps-head">
                   <span class="sh-act"></span>
                   <span class="sh-num">#</span>
