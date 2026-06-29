@@ -222,7 +222,9 @@ input[type=text], input[type=number] { background: var(--bg); border: 1px solid 
 input[type=text]:focus, input[type=number]:focus { outline: none; border-color: var(--accent); }
 input[type=number].mini { width: 76px; }
 input[readonly] { cursor: pointer; }
-.sel { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 6px 9px; font-size: 13px; }
+/* <select> 드롭다운 폼 컨트롤용. 예전엔 .sel 였으나 선택된 스텝 카드(.step.sel)와 충돌해
+   선택 시 글자가 14px→13px로 작아지던 버그가 있어 select 태그 전용으로 한정함. */
+select { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 6px 9px; font-size: 13px; }
 input[type=range] { accent-color: var(--accent); }
 
 /* 세그먼트 컨트롤 */
