@@ -20,14 +20,11 @@ internal sealed class TrayAppContext : ApplicationContext
         _ui = new WindowsFormsSynchronizationContext();
 
         var menu = new ContextMenuStrip();
-        menu.Items.Add("UI 열기", null, (_, _) => OpenUi());
+        menu.Items.Add(new ToolStripMenuItem("Y Input") { Enabled = false }); // 앱 이름(헤더)
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("재생/녹화 정지", null, (_, _) =>
-        {
-            try { _service.StopPlayback(); } catch { /* ignore */ }
-        });
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("종료", null, (_, _) => ExitThread());
+        menu.Items.Add("열기", null, (_, _) => OpenUi());
+        menu.Items.Add("업데이트", null, (_, _) => StartUpdate());
+        menu.Items.Add("끄기", null, (_, _) => ExitThread());
 
         _icon = new NotifyIcon
         {
@@ -65,6 +62,23 @@ internal sealed class TrayAppContext : ApplicationContext
         catch (Exception ex)
         {
             _service.Log("error", "브라우저 열기 실패: " + ex.Message);
+        }
+    }
+
+    /// <summary>트레이 '업데이트' — Git 동기화 빌드를 분리 실행(웹 UI의 업데이트와 동일).</summary>
+    private void StartUpdate()
+    {
+        try
+        {
+            var r = AppUpdater.Start();
+            _service.Log(r.Ok ? "info" : "error",
+                r.Ok ? "업데이트 시작 — 곧 재빌드/재시작됩니다." : ("업데이트 실패: " + r.Message));
+            ShowBalloon(r.Ok ? "업데이트" : "업데이트 실패",
+                r.Ok ? "업데이트를 시작했습니다. 곧 재시작됩니다." : r.Message);
+        }
+        catch (Exception ex)
+        {
+            _service.Log("error", "업데이트 오류: " + ex.Message);
         }
     }
 

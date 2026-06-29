@@ -85,7 +85,7 @@ function renderStatus(s) {
 
   $('foot-url').textContent = s.url || '';
   editor.onStatus(s);
-  if (s.state !== 'playing') { lastStepIndex = -1; highlightRunStep(-1); }
+  if (s.state !== 'playing') { lastStepIndex = -1; highlightRunStep(-1); clearMacroProg(); }
   renderMacroActive();
 }
 
@@ -133,7 +133,8 @@ function renderMacroList(listEl, emptyEl, mode) {
           </div>
           <input type="number" class="mini pl-count" min="1" value="${repCount}" ${repMode === 'count' ? '' : 'hidden'} title="반복 횟수">
           <button class="mbtn-trig act-trigger" title="트리거 설정(클릭 후 키/마우스/패드 입력)">${ICON.trigger}<span class="trig-val">${esc(m.trigger || '없음')}</span></button>
-        </div>`;
+        </div>
+        <div class="macro-prog" data-id="${m.id}" title="재생 진행">${'<i class="pdot"></i>'.repeat(Math.min(m.stepCount || 0, 60))}</div>`;
     } else {
       const sub = `${m.stepCount}스텝 · 총 ${fmtMs(m.durationMs || 0)}`;
       li.innerHTML = `
@@ -306,6 +307,17 @@ function highlightRunStep(idx) {
   if (idx < 0) return;
   const row = wrap.querySelector(`.run-steps-row[data-i="${idx}"]`);
   if (row) { row.classList.add('playing'); row.scrollIntoView({ block: 'nearest' }); }
+}
+// 실행 목록의 매크로별 진행 점(인디케이터): 진행 비율만큼 왼쪽부터 채움
+function updateMacroProg(macroId, frac) {
+  const el = document.querySelector(`.macro-prog[data-id="${macroId}"]`);
+  if (!el) return;
+  const dots = el.querySelectorAll('.pdot');
+  const filled = Math.max(0, Math.min(dots.length, Math.round((frac || 0) * dots.length)));
+  dots.forEach((d, i) => d.classList.toggle('on', i < filled));
+}
+function clearMacroProg() {
+  document.querySelectorAll('.macro-prog .pdot.on').forEach((d) => d.classList.remove('on'));
 }
 
 async function openMacro(id) {
@@ -481,6 +493,7 @@ function showProgress(p) {
   // 실행 페이지: 현재 재생 중인 매크로 스텝을 자동 표시 + 현재 스텝 하이라이트
   lastStepIndex = p.stepIndex;
   const cur = state.status && state.status.currentMacroId;
+  if (cur) updateMacroProg(cur, pct / 100);            // 실행 목록 점 채우기(비율)
   if (cur && runShownId !== cur) selectRunMacro(cur);  // 최초 1회 로드(이후 progress는 바로 하이라이트)
   else if (cur && runShownId === cur) highlightRunStep(p.stepIndex);
 }
