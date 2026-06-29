@@ -525,7 +525,7 @@ export function createEditor({ log, onSaved, getStatus }) {
     }
     drag.ghost.style.left = (e.clientX - drag.offX) + 'px';   // 드래그 블록이 포인터에 붙어 따라옴
     drag.ghost.style.top = (e.clientY - drag.offY) + 'px';
-    updatePlaceholder(e.clientY);
+    updatePlaceholder();
   }
   function onPointerUp(e) {
     window.removeEventListener('pointermove', onPointerMove);
@@ -556,15 +556,23 @@ export function createEditor({ log, onSaved, getStatus }) {
     els.forEach((el) => { el.style.display = 'none'; });
   }
   const visibleCards = () => [...stepsEl().querySelectorAll('.step')].filter((el) => el.style.display !== 'none');
-  function updatePlaceholder(pointerY) {
+  function nextVisibleCard(el) {
+    let n = el.nextElementSibling;
+    while (n && (!n.classList || !n.classList.contains('step') || n.style.display === 'none')) n = n.nextElementSibling;
+    return n;
+  }
+  // 드래그 중인 카드(고스트)의 '중심'이 이웃 카드 중심을 지나는 순간 자리 변경(위·아래 대칭)
+  function updatePlaceholder() {
     const wrap = stepsEl();
     const cards = visibleCards();
+    const g = drag.ghost.getBoundingClientRect();
+    const mid = g.top + g.height / 2;
     let target = null;
     for (const c of cards) {
       const r = c.getBoundingClientRect();
-      if (pointerY < r.top + r.height * 0.8) { target = c; break; } // 더 일찍 비키게
+      if (mid < r.top + r.height / 2) { target = c; break; }
     }
-    if (target === drag.placeholder) return;
+    if (nextVisibleCard(drag.placeholder) === target) return; // 이미 같은 위치면 스킵(스래싱 방지)
     const before = captureRectsOf(cards.concat(drag.placeholder));
     if (target) wrap.insertBefore(drag.placeholder, target); else wrap.appendChild(drag.placeholder);
     playFlipOf(before);
