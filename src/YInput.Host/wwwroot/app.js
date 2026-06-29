@@ -93,17 +93,23 @@ function renderMacroList(listEl, emptyEl, mode) {
     const li = document.createElement('li');
     li.className = 'macro-item';
     li.dataset.id = m.id;
-    const sub = `${m.stepCount}스텝 · ${m.loopCount === 0 ? '∞' : m.loopCount}회 · ${m.speedMultiplier}x · 🔑${esc(m.trigger || '없음')}`;
-    // 재생 버튼 없음(재생은 트리거 핫키로만). 실행 목록: 적용 토글·트리거·편집·복제·삭제 / 편집 목록: 복제·삭제
+    if (mode === 'run' && m.enabled) li.classList.add('enabled'); // 활성(적용 ON) 항목 전체 하이라이트
+    // 트리거 글자는 (실행 목록) 트리거 버튼 안으로 합침. 편집 목록은 상세줄에 표기.
+    const subBase = `${m.stepCount}스텝 · ${m.loopCount === 0 ? '∞' : m.loopCount}회 · ${m.speedMultiplier}x`;
+    const sub = mode === 'run' ? subBase : `${subBase} · 🔑${esc(m.trigger || '없음')}`;
+    // 적용 on/off 토글은 항목 '왼쪽'. 재생 버튼 없음(트리거 핫키 전용).
+    const left = mode === 'run'
+      ? `<label class="toggle" title="적용(트리거 활성)"><input type="checkbox" class="act-toggle" ${m.enabled ? 'checked' : ''}><span class="track"></span><span class="knob"></span></label>`
+      : '';
     const actions = mode === 'run'
-      ? `<label class="toggle" title="적용(트리거 활성)"><input type="checkbox" class="act-toggle" ${m.enabled ? 'checked' : ''}><span class="track"></span><span class="knob"></span></label>
-         <button class="mbtn act-trigger" title="트리거 설정">${ICON.trigger}</button>
+      ? `<button class="mbtn-trig act-trigger" title="트리거 설정(클릭 후 키/마우스/패드 입력)">${ICON.trigger}<span class="trig-val">${esc(m.trigger || '없음')}</span></button>
          <button class="mbtn act-edit" title="편집">${ICON.edit}</button>
          <button class="mbtn act-dup" title="복제">${ICON.dup}</button>
          <button class="mbtn act-del" title="삭제">${ICON.del}</button>`
       : `<button class="mbtn act-dup" title="복제">${ICON.dup}</button>
          <button class="mbtn act-del" title="삭제">${ICON.del}</button>`;
     li.innerHTML = `
+      ${left}
       <div class="macro-meta">
         <span class="name">${esc(m.name)}</span>
         <span class="macro-sub">${sub}</span>
@@ -113,7 +119,7 @@ function renderMacroList(listEl, emptyEl, mode) {
       if (e.target.closest('button, label, input')) return;
       if (mode === 'run') selectRunMacro(m.id); else openMacro(m.id);
     };
-    li.querySelector('.act-del').onclick = () => removeMacro(m.id, m.name);
+    li.querySelector('.act-del').onclick = () => confirmDeleteInline(li, m.id);
     li.querySelector('.act-dup').onclick = () => duplicateMacro(m.id);
     if (mode === 'run') {
       const tg = li.querySelector('.act-toggle');
@@ -142,6 +148,9 @@ function beginTriggerCapture(id, name, btn) {
   endTriggerCapture();
   capTrigId = id;
   btn.classList.add('capturing');
+  const valEl = btn.querySelector('.trig-val');
+  const prevVal = valEl ? valEl.textContent : '';
+  if (valEl) valEl.textContent = '대기…';
   const onKey = (e) => {
     if (e.key === 'Escape') { e.preventDefault(); endTriggerCapture(); return; }
     const vk = km.eventToVk(e); if (vk == null) return; // 모디파이어 단독 등은 무시
@@ -168,6 +177,7 @@ function beginTriggerCapture(id, name, btn) {
     document.removeEventListener('contextmenu', onCtx, true);
     api.listenStop().catch(() => {});
     btn.classList.remove('capturing');
+    if (valEl) valEl.textContent = prevVal;
   };
 }
 function onTriggerGamepad(data) {
@@ -229,11 +239,22 @@ async function openMacro(id) {
   try { editor.open(await api.getMacro(id)); }
   catch (e) { log('error', e.message); }
 }
-async function removeMacro(id, name) {
-  const ok = await confirmDialog(`'${name}' 매크로를 휴지통으로 보낼까요?`, { title: '매크로 삭제', ok: '휴지통으로', cancel: '취소' });
-  if (!ok) return;
-  try { await api.deleteMacro(id); await loadMacros(); if (editor.current()?.id === id) editor.close(); }
-  catch (e) { log('error', e.message); }
+// 삭제: 항목 위에 빨간 오버레이로 예/아니오 인라인 확인
+function confirmDeleteInline(li, id) {
+  if (li.querySelector('.macro-del-overlay')) return;
+  li.classList.add('confirming');
+  const ov = document.createElement('div');
+  ov.className = 'macro-del-overlay';
+  ov.innerHTML = '<span class="q">삭제할까요?</span><button class="btn rec sm ov-yes">예</button><button class="btn ghost sm ov-no">아니오</button>';
+  ov.onclick = (e) => e.stopPropagation();
+  const close = () => { li.classList.remove('confirming'); ov.remove(); };
+  ov.querySelector('.ov-yes').onclick = async (e) => {
+    e.stopPropagation();
+    try { await api.deleteMacro(id); if (editor.current()?.id === id) editor.close(); await loadMacros(); }
+    catch (err) { log('error', err.message); close(); }
+  };
+  ov.querySelector('.ov-no').onclick = (e) => { e.stopPropagation(); close(); };
+  li.appendChild(ov);
 }
 async function duplicateMacro(id) {
   try {
