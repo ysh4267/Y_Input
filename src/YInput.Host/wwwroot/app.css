@@ -258,9 +258,13 @@ input[type=range] { accent-color: var(--accent); }
 .record-card .rec-go { min-width: 108px; }
 .record-card .rec-go-status { min-width: 22px; color: var(--warn); font-weight: 700; }
 
-/* 녹화 중 '측정 중' 지연 카드(실시간으로 흐른 시간 표시) */
-.step.rec-ticking { border-style: dashed; border-color: var(--accent); background: rgba(79,140,255,.07); }
-.step.rec-ticking .rec-tick-val { font-family: Consolas, monospace; font-weight: 700; color: var(--accent); animation: pulse 1.1s infinite; }
+/* 녹화 블록 '내부' 실시간 기록(스크롤, 마지막 ~5줄) */
+.rec-live { display: flex; flex-direction: column; gap: 3px; max-height: 150px; overflow-y: auto; margin-top: 2px; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
+.rec-live-row { display: flex; align-items: center; gap: 8px; padding: 3px 5px; border-radius: 6px; font-size: 12px; }
+.rec-live-ico { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: 5px; font-size: 12px; flex-shrink: 0; }
+.rec-live-label { color: var(--text); font-family: Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rec-live-ticking { background: rgba(79,140,255,.10); }
+.rec-live-ticking .rec-live-label { color: var(--accent); font-weight: 700; animation: pulse 1.1s infinite; }
 
 /* 개별 지연 휴머나이즈 슬라이더 */
 .rec-humanize { width: 92px; accent-color: var(--accent); vertical-align: middle; cursor: pointer; }

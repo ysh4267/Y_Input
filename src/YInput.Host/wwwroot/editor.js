@@ -46,11 +46,12 @@ export function createEditor({ log, onSaved, getStatus }) {
   // 녹화 카드 상태(실시간 녹화)
   let recordingUid = null;    // 현재 녹화 중인 '녹화하기' 카드의 _uid
   let recBusy = false;        // 시작 처리 중 중복 방지
-  let recUids = new Set();    // 이번 녹화로 추가된 스텝 _uid(녹화 카드 바로 아래, 연속)
-  let tickingUid = null;      // 진행 중(측정 중) 지연 카드의 _uid
+  let liveRec = [];           // 녹화 중 기록된 스텝(녹화 블록 '내부' 미리보기 — editing.steps 미오염)
+  let liveEl = null;          // 녹화 블록 내부 스크롤 컨테이너(.rec-live)
+  let tickingUid = null;      // 진행 중(측정 중) 지연 행의 _uid
   let tickStart = 0;          // 현재 지연 측정 시작(performance.now)
   let pendingServerGap = null;// 다음 입력 직전 지연(서버 측정값) — 있으면 우선 사용
-  let recTickTimer = null;    // 진행 중 지연 카드 실시간 갱신 타이머
+  let recTickTimer = null;    // 진행 중 지연 행 실시간 갱신 타이머
 
   // 클립보드·언두
   let clipboard = [];
@@ -213,8 +214,7 @@ export function createEditor({ log, onSaved, getStatus }) {
     row.dataset.uid = step._uid;
     if (draggingUids.has(step._uid)) row.classList.add('dragging');
 
-    if (t === 'record') { buildRecordCard(row, step); return row; } // 녹화하기 카드(3줄 패널)
-    if (t === 'delay' && step._uid === tickingUid) row.classList.add('rec-ticking'); // 측정 중 지연
+    if (t === 'record') { buildRecordCard(row, step); return row; } // 녹화하기 카드(3줄 패널 + 내부 실시간 기록)
 
     // 행 액션(복제/삭제) — 카드 우측 끝(아래 detail 뒤에 append)
     const act = document.createElement('div'); act.className = 'step-act';
@@ -280,13 +280,6 @@ export function createEditor({ log, onSaved, getStatus }) {
       txt.placeholder = '입력할 텍스트'; txt.onchange = () => { pushUndo(); ev.text = txt.value; };
       td.append(txt, numInput(ev.perKeyDelayMs || 0, (v) => ev.perKeyDelayMs = v, '키당ms'));
     } else if (t === 'delay') {
-      if (step._uid === tickingUid) {
-        // 녹화 중 '측정 중' 지연 — 실시간으로 흐른 시간 표시(편집 불가)
-        const live = document.createElement('span'); live.className = 'rec-tick-val';
-        live.textContent = fmtMs(step.delayBeforeMs || 0);
-        td.append(labelTag('지연 측정 중'), live);
-        return;
-      }
       const n = document.createElement('input');
       n.type = 'number'; n.min = '0'; n.step = '1'; n.value = Math.round(step.delayBeforeMs || 0); n.title = '대기 시간(ms)';
       n.onchange = () => { pushUndo(); step.delayBeforeMs = Math.max(0, parseFloat(n.value) || 0); n.value = Math.round(step.delayBeforeMs); updateStats(); };
@@ -365,7 +358,7 @@ export function createEditor({ log, onSaved, getStatus }) {
       if (recordingUid === step._uid) stopRecord();
       else startRecord(step);
     };
-    const hint = document.createElement('span'); hint.className = 'muted'; hint.textContent = '아래에 실시간으로 기록 — 종료 버튼으로 끝내기';
+    const hint = document.createElement('span'); hint.className = 'muted'; hint.textContent = '이 블록 안에 실시간으로 기록 — 종료 버튼으로 끝내기';
     const spacer = document.createElement('span'); spacer.className = 'rec-spacer';
     const del = document.createElement('button'); del.className = 'rowbtn del'; del.title = '녹화 카드 제거'; del.innerHTML = ICON.del;
     del.onclick = (e) => {
@@ -402,6 +395,31 @@ export function createEditor({ log, onSaved, getStatus }) {
     r3.append(labelTag('기록 대상'), chips);
 
     row.append(r1, r2, r3);
+
+    // 4줄: 녹화 중에만 — 블록 내부 실시간 기록(스크롤, 마지막 ~5줄)
+    if (recordingUid === step._uid) {
+      const live = document.createElement('div'); live.className = 'rec-live';
+      liveRec.forEach((s) => live.appendChild(liveRowEl(s)));
+      row.append(live);
+      liveEl = live;
+      requestAnimationFrame(() => { live.scrollTop = live.scrollHeight; });
+    }
+  }
+
+  // 블록 내부 실시간 기록 한 줄(아이콘 + 요약)
+  function liveSummary(step) {
+    const ev = step.event;
+    if (ev['$type'] === 'delay') return (step._uid === tickingUid ? '지연 측정 중 ' : '지연 ') + fmtMs(step.delayBeforeMs || 0);
+    return km.summarizeEvent(ev);
+  }
+  function liveRowEl(step) {
+    const t = step.event['$type'];
+    const r = document.createElement('div'); r.className = 'rec-live-row'; r.dataset.uid = step._uid;
+    if (step._uid === tickingUid) r.classList.add('rec-live-ticking');
+    const ico = document.createElement('span'); ico.className = 'rec-live-ico type-' + t; ico.textContent = km.TYPE_ICON[t] || '•';
+    const label = document.createElement('span'); label.className = 'rec-live-label'; label.textContent = liveSummary(step);
+    r.append(ico, label);
+    return r;
   }
 
   function recOptionsOf(ev) {
@@ -409,28 +427,18 @@ export function createEditor({ log, onSaved, getStatus }) {
     const t = ev.targets || {};
     return { keyboard: !!t.keyboard, mouseButtons: !!t.mouseButtons, mouseMove: !!t.mouseMove, mouseWheel: !!t.mouseWheel, gamepad: !!t.gamepad, fixedDelayMs };
   }
-  // 녹화 카드 바로 아래(연속 녹화 영역) 끝 위치
-  function recInsertAt(cardIdx) {
-    let at = cardIdx + 1;
-    while (at < editing.steps.length && recUids.has(editing.steps[at]._uid)) at++;
-    return at;
-  }
-  // 새 '측정 중' 지연 카드를 녹화 영역 끝에 추가하고 실시간 타이머로 흐른 시간 표시
+  // 새 '측정 중' 지연 행을 블록 내부에 추가하고 실시간 타이머로 흐른 시간 표시
   function startTickingDelay() {
-    const ci = idxOfUid(recordingUid); if (ci < 0) return;
     const d = tagUids([{ delayBeforeMs: 0, event: { '$type': 'delay', randomizePercent: 0 } }])[0];
-    editing.steps.splice(recInsertAt(ci), 0, d);
-    recUids.add(d._uid); tickingUid = d._uid; tickStart = performance.now();
-    renderSteps();
-    scrollLiveIntoView(d._uid);
+    liveRec.push(d); tickingUid = d._uid; tickStart = performance.now();
+    if (liveEl) { liveEl.appendChild(liveRowEl(d)); liveEl.scrollTop = liveEl.scrollHeight; }
   }
-  // 100ms마다 진행 중 지연 카드의 흐른 시간 갱신(텍스트만)
+  // 100ms마다 진행 중 지연 행의 흐른 시간 갱신(텍스트만)
   function tickDelay() {
     if (tickingUid == null) return;
-    const s = editing.steps.find((x) => x._uid === tickingUid); if (!s) return;
+    const s = liveRec.find((x) => x._uid === tickingUid); if (!s) return;
     s.delayBeforeMs = Math.max(0, performance.now() - tickStart);
-    const el = stepsEl().querySelector('.rec-ticking .rec-tick-val');
-    if (el) el.textContent = fmtMs(s.delayBeforeMs);
+    if (liveEl) { const lbl = liveEl.querySelector('.rec-live-ticking .rec-live-label'); if (lbl) lbl.textContent = liveSummary(s); }
   }
   async function startRecord(step) {
     if (recBusy) return;
@@ -440,38 +448,35 @@ export function createEditor({ log, onSaved, getStatus }) {
     try {
       await api.recordStart(recOptionsOf(step.event));
       recordingUid = step._uid;
-      recUids = new Set(); pendingServerGap = null;
-      pushUndo(); // 녹화 직전 스냅샷(언두 한 번으로 녹화 전체 되돌림)
-      log('info', '녹화 시작 — 입력을 실시간으로 기록합니다. 종료 버튼으로 끝내세요.');
+      liveRec = []; pendingServerGap = null; tickingUid = null;
+      renderSteps(); // 녹화 카드에 빈 '실시간 기록' 컨테이너(liveEl) 생성
+      log('info', '녹화 시작 — 블록 안에 실시간으로 기록합니다. 종료 버튼으로 끝내세요.');
       startTickingDelay();
       if (!recTickTimer) recTickTimer = setInterval(tickDelay, 100);
       syncRecordButtons(getStatus());
     } catch (e) { log('error', e.message); recordingUid = null; }
     finally { recBusy = false; }
   }
-  // 서버 실시간 스텝 수신: 지연 스텝은 다음 입력의 '직전 지연' 값으로 보관, 입력 스텝은 카드로 추가
+  // 서버 실시간 스텝 수신: 지연 스텝은 다음 입력 '직전 지연' 값으로 보관, 입력 스텝은 블록 내부에 추가
   function onRecordedStep(data) {
     if (recordingUid == null || !data || !data.event) return;
     if (data.event['$type'] === 'delay') { pendingServerGap = data.delayBeforeMs || 0; return; }
-    // 진행 중 지연 카드 확정(서버 측정값 우선, 없으면 클라 측정 — 첫 입력 직전 지연)
+    // 진행 중 지연 행 확정(서버 측정값 우선, 없으면 클라 측정 — 첫 입력 직전 지연)
     if (tickingUid != null) {
-      const s = editing.steps.find((x) => x._uid === tickingUid);
+      const s = liveRec.find((x) => x._uid === tickingUid);
       const gap = pendingServerGap != null ? pendingServerGap : Math.max(0, performance.now() - tickStart);
       if (s) s.delayBeforeMs = gap;
+      const doneUid = tickingUid; tickingUid = null;
+      if (liveEl && s) {
+        const r = liveEl.querySelector(`.rec-live-row[data-uid="${doneUid}"]`);
+        if (r) { r.classList.remove('rec-live-ticking'); const lbl = r.querySelector('.rec-live-label'); if (lbl) lbl.textContent = liveSummary(s); }
+      }
     }
-    pendingServerGap = null; tickingUid = null;
-    const ci = idxOfUid(recordingUid); if (ci < 0) return;
+    pendingServerGap = null;
     const inp = tagUids([{ delayBeforeMs: 0, event: data.event }])[0];
-    const tick = tagUids([{ delayBeforeMs: 0, event: { '$type': 'delay', randomizePercent: 0 } }])[0];
-    editing.steps.splice(recInsertAt(ci), 0, inp, tick); // 입력 카드 + 다음 측정용 지연 카드
-    recUids.add(inp._uid); recUids.add(tick._uid);
-    tickingUid = tick._uid; tickStart = performance.now();
-    renderSteps();
-    scrollLiveIntoView(tick._uid);
-  }
-  function scrollLiveIntoView(uid) {
-    const el = stepsEl().querySelector(`.step[data-uid="${uid}"]`);
-    if (el) el.scrollIntoView({ block: 'nearest' });
+    liveRec.push(inp);
+    if (liveEl) liveEl.appendChild(liveRowEl(inp));
+    startTickingDelay(); // 다음 측정용 지연 행
   }
   // 녹화 종료 버튼 클릭(=마지막 왼쪽 클릭)과 그 직전 지연은 결과에서 제외
   function stripTrailingStopClick(region) {
@@ -494,16 +499,14 @@ export function createEditor({ log, onSaved, getStatus }) {
     const cardUid = recordingUid; recordingUid = null; // 이후 도착하는 종료 클릭 이벤트는 무시
     const tick = tickingUid; tickingUid = null;
     try { await api.recordStop('', false); } catch (e) { log('error', e.message); }
-    const ci = cardUid != null ? idxOfUid(cardUid) : -1;
-    if (ci < 0) { recUids = new Set(); pendingServerGap = null; return; }
-    // 진행 중(측정 중) 지연 카드 제거
-    if (tick != null) { const ti = idxOfUid(tick); if (ti >= 0) editing.steps.splice(ti, 1); recUids.delete(tick); }
-    // 녹화 영역(녹화 카드 바로 아래 연속) 수집 → 종료 클릭 정리
-    const region = []; let j = ci + 1;
-    while (j < editing.steps.length && recUids.has(editing.steps[j]._uid)) { region.push(editing.steps[j]); j++; }
+    // 진행 중(측정 중) 지연 행 제외 + 종료 클릭/직전 지연 정리
+    const region = liveRec.filter((s) => s._uid !== tick);
+    liveRec = []; liveEl = null; pendingServerGap = null;
     const stripped = stripTrailingStopClick(region);
-    editing.steps.splice(ci, 1 + region.length, ...stripped); // 녹화 카드 제거 + 정리된 결과 삽입
-    recUids = new Set(); pendingServerGap = null;
+    const ci = cardUid != null ? idxOfUid(cardUid) : -1;
+    if (ci < 0) { renderSteps(); return; }
+    pushUndo();
+    editing.steps.splice(ci, 1, ...stripped); // 녹화 카드 자리에 결과 삽입(카드 대체)
     selected = new Set(stripped.map((s) => s._uid)); lastUid = stripped.length ? stripped[0]._uid : null;
     renderSteps();
     log('info', `녹화 완료: ${stripped.length} 스텝`);
