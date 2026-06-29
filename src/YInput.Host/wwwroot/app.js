@@ -6,6 +6,7 @@ import * as km from './keymap.js';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtMs = (ms) => ms >= 1000 ? (ms / 1000).toFixed(2) + ' s' : Math.round(ms) + ' ms'; // 편집기와 동일 표기
 
 const state = { status: null, macros: [] };
 let runShownId = null;    // 실행 페이지에 스텝 표시 중인 매크로 id
@@ -130,7 +131,7 @@ function renderMacroList(listEl, emptyEl, mode) {
           <button class="mbtn-trig act-trigger" title="트리거 설정(클릭 후 키/마우스/패드 입력)">${ICON.trigger}<span class="trig-val">${esc(m.trigger || '없음')}</span></button>
         </div>`;
     } else {
-      const sub = `${m.stepCount}스텝 · ${m.loopCount === 0 ? '∞' : m.loopCount}회`;
+      const sub = `${m.stepCount}스텝 · 총 ${fmtMs(m.durationMs || 0)}`;
       li.innerHTML = `
         <div class="macro-meta"><span class="name">${esc(m.name)}</span><span class="macro-sub">${sub}</span></div>
         <div class="macro-actions">

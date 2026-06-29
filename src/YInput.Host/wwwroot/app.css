@@ -278,7 +278,7 @@ input[type=range] { accent-color: var(--accent); }
 .pair-h { position: absolute; height: 2px; border-radius: 1px; pointer-events: none; }
 .pair-v { position: absolute; width: 2px; border-radius: 1px; pointer-events: none; }
 .pair-node { position: absolute; width: 7px; height: 7px; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 2px var(--bg); pointer-events: none; }
-.step { border: 1px solid var(--border2); border-radius: 10px; background: var(--card); transition: background .1s; cursor: grab; }
+.step { border: 1px solid var(--border2); border-radius: 10px; background: var(--card); transition: background .1s; cursor: grab; position: relative; }
 .step:active { cursor: grabbing; }
 .step input, .step textarea { cursor: text; }
 .step input[type=range] { cursor: pointer; } /* 슬라이더는 텍스트 커서 아닌 손가락(포인터) */
@@ -287,7 +287,10 @@ input[type=range] { accent-color: var(--accent); }
 /* 틴트를 불투명 '단색(고정 hex)'으로 — linear-gradient(이미지)는 Windows Chromium에서
    그 위 텍스트의 ClearType(서브픽셀 AA)을 꺼 글자가 가늘어/작아 보임. 단색 배경이면
    선택/비선택 글자 렌더링이 완전히 동일. (값 = 각 틴트를 var(--card/2) 위에 미리 합성한 hex) */
-.step.sel { background: #222f4a; box-shadow: 0 0 0 2px #6ea8ff; } /* 선택: 단색 배경 + 카드 바깥 링(내부 레이아웃·글자 변동 0) */
+.step.sel { background: #222f4a; } /* 선택: 단색 배경만 변경(불투명색 → ClearType 유지, 글자 동일) */
+/* 선택 링: 글자가 없는 ::after 오버레이에 그림 → .step 본체에 box-shadow가 없어 텍스트 AA(ClearType) 영향 0.
+   inset:-3px + border 2px = 카드 테두리 바로 바깥 2px 링(예전 outset 모양 그대로) */
+.step.sel::after { content: ''; position: absolute; inset: -3px; border: 2px solid #6ea8ff; border-radius: 12px; pointer-events: none; }
 .step.sel:hover { background: #2b3c5f; }
 .step.dragover { box-shadow: inset 0 2px 0 var(--accent); }
 .step.dragging { background: var(--card3); }

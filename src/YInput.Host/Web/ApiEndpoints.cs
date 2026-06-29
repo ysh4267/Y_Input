@@ -215,11 +215,37 @@ public static class ApiEndpoints
         name = m.Name,
         stepCount = m.Steps.Count,
         loopCount = m.LoopCount,
+        durationMs = TotalDurationMs(m),
         speedMultiplier = m.SpeedMultiplier,
         trigger = m.Trigger?.ToString() ?? "",
         enabled = m.Enabled,
         modifiedUtc = m.ModifiedUtc,
     };
+
+    /// <summary>한 번 재생 기준 총 소요 시간(ms). 내부 반복(LoopStart/End) 배수를 반영하며
+    /// 편집기의 총 시간 계산과 동일하게 지연(Delay) 스텝의 DelayBeforeMs만 합산한다.</summary>
+    private static double TotalDurationMs(Macro m)
+    {
+        var stack = new Stack<int>();
+        double mult = 1, total = 0;
+        foreach (var s in m.Steps)
+        {
+            switch (s.Event)
+            {
+                case LoopStartEvent ls:
+                    var c = Math.Max(1, ls.Count);
+                    stack.Push(c); mult *= c;
+                    break;
+                case LoopEndEvent:
+                    if (stack.Count > 0) mult /= stack.Pop();
+                    break;
+                case DelayEvent:
+                    total += s.DelayBeforeMs * mult;
+                    break;
+            }
+        }
+        return total;
+    }
 
     private static async Task<Macro> ReadMacro(HttpRequest req)
     {
