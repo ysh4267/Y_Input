@@ -89,7 +89,7 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 /* 실행 페이지 대시보드 */
 /* 실행 페이지: 좁아져도 재배치 없이 최소 너비 유지 → 작아지면 페이지 스크롤 */
 #page-run { overflow: auto; }
-.run-layout { flex: 0 0 auto; min-width: 900px; min-height: 100%; display: grid; grid-template-columns: minmax(300px, 1fr) minmax(360px, 1.4fr); grid-template-rows: minmax(0, 1fr); gap: 14px; padding: 14px 18px; align-items: stretch; overflow: hidden; }
+.run-layout { flex: 0 0 auto; min-width: 1120px; min-height: 100%; display: grid; grid-template-columns: minmax(440px, 1fr) minmax(380px, 1.2fr); grid-template-rows: minmax(0, 1fr); gap: 14px; padding: 14px 18px; align-items: stretch; overflow: hidden; }
 .run-aside { align-self: start; display: flex; flex-direction: column; gap: 14px; }
 .run-list-card { min-height: 0; display: flex; flex-direction: column; }
 .run-list-card .macro-list { flex: 1; max-height: none; min-height: 0; }
