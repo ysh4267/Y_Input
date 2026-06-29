@@ -19,6 +19,12 @@ const TYPE_NAME = { keyboard: '키', mouse: '마우스', gamepad: '패드', text
 const fmtMs = (ms) => ms >= 1000 ? (ms / 1000).toFixed(2) + ' s' : Math.round(ms) + ' ms';
 const REDUCE_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+// 카드 액션 아이콘(복제=겹친 사각형 / 삭제=휴지통) — 또렷한 라인 아이콘
+const ICON = {
+  dup: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="5.6" y="5.6" width="8.1" height="8.1" rx="1.6"/><path d="M10.4 5.4V3.1A1.6 1.6 0 0 0 8.8 1.5H3.1A1.6 1.6 0 0 0 1.5 3.1V8.8A1.6 1.6 0 0 0 3.1 10.4H5.4"/></svg>',
+  del: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.3H13.4"/><path d="M6.4 4.3V3.2A1.1 1.1 0 0 1 7.5 2.1H8.5A1.1 1.1 0 0 1 9.6 3.2V4.3"/><path d="M3.9 4.3 4.6 13A1.3 1.3 0 0 0 5.9 14.2H10.1A1.3 1.3 0 0 0 11.4 13L12.1 4.3"/><path d="M6.6 6.9V11.3M9.4 6.9V11.3"/></svg>',
+};
+
 // 세그먼트 컨트롤 헬퍼
 const setSeg = (el, val) => el.querySelectorAll('.seg-btn').forEach((b) => b.classList.toggle('on', b.dataset.val === val));
 const getSeg = (el) => el.querySelector('.seg-btn.on')?.dataset.val ?? null;
@@ -36,6 +42,13 @@ export function createEditor({ log, onSaved, getStatus }) {
   let draggingUids = new Set();
   let stepCapture = null;     // 게임패드 캡처 라우팅 콜백
   let dropLine = null;        // 팔레트 드롭 위치 표시선
+
+  // 녹화 카드 상태
+  let recordingUid = null;    // 현재 녹화 중인 '녹화하기' 카드의 _uid
+  let recBusy = false;        // 시작 처리 중 중복 방지
+  let recAutoTimer = null;    // 지속 시간 자동 정지 타이머
+  let recCountTimer = null;   // 남은 시간 카운트 표시 타이머
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // 클립보드·언두
   let clipboard = [];
@@ -86,8 +99,9 @@ export function createEditor({ log, onSaved, getStatus }) {
 
   function updateStats() {
     if (!editing) return;
-    $('ed-stat-steps').textContent = editing.steps.length;
-    const dur = editing.steps.reduce((a, s) => a + (s.event['$type'] === 'delay' ? (s.delayBeforeMs || 0) : 0), 0);
+    const real = editing.steps.filter((s) => s.event['$type'] !== 'record'); // 녹화 카드는 스텝 아님
+    $('ed-stat-steps').textContent = real.length;
+    const dur = real.reduce((a, s) => a + (s.event['$type'] === 'delay' ? (s.delayBeforeMs || 0) : 0), 0);
     $('ed-stat-dur').textContent = fmtMs(dur);
     $('ed-stat-trigger').textContent = hotkeyToString(editing.trigger);
   }
@@ -119,6 +133,7 @@ export function createEditor({ log, onSaved, getStatus }) {
     }
     applySel();
     updateStats();
+    syncRecordButtons(getStatus());
   }
 
   function applyLoopStyles() {
@@ -211,11 +226,13 @@ export function createEditor({ log, onSaved, getStatus }) {
     row.dataset.uid = step._uid;
     if (draggingUids.has(step._uid)) row.classList.add('dragging');
 
+    if (t === 'record') { buildRecordCard(row, step); return row; } // 녹화하기 카드(3줄 패널)
+
     // 행 액션(복제/삭제) — 카드 우측 끝(아래 detail 뒤에 append)
     const act = document.createElement('div'); act.className = 'step-act';
-    const bDup = document.createElement('button'); bDup.className = 'rowbtn'; bDup.title = '복제'; bDup.textContent = '⎘';
+    const bDup = document.createElement('button'); bDup.className = 'rowbtn'; bDup.title = '복제'; bDup.innerHTML = ICON.dup;
     bDup.onclick = (e) => { e.stopPropagation(); pushUndo(); const c = freshStep(step); editing.steps.splice(i + 1, 0, c); selectOnly(c._uid); renderSteps(); };
-    const bDel = document.createElement('button'); bDel.className = 'rowbtn del'; bDel.title = '삭제'; bDel.textContent = '✕';
+    const bDel = document.createElement('button'); bDel.className = 'rowbtn del'; bDel.title = '삭제'; bDel.innerHTML = ICON.del;
     bDel.onclick = (e) => { e.stopPropagation(); pushUndo(); selected.delete(step._uid); editing.steps.splice(i, 1); renderSteps(); };
     act.append(bDup, bDel);
 
@@ -331,6 +348,123 @@ export function createEditor({ log, onSaved, getStatus }) {
     }, 0);
   }
 
+  // ---------- 녹화하기 카드(3줄 패널: 녹화/지연/대상) ----------
+  function buildRecordCard(row, step) {
+    row.classList.add('record-card');
+    const ev = step.event;
+    ev.targets ||= { keyboard: true, mouseButtons: true, mouseMove: false, mouseWheel: true, gamepad: false };
+
+    // 1줄: 녹화 시작/정지 + 상태 + 지속 시간(수동) + 카드 제거
+    const r1 = document.createElement('div'); r1.className = 'rec-row';
+    const go = document.createElement('button'); go.className = 'btn rec rec-go'; go.textContent = '● 녹화 시작';
+    const status = document.createElement('span'); status.className = 'rec-status rec-go-status';
+    go.onclick = (e) => {
+      e.stopPropagation();
+      const st = getStatus();
+      if (st && st.state === 'recording' && recordingUid === step._uid) stopRecord();
+      else startRecord(step, status);
+    };
+    const dur = document.createElement('input'); dur.type = 'number'; dur.min = '0'; dur.step = '1'; dur.className = 'mini rec-dur';
+    dur.value = Math.max(0, parseInt(ev.durationSec, 10) || 0); dur.title = '녹화 지속 시간(초) — 지정 초가 지나면 자동 정지, 0이면 수동 정지';
+    dur.onchange = () => { ev.durationSec = Math.max(0, parseInt(dur.value, 10) || 0); dur.value = ev.durationSec; };
+    const spacer = document.createElement('span'); spacer.className = 'rec-spacer';
+    const del = document.createElement('button'); del.className = 'rowbtn del'; del.title = '녹화 카드 제거'; del.innerHTML = ICON.del;
+    del.onclick = (e) => {
+      e.stopPropagation();
+      if (recordingUid === step._uid) { log('warn', '녹화 중에는 카드를 제거할 수 없습니다.'); return; }
+      pushUndo(); selected.delete(step._uid); editing.steps.splice(idxOfUid(step._uid), 1); renderSteps();
+    };
+    r1.append(go, status, labelTag('지속'), dur, labelTag('초 (0=수동)'), spacer, del);
+
+    // 2줄: 지연(실제/고정/없음) + 고정 ms
+    const r2 = document.createElement('div'); r2.className = 'rec-row';
+    const fixed = document.createElement('input'); fixed.type = 'number'; fixed.min = '0'; fixed.step = '10'; fixed.className = 'mini rec-fixed';
+    fixed.value = Math.max(0, parseInt(ev.fixedMs, 10) || 50); fixed.title = '고정 지연(ms)';
+    const fixedUnit = labelTag('ms');
+    const setFixedVis = () => { const on = (ev.delayMode || 'record') === 'fixed'; fixed.hidden = !on; fixedUnit.hidden = !on; };
+    fixed.onchange = () => { ev.fixedMs = Math.max(0, parseInt(fixed.value, 10) || 0); fixed.value = ev.fixedMs; };
+    const seg = document.createElement('div'); seg.className = 'seg rec-delay';
+    [['record', '실제'], ['fixed', '고정'], ['none', '없음']].forEach(([val, txt]) => {
+      const b = document.createElement('button'); b.className = 'seg-btn' + ((ev.delayMode || 'record') === val ? ' on' : ''); b.textContent = txt; b.dataset.val = val;
+      b.onclick = (e) => { e.stopPropagation(); ev.delayMode = val; seg.querySelectorAll('.seg-btn').forEach((x) => x.classList.toggle('on', x.dataset.val === val)); setFixedVis(); };
+      seg.appendChild(b);
+    });
+    setFixedVis();
+    r2.append(labelTag('지연'), seg, fixed, fixedUnit);
+
+    // 3줄: 기록 대상 + 카운트다운
+    const r3 = document.createElement('div'); r3.className = 'rec-row';
+    const chips = document.createElement('div'); chips.className = 'chips rec-targets';
+    [['keyboard', '⌨ 키보드'], ['mouseButtons', '🖱 클릭'], ['mouseMove', '↔ 이동'], ['mouseWheel', '⊙ 휠'], ['gamepad', '🎮 패드']].forEach(([key, txt]) => {
+      const c = document.createElement('button'); c.className = 'chip' + (ev.targets[key] ? ' on' : ''); c.textContent = txt;
+      c.onclick = (e) => { e.stopPropagation(); ev.targets[key] = !ev.targets[key]; c.classList.toggle('on', ev.targets[key]); };
+      chips.appendChild(c);
+    });
+    const cd = document.createElement('button'); cd.className = 'chip' + (ev.countdown ? ' on' : ''); cd.textContent = '⏱ 3초'; cd.title = '시작 전 3초 카운트다운';
+    cd.onclick = (e) => { e.stopPropagation(); ev.countdown = !ev.countdown; cd.classList.toggle('on', ev.countdown); };
+    r3.append(labelTag('기록 대상'), chips, cd);
+
+    row.append(r1, r2, r3);
+  }
+
+  function recOptionsOf(ev) {
+    const fixedDelayMs = ev.delayMode === 'fixed' ? (ev.fixedMs || 0) : ev.delayMode === 'none' ? 0 : null;
+    const t = ev.targets || {};
+    return { keyboard: !!t.keyboard, mouseButtons: !!t.mouseButtons, mouseMove: !!t.mouseMove, mouseWheel: !!t.mouseWheel, gamepad: !!t.gamepad, fixedDelayMs };
+  }
+  async function startRecord(step, statusEl) {
+    if (recBusy) return;
+    const st = getStatus();
+    if (st && st.state !== 'idle') { log('warn', '녹화/재생 중에는 새 녹화를 시작할 수 없습니다.'); return; }
+    recBusy = true;
+    try {
+      const ev = step.event;
+      if (ev.countdown) { for (let n = 3; n >= 1; n--) { statusEl.textContent = n + '…'; await sleep(700); } }
+      statusEl.textContent = '';
+      await api.recordStart(recOptionsOf(ev));
+      recordingUid = step._uid;
+      log('info', '녹화 시작 — 입력을 기록합니다.');
+      syncRecordButtons(getStatus());
+      const dur = Math.max(0, parseInt(ev.durationSec, 10) || 0);
+      if (dur > 0) {
+        let left = dur; statusEl.textContent = left + 's';
+        recCountTimer = setInterval(() => { left -= 1; statusEl.textContent = (left > 0 ? left + 's' : ''); }, 1000);
+        recAutoTimer = setTimeout(() => stopRecord(), dur * 1000);
+      }
+    } catch (e) { log('error', e.message); recordingUid = null; }
+    finally { recBusy = false; }
+  }
+  async function stopRecord() {
+    if (recAutoTimer) { clearTimeout(recAutoTimer); recAutoTimer = null; }
+    if (recCountTimer) { clearInterval(recCountTimer); recCountTimer = null; }
+    const uid = recordingUid; recordingUid = null;
+    try {
+      const macro = await api.recordStop('');
+      const steps = (macro && macro.steps) || [];
+      const idx = uid != null ? idxOfUid(uid) : -1;
+      if (idx < 0) { log('warn', '녹화 카드가 사라져 결과를 넣지 못했습니다.'); return; }
+      if (!steps.length) { log('info', '캡처된 입력이 없습니다.'); syncRecordButtons(getStatus()); return; }
+      pushUndo();
+      const captured = tagUids(steps.map((s) => ({ delayBeforeMs: s.delayBeforeMs || 0, event: s.event })));
+      editing.steps.splice(idx, 1, ...captured); // 녹화 카드 자리에 캡처 결과 삽입(카드 대체)
+      selected = new Set(captured.map((s) => s._uid)); lastUid = captured[0]._uid;
+      renderSteps();
+      log('info', `녹화 완료: ${captured.length} 스텝`);
+    } catch (e) { log('error', e.message); }
+  }
+  function syncRecordButtons(st) {
+    const recing = !!(st && st.state === 'recording');
+    const playing = !!(st && st.state === 'playing');
+    stepsEl().querySelectorAll('.step.record-card').forEach((row) => {
+      const uid = +row.dataset.uid;
+      const go = row.querySelector('.rec-go'); if (!go) return;
+      const isMe = recing && recordingUid === uid;
+      go.textContent = isMe ? '■ 녹화 정지' : '● 녹화 시작';
+      go.classList.toggle('active', isMe);
+      go.disabled = playing || (recing && !isMe);
+    });
+  }
+
   // 헬퍼
   const labelTag = (txt) => { const s = document.createElement('span'); s.className = 'muted'; s.textContent = txt; return s; };
   const numInput = (val, set, title) => {
@@ -373,6 +507,7 @@ export function createEditor({ log, onSaved, getStatus }) {
       case 'loop': return [
         { delayBeforeMs: 0, event: km.loopStartEvent(2) },
         { delayBeforeMs: 0, event: km.loopEndEvent() }];
+      case 'record': return [{ delayBeforeMs: 0, event: { '$type': 'record', durationSec: 0, delayMode: 'record', fixedMs: 50, countdown: true, targets: { keyboard: true, mouseButtons: true, mouseMove: false, mouseWheel: true, gamepad: false } } }];
       default: return [];
     }
   }
@@ -658,8 +793,8 @@ export function createEditor({ log, onSaved, getStatus }) {
     editing.loopCount = mode === 'inf' ? 0 : mode === 'once' ? 1 : (parseInt($('ed-loop').value, 10) || 1);
     editing.speedMultiplier = parseFloat($('ed-speed').value) || 1.0;
     editing.randomizeDelayPercent = parseInt($('ed-random').value, 10) || 0;
-    // _uid는 직렬화에서 제외
-    return { ...editing, steps: editing.steps.map((s) => ({ delayBeforeMs: s.delayBeforeMs || 0, event: s.event })) };
+    // _uid는 직렬화에서 제외, 녹화하기 카드(record)는 저장 대상 아님
+    return { ...editing, steps: editing.steps.filter((s) => s.event['$type'] !== 'record').map((s) => ({ delayBeforeMs: s.delayBeforeMs || 0, event: s.event })) };
   }
   async function save() {
     try {
@@ -688,6 +823,7 @@ export function createEditor({ log, onSaved, getStatus }) {
     const playBtn = $('btn-play');
     playBtn.textContent = playing ? '■ 정지' : '▶ 재생';
     playBtn.disabled = st && st.state === 'recording';
+    syncRecordButtons(st);
   }
 
   // ---------- 와이어링 ----------

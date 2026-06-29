@@ -116,36 +116,6 @@
           </div>
         </div>
 
-        <!-- 녹화 바 -->
-        <div class="bar" id="recorder-panel">
-          <div class="bar-group">
-            <button id="rec-toggle" class="btn rec">● 녹화 시작</button>
-            <span id="rec-status" class="rec-status"></span>
-          </div>
-          <div class="bar-group">
-            <span class="bar-label">지연</span>
-            <div class="seg" id="seg-recdelay">
-              <button class="seg-btn" data-val="record" title="실제 입력 간격을 그대로 기록">실제</button>
-              <button class="seg-btn" data-val="fixed" title="모든 스텝에 고정 간격">고정</button>
-              <button class="seg-btn" data-val="none" title="간격 없이 즉시 연속">없음</button>
-            </div>
-            <input id="opt-fixed-ms" type="number" min="0" step="10" value="50" class="mini" title="고정 지연(ms)" />
-          </div>
-          <div class="bar-group grow">
-            <span class="bar-label">기록 대상</span>
-            <div class="chips" id="rec-targets">
-              <button class="chip on" data-t="keyboard">⌨ 키보드</button>
-              <button class="chip on" data-t="mouseButtons">🖱 클릭</button>
-              <button class="chip" data-t="mouseMove">↔ 이동</button>
-              <button class="chip on" data-t="mouseWheel">⊙ 휠</button>
-              <button class="chip" data-t="gamepad">🎮 패드</button>
-            </div>
-          </div>
-          <div class="bar-group">
-            <button class="chip on" id="opt-countdown" title="녹화 시작 전 3초 카운트다운">⏱ 3초</button>
-          </div>
-        </div>
-
         <!-- 스텝 툴바: 선택 시 액션바(좌) + 전체 선택(우, 항상) -->
         <div class="steps-toolbar">
           <div id="sel-bar" class="sel-bar" hidden>
@@ -166,6 +136,7 @@
         <div class="editor-body">
           <aside class="palette" id="palette">
             <div class="palette-title">동작</div>
+            <button class="pal-item pal-record" data-type="record" draggable="true"><span class="pal-ico type-record">●</span> 녹화하기 <span class="pal-sub">입력 캡처</span></button>
             <button class="pal-item" data-type="input-down" draggable="true"><span class="pal-ico type-keyboard">⌨</span> 입력 Down <span class="pal-sub">키·마우스·패드</span></button>
             <button class="pal-item" data-type="input-up" draggable="true"><span class="pal-ico type-keyboard">⌨</span> 입력 Up <span class="pal-sub">키·마우스·패드</span></button>
             <button class="pal-item" data-type="delay" draggable="true"><span class="pal-ico type-delay">⏱</span> 지연 (Wait)</button>

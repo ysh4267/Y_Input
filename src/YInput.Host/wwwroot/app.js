@@ -1,6 +1,5 @@
 import { api } from './api.js';
 import { createEditor } from './editor.js';
-import { createRecorder } from './recorder.js';
 import { confirmDialog, installLockdown } from './ui.js';
 
 const $ = (id) => document.getElementById(id);
@@ -20,9 +19,8 @@ function log(level, message, time) {
   while (el.childElementCount > 400) el.removeChild(el.firstChild);
 }
 
-// ---------- 편집기 / 녹화기 ----------
+// ---------- 편집기(녹화는 편집기 안 '녹화하기' 카드로 통합) ----------
 const editor = createEditor({ log, onSaved: loadMacros, getStatus: () => state.status });
-const recorder = createRecorder({ log, onRecorded: (m) => editor.open(m), getStatus: () => state.status });
 
 // ---------- 상태 ----------
 function renderStatus(s) {
@@ -55,7 +53,6 @@ function renderStatus(s) {
 
   $('foot-url').textContent = s.url || '';
   editor.onStatus(s);
-  recorder.onStatus(s);
   renderMacroActive();
 }
 
