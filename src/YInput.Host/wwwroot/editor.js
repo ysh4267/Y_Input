@@ -347,7 +347,7 @@ export function createEditor({ log, onSaved, getStatus }) {
   function buildRecordCard(row, step) {
     row.classList.add('record-card');
     const ev = step.event;
-    ev.targets ||= { keyboard: true, mouseButtons: true, mouseMove: false, mouseWheel: true, gamepad: false };
+    ev.targets ||= { keyboard: true, mouseButtons: false, mouseMove: false, mouseWheel: false, gamepad: false };
 
     // 1줄: 녹화 시작/정지 + 상태 + 지속 시간(수동) + 카드 제거
     const r1 = document.createElement('div'); r1.className = 'rec-row';
@@ -567,7 +567,7 @@ export function createEditor({ log, onSaved, getStatus }) {
       case 'loop': return [
         { delayBeforeMs: 0, event: km.loopStartEvent(2) },
         { delayBeforeMs: 0, event: km.loopEndEvent() }];
-      case 'record': return [{ delayBeforeMs: 0, event: { '$type': 'record', delayMode: 'record', fixedMs: 50, targets: { keyboard: true, mouseButtons: true, mouseMove: false, mouseWheel: true, gamepad: false } } }];
+      case 'record': return [{ delayBeforeMs: 0, event: { '$type': 'record', delayMode: 'record', fixedMs: 50, targets: { keyboard: true, mouseButtons: false, mouseMove: false, mouseWheel: false, gamepad: false } } }];
       default: return [];
     }
   }

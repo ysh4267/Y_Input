@@ -104,7 +104,6 @@ function renderMacroList(listEl, emptyEl, mode) {
     const actions = mode === 'run'
       ? `<button class="mbtn-trig act-trigger" title="트리거 설정(클릭 후 키/마우스/패드 입력)">${ICON.trigger}<span class="trig-val">${esc(m.trigger || '없음')}</span></button>
          <button class="mbtn act-edit" title="편집">${ICON.edit}</button>
-         <button class="mbtn act-dup" title="복제">${ICON.dup}</button>
          <button class="mbtn act-del" title="삭제">${ICON.del}</button>`
       : `<button class="mbtn act-dup" title="복제">${ICON.dup}</button>
          <button class="mbtn act-del" title="삭제">${ICON.del}</button>`;
@@ -120,11 +119,11 @@ function renderMacroList(listEl, emptyEl, mode) {
       if (mode === 'run') selectRunMacro(m.id); else openMacro(m.id);
     };
     li.querySelector('.act-del').onclick = () => confirmDeleteInline(li, m.id);
-    li.querySelector('.act-dup').onclick = () => duplicateMacro(m.id);
+    const dupBtn = li.querySelector('.act-dup'); if (dupBtn) dupBtn.onclick = () => duplicateMacro(m.id);
     if (mode === 'run') {
       const tg = li.querySelector('.act-toggle');
       tg.onchange = async () => {
-        try { await api.setEnabled(m.id, tg.checked); }
+        try { await api.setEnabled(m.id, tg.checked); li.classList.toggle('enabled', tg.checked); }
         catch (e) { log('error', e.message); tg.checked = !tg.checked; }
       };
       li.querySelector('.act-edit').onclick = () => { openMacro(m.id); switchTab('edit'); };
