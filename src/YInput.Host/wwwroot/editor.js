@@ -174,6 +174,34 @@ export function createEditor({ log, onSaved, getStatus }) {
       hline(cardRight, uY, bx - cardRight + 2, color);          // up 가로 스텁
       node(cardRight, dY, color); node(cardRight, uY, color);   // 카드 우변 노드
     });
+
+    // 반복(루프) 시작↔끝 연결 — 카드 왼쪽 '[' 브래킷
+    const lstack = [], lpairs = [];
+    editing.steps.forEach((s, i) => {
+      const t = s.event['$type'];
+      if (t === 'loopStart') lstack.push(i);
+      else if (t === 'loopEnd' && lstack.length) lpairs.push({ down: lstack.pop(), up: i });
+    });
+    lpairs.sort((a, b) => a.down - b.down);
+    const lLane = [];
+    lpairs.forEach((p) => {
+      let lane = lLane.findIndex((end) => p.down > end);
+      if (lane === -1) { lane = lLane.length; lLane.push(p.up); } else lLane[lane] = p.up;
+      p.lane = Math.min(lane, 1);
+    });
+    lpairs.forEach((p) => {
+      const cd = rows[p.down], cu = rows[p.up];
+      if (!cd || !cu) return;
+      const color = '#fb923c'; // --t-loop
+      const cardLeft = cd.offsetLeft;
+      const lx = cardLeft - 6 - p.lane * 8;
+      const dY = cd.offsetTop + cd.offsetHeight / 2;
+      const uY = cu.offsetTop + cu.offsetHeight / 2;
+      vline(lx, Math.min(dY, uY), Math.abs(uY - dY), color);
+      hline(lx, dY, cardLeft - lx, color);
+      hline(lx, uY, cardLeft - lx, color);
+      node(cardLeft, dY, color); node(cardLeft, uY, color);
+    });
   }
 
   function buildRow(step, i) {
@@ -183,13 +211,13 @@ export function createEditor({ log, onSaved, getStatus }) {
     row.dataset.uid = step._uid;
     if (draggingUids.has(step._uid)) row.classList.add('dragging');
 
-    // 행 액션(복제/삭제) — 맨 왼쪽
+    // 행 액션(복제/삭제) — 카드 우측 끝(아래 detail 뒤에 append)
     const act = document.createElement('div'); act.className = 'step-act';
     const bDup = document.createElement('button'); bDup.className = 'rowbtn'; bDup.title = '복제'; bDup.textContent = '⎘';
     bDup.onclick = (e) => { e.stopPropagation(); pushUndo(); const c = freshStep(step); editing.steps.splice(i + 1, 0, c); selectOnly(c._uid); renderSteps(); };
     const bDel = document.createElement('button'); bDel.className = 'rowbtn del'; bDel.title = '삭제'; bDel.textContent = '✕';
     bDel.onclick = (e) => { e.stopPropagation(); pushUndo(); selected.delete(step._uid); editing.steps.splice(i, 1); renderSteps(); };
-    act.append(bDup, bDel); row.appendChild(act);
+    act.append(bDup, bDel);
 
     const num = document.createElement('span'); num.className = 'step-num'; num.textContent = i + 1; row.appendChild(num);
 
@@ -202,6 +230,8 @@ export function createEditor({ log, onSaved, getStatus }) {
     // 동작(인라인 편집)
     const detail = document.createElement('div'); detail.className = 'step-detail';
     buildDetail(detail, step); row.appendChild(detail);
+
+    row.appendChild(act); // 복제/삭제 — 카드 우측 끝
 
     // 팔레트 드롭(HTML5) — 이 행 위치에 삽입
     row.addEventListener('dragover', (e) => { if (dragType) { e.preventDefault(); row.classList.add('dragover'); } });
@@ -478,6 +508,19 @@ export function createEditor({ log, onSaved, getStatus }) {
       });
     });
   }
+  // 요소(엘리먼트)별 FLIP — 드래그 placeholder 슬라이드용
+  function captureRectsOf(els) { const m = new Map(); els.forEach((el) => m.set(el, el.getBoundingClientRect())); return m; }
+  function playFlipOf(before) {
+    if (REDUCE_MOTION) return;
+    before.forEach((old, el) => {
+      if (!el.isConnected) return;
+      const now = el.getBoundingClientRect();
+      const dy = old.top - now.top;
+      if (!dy) return;
+      el.style.transition = 'none'; el.style.transform = `translateY(${dy}px)`;
+      requestAnimationFrame(() => { el.style.transition = 'transform .16s ease'; el.style.transform = ''; setTimeout(() => { el.style.transition = ''; el.style.transform = ''; }, 180); });
+    });
+  }
 
   // ---------- 포인터 드래그(행 전체) + 마퀴 선택 ----------
   function onPointerDown(e) {
@@ -487,7 +530,8 @@ export function createEditor({ log, onSaved, getStatus }) {
     if (rowEl) {
       const uid = +rowEl.dataset.uid;
       const uids = (selected.has(uid) && selected.size > 1) ? selIdxs().map((i) => editing.steps[i]._uid) : [uid];
-      drag = { startX: e.clientX, startY: e.clientY, uids, anchorUid: uid, moving: false };
+      const r = rowEl.getBoundingClientRect();
+      drag = { startX: e.clientX, startY: e.clientY, uids, anchorUid: uid, anchorEl: rowEl, offX: e.clientX - r.left, offY: e.clientY - r.top, moving: false };
       window.addEventListener('pointermove', onPointerMove);
       window.addEventListener('pointerup', onPointerUp);
     } else {
@@ -498,18 +542,11 @@ export function createEditor({ log, onSaved, getStatus }) {
     if (!drag) return;
     if (!drag.moving) {
       if (Math.abs(e.clientX - drag.startX) + Math.abs(e.clientY - drag.startY) < 5) return;
-      drag.moving = true;
-      pushUndo();
-      draggingUids = new Set(drag.uids);
-      stepsEl().querySelectorAll('.step').forEach((r) => r.classList.toggle('dragging', draggingUids.has(+r.dataset.uid)));
+      beginDrag();
     }
-    const newSteps = computeDropOrder(e.clientY, draggingUids);
-    if (orderChanged(newSteps)) {
-      const before = captureRects();
-      editing.steps = newSteps;
-      renderSteps();
-      playFlip(before);
-    }
+    drag.ghost.style.left = (e.clientX - drag.offX) + 'px';   // 드래그 블록이 포인터에 붙어 따라옴
+    drag.ghost.style.top = (e.clientY - drag.offY) + 'px';
+    updatePlaceholder(e.clientY);
   }
   function onPointerUp(e) {
     window.removeEventListener('pointermove', onPointerMove);
@@ -517,27 +554,58 @@ export function createEditor({ log, onSaved, getStatus }) {
     const d = drag; drag = null;
     if (!d) return;
     if (!d.moving) { onRowClick(d.anchorUid, e); return; }
-    draggingUids = new Set();
-    renderSteps();
+    finishDrag(d);
   }
-  function orderChanged(arr) {
-    if (arr.length !== editing.steps.length) return true;
-    for (let i = 0; i < arr.length; i++) if (arr[i]._uid !== editing.steps[i]._uid) return true;
-    return false;
+  function clearBrackets() { stepsEl().querySelectorAll('.pair-h,.pair-v,.pair-node').forEach((el) => el.remove()); }
+  function beginDrag() {
+    drag.moving = true;
+    pushUndo();
+    draggingUids = new Set(drag.uids);
+    clearBrackets();
+    const wrap = stepsEl();
+    const els = drag.uids.map((u) => wrap.querySelector(`.step[data-uid="${u}"]`)).filter(Boolean);
+    drag.draggedEls = els;
+    const ph = document.createElement('div'); ph.className = 'step-placeholder';
+    ph.style.height = (els.reduce((a, el) => a + el.offsetHeight, 0) + (els.length - 1) * 8) + 'px';
+    ph.style.width = els[0].offsetWidth + 'px';
+    wrap.insertBefore(ph, els[0]); drag.placeholder = ph;
+    const ghost = drag.anchorEl.cloneNode(true);
+    ghost.classList.add('step-ghost'); ghost.classList.remove('sel');
+    ghost.style.width = drag.anchorEl.offsetWidth + 'px';
+    if (drag.uids.length > 1) { const b = document.createElement('div'); b.className = 'ghost-count'; b.textContent = drag.uids.length + '개'; ghost.appendChild(b); }
+    document.body.appendChild(ghost); drag.ghost = ghost;
+    els.forEach((el) => { el.style.display = 'none'; });
   }
-  function computeDropOrder(pointerY, dragSet) {
-    const rows = [...stepsEl().querySelectorAll('.step')];
-    const others = editing.steps.filter((s) => !dragSet.has(s._uid));
-    const dragged = editing.steps.filter((s) => dragSet.has(s._uid));
-    let insertAt = others.length, oi = 0;
-    for (const row of rows) {
-      const uid = +row.dataset.uid;
-      if (dragSet.has(uid)) continue;
-      const r = row.getBoundingClientRect();
-      if (pointerY < r.top + r.height / 2) { insertAt = oi; break; }
-      oi++;
+  const visibleCards = () => [...stepsEl().querySelectorAll('.step')].filter((el) => el.style.display !== 'none');
+  function updatePlaceholder(pointerY) {
+    const wrap = stepsEl();
+    const cards = visibleCards();
+    let target = null;
+    for (const c of cards) {
+      const r = c.getBoundingClientRect();
+      if (pointerY < r.top + r.height / 2) { target = c; break; }
     }
-    return [...others.slice(0, insertAt), ...dragged, ...others.slice(insertAt)];
+    if (target === drag.placeholder) return;
+    const before = captureRectsOf(cards.concat(drag.placeholder));
+    if (target) wrap.insertBefore(drag.placeholder, target); else wrap.appendChild(drag.placeholder);
+    playFlipOf(before);
+  }
+  function finishDrag(d) {
+    d.ghost.remove();
+    const wrap = stepsEl();
+    const dragged = editing.steps.filter((s) => draggingUids.has(s._uid)); // 원래 상대순서
+    const order = [];
+    for (const child of [...wrap.children]) {
+      if (child === d.placeholder) { order.push(...dragged); continue; }
+      if (child.classList && child.classList.contains('step') && child.style.display !== 'none') {
+        const st = editing.steps.find((s) => s._uid === +child.dataset.uid);
+        if (st) order.push(st);
+      }
+    }
+    editing.steps = order;
+    draggingUids = new Set();
+    d.placeholder.remove();
+    renderSteps();
   }
 
   function startMarquee(e) {
