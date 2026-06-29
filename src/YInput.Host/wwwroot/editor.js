@@ -296,7 +296,8 @@ export function createEditor({ log, onSaved, getStatus }) {
       const hzv = document.createElement('span'); hzv.className = 'hz-val'; hzv.textContent = (ev.randomizePercent || 0) + '%';
       hz.oninput = () => { hzv.textContent = hz.value + '%'; };
       hz.onchange = () => { pushUndo(); ev.randomizePercent = parseInt(hz.value, 10) || 0; hzv.textContent = ev.randomizePercent + '%'; };
-      td.append(labelTag('대기'), n, labelTag('ms'), labelTag('휴머나이즈'), hz, hzv);
+      const hzLabel = labelTag('휴머나이즈'); hzLabel.classList.add('hz-label');
+      td.append(labelTag('대기'), n, labelTag('ms'), hzLabel, hz, hzv);
     } else if (t === 'loopStart') {
       const n = document.createElement('input');
       n.type = 'number'; n.min = '1'; n.value = Math.max(1, ev.count || 2); n.title = '반복 횟수';
