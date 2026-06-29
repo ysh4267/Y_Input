@@ -115,6 +115,7 @@ export function createEditor({ log, onSaved, getStatus }) {
   function renderSteps() {
     const wrap = stepsEl();
     wrap.innerHTML = '';
+    wrap.classList.toggle('is-empty', !editing.steps.length); // 빈 상태: 점선 박스가 영역 전체 채움
     if (!editing.steps.length) {
       const empty = document.createElement('div');
       empty.className = 'steps-empty';
