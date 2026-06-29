@@ -300,12 +300,12 @@ public sealed class MacroService
                     }
                     else
                     {
-                        // 키보드 2개 이상 동시(chord)는 저수준 훅, 단일 키는 RegisterHotKey(네이티브), 마우스는 마우스 훅
+                        // 마우스는 마우스 훅, 키보드는 단일/조합 모두 저수준 키보드 훅으로 감지.
+                        // (RegisterHotKey는 게임/전체화면·풀스크린 포커스에서 누락되거나 다른 앱과 충돌해 등록 실패할 수 있어
+                        //  저수준 훅이 더 안정적이며, 트리거 키를 가로채지 않고 통과시킨다.)
                         int id = hk.IsMouse
                             ? _hotkeys.RegisterMouse(hk, () => OnHotkey(macroId))
-                            : hk.IsKeyChord
-                                ? _hotkeys.RegisterKeyChord(hk, () => OnHotkey(macroId))
-                                : _hotkeys.Register(hk, () => OnHotkey(macroId));
+                            : _hotkeys.RegisterKeyChord(hk, () => OnHotkey(macroId));
                         _hotkeyToMacro[id] = macroId;
                     }
                 }
