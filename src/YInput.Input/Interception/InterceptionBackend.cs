@@ -15,6 +15,7 @@ public sealed class InterceptionBackend : IDisposable
 {
     private KeyboardHook? _kbHook;
     private MouseHook? _mouseHook;
+    private IntPtr _sendContext;   // 전송 전용 컨텍스트(캡처 수신 루프와 분리 → Send 데드락 방지)
     private volatile bool _capturing;
 
     /// <summary>드라이버가 설치되어 초기화에 성공했는지.</summary>
@@ -42,6 +43,9 @@ public sealed class InterceptionBackend : IDisposable
             // 이 과정에서 device id가 학습되고, 녹화 시 이벤트를 캡처한다.
             _kbHook = new KeyboardHook(KeyboardFilter.All, OnKeyboardStroke);
             _mouseHook = new MouseHook(MouseFilter.All, OnMouseStroke);
+            // 전송 전용 컨텍스트: 후크의 컨텍스트는 수신 루프가 interception_wait로 점유하므로,
+            // 같은 컨텍스트로 보내면 락 경합으로 행이 걸린다. 별도 컨텍스트로 보내면 경합이 없다.
+            _sendContext = InputInterceptor.CreateContext();
             Available = true;
         }
         catch
@@ -80,7 +84,8 @@ public sealed class InterceptionBackend : IDisposable
         {
             Key = new KeyStroke { Code = (KeyCode)ke.Code, State = (KeyState)ke.State },
         };
-        InputInterceptor.Send(_kbHook!.Context, _kbHook.Device, ref stroke, 1);
+        var ctx = _sendContext != IntPtr.Zero ? _sendContext : _kbHook!.Context;
+        InputInterceptor.Send(ctx, _kbHook!.Device, ref stroke, 1);
     }
 
     public void SendMouse(MouseEvent me)
@@ -97,7 +102,8 @@ public sealed class InterceptionBackend : IDisposable
                 Y = me.Y,
             },
         };
-        InputInterceptor.Send(_mouseHook!.Context, _mouseHook.Device, ref stroke, 1);
+        var ctx = _sendContext != IntPtr.Zero ? _sendContext : _mouseHook!.Context;
+        InputInterceptor.Send(ctx, _mouseHook!.Device, ref stroke, 1);
     }
 
     public void SendText(TextEvent te)
@@ -124,6 +130,7 @@ public sealed class InterceptionBackend : IDisposable
 
     public void Dispose()
     {
+        try { if (_sendContext != IntPtr.Zero) { InputInterceptor.DestroyContext(_sendContext); _sendContext = IntPtr.Zero; } } catch { /* ignore */ }
         try { _kbHook?.Dispose(); } catch { /* ignore */ }
         try { _mouseHook?.Dispose(); } catch { /* ignore */ }
         try { InputInterceptor.Dispose(); } catch { /* ignore */ }

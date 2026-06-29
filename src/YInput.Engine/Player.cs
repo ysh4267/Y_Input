@@ -100,6 +100,9 @@ public sealed class Player
                         default:
                             _sink.Send(step.Event);
                             Progress?.Invoke(this, new PlaybackProgress(loop, ip, steps.Count));
+                            // 지연이 0인 스텝도 최소 1ms(0.001s) 양보 — 전부 동기로 돌아 스레드를 막거나
+                            // 드라이버에 과속 송출하는 것을 방지하고, 스텝마다 취소(정지)가 즉시 먹게 한다.
+                            await PreciseDelay.WaitAsync(1, ct).ConfigureAwait(false);
                             ip++;
                             break;
                     }

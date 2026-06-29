@@ -306,7 +306,12 @@ function highlightRunStep(idx) {
   wrap.querySelectorAll('.run-steps-row.playing').forEach((r) => r.classList.remove('playing'));
   if (idx < 0) return;
   const row = wrap.querySelector(`.run-steps-row[data-i="${idx}"]`);
-  if (row) { row.classList.add('playing'); row.scrollIntoView({ block: 'nearest' }); }
+  if (!row) return;
+  row.classList.add('playing');
+  // run-steps 패널 '안에서만' 스크롤 — 좌측 매크로 목록/페이지 스크롤은 건드리지 않는다.
+  const wr = wrap.getBoundingClientRect(), rr = row.getBoundingClientRect();
+  if (rr.top < wr.top) wrap.scrollTop -= (wr.top - rr.top) + 8;
+  else if (rr.bottom > wr.bottom) wrap.scrollTop += (rr.bottom - wr.bottom) + 8;
 }
 // 실행 목록의 매크로별 진행 점(인디케이터): 진행 비율만큼 왼쪽부터 채움
 function updateMacroProg(macroId, frac) {

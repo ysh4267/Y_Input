@@ -15,6 +15,7 @@ public static class ApiEndpoints
     {
         // ---- 상태 ----
         app.MapGet("/api/status", () => Results.Json(service.GetStatusData()));
+        app.MapGet("/api/log/recent", () => Results.Json(service.RecentLogs())); // 진단용 최근 로그
 
         // ---- 드라이버 설치(관리자 필요, 수 분 소요 가능) ----
         app.MapPost("/api/drivers/install", async () => await Guard(async () =>

@@ -72,6 +72,13 @@ public sealed class MacroService
             // 실시간 카드 렌더용으로 전체 이벤트(@event)도 함께 보냄($type 포함 직렬화).
             _hub.Broadcast("recordedStep", new { summary = step.Event.Summary, delayBeforeMs = step.DelayBeforeMs, @event = step.Event });
 
+        // 앱 시작 시 모든 매크로 비활성화 — 직전 세션에서 켜둔/멈춰 있던 매크로가
+        // 자동으로 트리거 무장/재개되지 않도록(안전). 사용자는 매 세션 다시 켠다.
+        foreach (var m in _library.LoadAll())
+        {
+            if (m.Enabled) { m.Enabled = false; _library.Save(m); }
+        }
+
         ReloadHotkeys();
     }
 
@@ -107,8 +114,18 @@ public sealed class MacroService
 
     public void BroadcastStatus() => _hub.Broadcast("status", GetStatusData());
 
-    public void Log(string level, string message) =>
-        _hub.Broadcast("log", new { level, message, time = DateTime.Now.ToString("HH:mm:ss") });
+    private readonly object _logGate = new();
+    private readonly LinkedList<object> _recentLogs = new();
+
+    public void Log(string level, string message)
+    {
+        var entry = new { level, message, time = DateTime.Now.ToString("HH:mm:ss") };
+        lock (_logGate) { _recentLogs.AddLast(entry); while (_recentLogs.Count > 200) _recentLogs.RemoveFirst(); }
+        _hub.Broadcast("log", entry);
+    }
+
+    /// <summary>최근 로그 스냅샷(진단용 GET /api/log/recent).</summary>
+    public object[] RecentLogs() { lock (_logGate) return _recentLogs.ToArray(); }
 
     // ---------- 녹화 ----------
     public void StartRecording(RecordOptions options)
@@ -257,6 +274,11 @@ public sealed class MacroService
         var macro = _library.Load(id) ?? throw new FileNotFoundException("매크로를 찾을 수 없습니다: " + id);
         macro.Enabled = enabled;
         _library.Save(macro);
+        // 끄면(비활성) 그 매크로가 재생 중일 때 즉시 정지(킬 스위치)
+        if (!enabled)
+        {
+            lock (_gate) { if (_state == AppState.Playing && _currentMacroId == id) _player.Stop(); }
+        }
         ReloadHotkeys();
         Log("info", $"매크로 '{macro.Name}' 적용 {(enabled ? "켬" : "끔")}.");
         BroadcastStatus();
