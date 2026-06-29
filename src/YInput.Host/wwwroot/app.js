@@ -98,7 +98,6 @@ function renderMacroList(listEl, emptyEl, mode) {
       // 트리거는 버튼 안, 반복/속도는 아랫줄 컨트롤 → 상세줄은 스텝 수만
       const repMode = m.loopCount <= 0 ? 'inf' : m.loopCount === 1 ? 'once' : 'count';
       const repCount = m.loopCount > 1 ? m.loopCount : 2;
-      const speedVal = m.speedMultiplier || 1;
       li.innerHTML = `
         <div class="mi-main">
           <label class="toggle" title="적용(트리거 활성)"><input type="checkbox" class="act-toggle" ${m.enabled ? 'checked' : ''}><span class="track"></span><span class="knob"></span></label>
@@ -117,11 +116,9 @@ function renderMacroList(listEl, emptyEl, mode) {
             <button class="seg-btn ${repMode === 'inf' ? 'on' : ''}" data-val="inf">무한∞</button>
           </div>
           <input type="number" class="mini pl-count" min="1" value="${repCount}" ${repMode === 'count' ? '' : 'hidden'} title="반복 횟수">
-          <span class="pl-label">속도</span>
-          <input type="number" class="mini pl-speed" min="0.1" max="5" step="0.1" value="${speedVal}" title="속도 배율"><span class="pl-x">x</span>
         </div>`;
     } else {
-      const sub = `${m.stepCount}스텝 · ${m.loopCount === 0 ? '∞' : m.loopCount}회 · ${m.speedMultiplier}x`;
+      const sub = `${m.stepCount}스텝 · ${m.loopCount === 0 ? '∞' : m.loopCount}회`;
       li.innerHTML = `
         <div class="macro-meta"><span class="name">${esc(m.name)}</span><span class="macro-sub">${sub}</span></div>
         <div class="macro-actions">
@@ -143,18 +140,16 @@ function renderMacroList(listEl, emptyEl, mode) {
       };
       li.querySelector('.act-edit').onclick = () => { openMacro(m.id); switchTab('edit'); };
       li.querySelector('.act-trigger').onclick = (e) => beginTriggerCapture(m.id, m.name, e.currentTarget);
-      // 반복/속도
+      // 반복(속도 기능 제거)
       const seg = li.querySelector('.pl-rep');
       const countEl = li.querySelector('.pl-count');
-      const speedEl = li.querySelector('.pl-speed');
       seg.querySelectorAll('.seg-btn').forEach((b) => b.onclick = (e) => {
         e.stopPropagation();
         seg.querySelectorAll('.seg-btn').forEach((x) => x.classList.toggle('on', x === b));
         countEl.hidden = b.dataset.val !== 'count';
-        saveRunPlayback(m.id, seg, countEl, speedEl);
+        saveRunPlayback(m.id, seg, countEl);
       });
-      countEl.onchange = () => saveRunPlayback(m.id, seg, countEl, speedEl);
-      speedEl.onchange = () => saveRunPlayback(m.id, seg, countEl, speedEl);
+      countEl.onchange = () => saveRunPlayback(m.id, seg, countEl);
     }
     listEl.appendChild(li);
   }
@@ -168,13 +163,11 @@ function renderMacroActive() {
   });
 }
 
-// 실행 항목 반복/속도 저장
-function saveRunPlayback(id, seg, countEl, speedEl) {
+// 실행 항목 반복 저장(속도 기능 제거)
+function saveRunPlayback(id, seg, countEl) {
   const mode = seg.querySelector('.seg-btn.on')?.dataset.val || 'once';
   const loopCount = mode === 'inf' ? 0 : mode === 'once' ? 1 : Math.max(1, parseInt(countEl.value, 10) || 1);
-  let speed = parseFloat(speedEl.value); if (!(speed > 0)) speed = 1;
-  speed = Math.min(5, Math.max(0.1, speed)); speedEl.value = speed;
-  api.setPlayback(id, loopCount, speed).catch((e) => log('error', e.message));
+  api.setPlayback(id, loopCount).catch((e) => log('error', e.message));
 }
 
 // ---------- 실행 목록: 트리거 핫키 직접 설정(키/마우스/패드 캡처) ----------

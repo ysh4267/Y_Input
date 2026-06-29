@@ -82,18 +82,16 @@ export function createEditor({ log, onSaved, getStatus }) {
   function isOpen() { return editing !== null; }
   function current() { return editing; }
 
-  // 반복(루프) 횟수를 모두 반영한 총 재생 시간(ms). 중첩 루프는 곱연산, 속도 배율 반영.
+  // 반복(루프) 횟수를 모두 반영한 총 재생 시간(ms). 중첩 루프는 곱연산.
   function totalDurationMs() {
-    const steps = editing.steps;
     const stack = []; let mult = 1, total = 0;
-    for (const s of steps) {
+    for (const s of editing.steps) {
       const t = s.event['$type'];
       if (t === 'loopStart') { const c = Math.max(1, s.event.count || 1); stack.push(c); mult *= c; }
       else if (t === 'loopEnd') { if (stack.length) mult /= stack.pop(); }
       else if (t === 'delay') total += (s.delayBeforeMs || 0) * mult;
     }
-    const speed = editing.speedMultiplier > 0 ? editing.speedMultiplier : 1;
-    return total / speed;
+    return total;
   }
   function updateStats() {
     if (!editing) return;
@@ -217,7 +215,7 @@ export function createEditor({ log, onSaved, getStatus }) {
     // 행 액션(복제/삭제) — 카드 우측 끝(아래 detail 뒤에 append)
     const act = document.createElement('div'); act.className = 'step-act';
     const bDup = document.createElement('button'); bDup.className = 'rowbtn'; bDup.title = '복제'; bDup.innerHTML = ICON.dup;
-    bDup.onclick = (e) => { e.stopPropagation(); pushUndo(); const c = freshStep(step); editing.steps.splice(i + 1, 0, c); selectOnly(c._uid); renderSteps(); };
+    bDup.onclick = (e) => { e.stopPropagation(); pushUndo(); const c = freshStep(step); editing.steps.splice(i + 1, 0, c); renderSteps(); };
     const bDel = document.createElement('button'); bDel.className = 'rowbtn del'; bDel.title = '삭제'; bDel.innerHTML = ICON.del;
     bDel.onclick = (e) => { e.stopPropagation(); pushUndo(); selected.delete(step._uid); editing.steps.splice(i, 1); renderSteps(); };
     act.append(bDup, bDel);
@@ -505,7 +503,6 @@ export function createEditor({ log, onSaved, getStatus }) {
     if (ci < 0) { renderSteps(); return; }
     pushUndo();
     editing.steps.splice(ci, 1, ...stripped); // 녹화 카드 자리에 결과 삽입(카드 대체)
-    selected = new Set(stripped.map((s) => s._uid)); lastUid = stripped.length ? stripped[0]._uid : null;
     renderSteps();
     log('info', `녹화 완료: ${stripped.length} 스텝`);
   }
@@ -547,7 +544,6 @@ export function createEditor({ log, onSaved, getStatus }) {
     }
     applySel();
   }
-  function selectOnly(uid) { selected = new Set([uid]); lastUid = uid; }
   function applySel() {
     stepsEl().querySelectorAll('.step').forEach((el) => el.classList.toggle('sel', selected.has(+el.dataset.uid)));
     const n = selected.size;
@@ -574,7 +570,6 @@ export function createEditor({ log, onSaved, getStatus }) {
     if (!made.length) return;
     pushUndo();
     editing.steps.splice(at, 0, ...made);
-    selected = new Set(made.map((s) => s._uid)); lastUid = made[0]._uid;
     renderSteps();
   }
   function insert(type) {
@@ -590,12 +585,10 @@ export function createEditor({ log, onSaved, getStatus }) {
       const start = tagUids([{ delayBeforeMs: 0, event: km.loopStartEvent(2) }])[0];
       editing.steps.splice(b + 1, 0, end);
       editing.steps.splice(a, 0, start);
-      selected = new Set([start._uid]); lastUid = start._uid;
       renderSteps();
     } else {
       const made = tagUids(makeSteps('loop'));
       editing.steps.push(...made);
-      selected = new Set(made.map((s2) => s2._uid)); lastUid = made[0]._uid;
       renderSteps();
     }
   }
@@ -607,7 +600,6 @@ export function createEditor({ log, onSaved, getStatus }) {
     const copies = s.map((i) => freshStep(editing.steps[i]));
     const at = Math.max(...s) + 1;
     editing.steps.splice(at, 0, ...copies);
-    selected = new Set(copies.map((c) => c._uid)); lastUid = copies[0]._uid;
     renderSteps();
   }
   function deleteSel() {
@@ -634,7 +626,6 @@ export function createEditor({ log, onSaved, getStatus }) {
     const at = after ? Math.max(...idxs) + 1 : Math.min(...idxs);
     const d = tagUids(makeSteps('delay'))[0];
     editing.steps.splice(at, 0, d);
-    selectOnly(d._uid);
     renderSteps();
   }
 
@@ -653,7 +644,6 @@ export function createEditor({ log, onSaved, getStatus }) {
     pushUndo();
     const added = tagUids(clipboard.map((s) => ({ delayBeforeMs: s.delayBeforeMs || 0, event: structuredClone(s.event) })));
     editing.steps.push(...added); // 항상 맨 아래에 순서 유지
-    selected = new Set(added.map((s) => s._uid)); lastUid = added[0]._uid;
     renderSteps();
     log('info', `${added.length}개 맨 아래에 붙여넣기`);
   }

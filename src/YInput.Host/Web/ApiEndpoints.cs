@@ -87,7 +87,7 @@ public static class ApiEndpoints
         // ---- 매크로 반복/속도 설정(실행 페이지 항목에서 직접) ----
         app.MapPost("/api/macros/{id}/playback", (string id, PlaybackBody? body) => Guard(() =>
         {
-            service.SetPlayback(id, body?.LoopCount ?? 1, body?.SpeedMultiplier ?? 1.0);
+            service.SetPlayback(id, body?.LoopCount ?? 1);
             return Task.FromResult(Results.Ok(new { ok = true }));
         }));
 
@@ -257,7 +257,7 @@ public static class ApiEndpoints
     }
 
     private sealed record EnabledBody(bool Enabled = true);
-    private sealed record PlaybackBody(int LoopCount = 1, double SpeedMultiplier = 1.0);
+    private sealed record PlaybackBody(int LoopCount = 1);
     private sealed record StopRecordingBody(string? Name, bool Persist = true);
     private sealed record GamepadSendBody(string Control, int Value);
     private sealed record RecordStartBody(

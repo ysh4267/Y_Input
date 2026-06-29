@@ -114,11 +114,13 @@
             <!-- 편집기 헤더 -->
             <div class="editor-head">
               <input id="ed-name" class="ed-name" type="text" placeholder="매크로 이름" />
+              <span class="vsep"></span>
               <div class="editor-stats">
                 <span><b id="ed-stat-steps">0</b> 스텝</span>
                 <span class="dot-sep">·</span>
                 <span>총 <b id="ed-stat-dur">0 ms</b></span>
               </div>
+              <span class="vsep"></span>
               <div class="editor-actions">
                 <button id="btn-save" class="btn primary">저장</button>
                 <button id="btn-cancel" class="btn ghost">닫기</button>
@@ -131,11 +133,14 @@
             <div class="steps-toolbar">
               <div id="sel-bar" class="sel-bar" hidden>
                 <span class="sel-count"><b id="sel-count">0</b>개 선택</span>
-                <button id="btn-dup" class="btn ghost sm">⎘ 복제</button>
+                <span class="vsep"></span>
+                <button id="btn-dup" class="btn ghost sm">⧉ 복제</button>
                 <button id="btn-up" class="btn ghost sm">↑ 위로</button>
                 <button id="btn-down" class="btn ghost sm">↓ 아래로</button>
+                <span class="vsep"></span>
                 <button id="btn-delay-before" class="btn ghost sm">＋이전 지연</button>
                 <button id="btn-delay-after" class="btn ghost sm">＋이후 지연</button>
+                <span class="vsep"></span>
                 <button id="btn-del" class="btn ghost sm danger">✕ 삭제</button>
                 <button id="btn-selclear" class="btn ghost sm">선택 해제</button>
               </div>

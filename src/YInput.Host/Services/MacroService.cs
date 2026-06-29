@@ -215,12 +215,11 @@ public sealed class MacroService
         BroadcastStatus();
     }
 
-    /// <summary>매크로의 반복/속도를 설정한다(실행 페이지 목록에서 직접). 트리거에 영향 없음.</summary>
-    public void SetPlayback(string id, int loopCount, double speedMultiplier)
+    /// <summary>매크로의 반복 횟수를 설정한다(실행 페이지 목록에서 직접). 트리거에 영향 없음.</summary>
+    public void SetPlayback(string id, int loopCount)
     {
         var macro = _library.Load(id) ?? throw new FileNotFoundException("매크로를 찾을 수 없습니다: " + id);
         macro.LoopCount = loopCount;
-        macro.SpeedMultiplier = speedMultiplier <= 0 ? 1.0 : speedMultiplier;
         _library.Save(macro);
     }
 
