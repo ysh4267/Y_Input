@@ -121,7 +121,7 @@ function renderMacroList(listEl, emptyEl, mode) {
           <input type="number" class="mini pl-speed" min="0.1" max="5" step="0.1" value="${speedVal}" title="속도 배율"><span class="pl-x">x</span>
         </div>`;
     } else {
-      const sub = `${m.stepCount}스텝 · ${m.loopCount === 0 ? '∞' : m.loopCount}회 · ${m.speedMultiplier}x · 🔑${esc(m.trigger || '없음')}`;
+      const sub = `${m.stepCount}스텝 · ${m.loopCount === 0 ? '∞' : m.loopCount}회 · ${m.speedMultiplier}x`;
       li.innerHTML = `
         <div class="macro-meta"><span class="name">${esc(m.name)}</span><span class="macro-sub">${sub}</span></div>
         <div class="macro-actions">

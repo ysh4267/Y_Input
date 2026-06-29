@@ -113,15 +113,11 @@
           <div id="editor" class="editor" hidden>
             <!-- 편집기 헤더 -->
             <div class="editor-head">
-              <div class="editor-title">
-                <input id="ed-name" class="ed-name" type="text" placeholder="매크로 이름" />
-                <div class="editor-sub">
-                  <span><b id="ed-stat-steps">0</b> 스텝</span>
-                  <span class="dot-sep">·</span>
-                  <span>약 <b id="ed-stat-dur">0 ms</b></span>
-                  <span class="dot-sep">·</span>
-                  <span>트리거 <b id="ed-stat-trigger" class="trigger-chip">없음</b></span>
-                </div>
+              <input id="ed-name" class="ed-name" type="text" placeholder="매크로 이름" />
+              <div class="editor-stats">
+                <span><b id="ed-stat-steps">0</b> 스텝</span>
+                <span class="dot-sep">·</span>
+                <span>총 <b id="ed-stat-dur">0 ms</b></span>
               </div>
               <div class="editor-actions">
                 <button id="btn-save" class="btn primary">저장</button>

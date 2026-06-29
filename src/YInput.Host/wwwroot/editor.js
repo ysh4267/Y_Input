@@ -82,13 +82,24 @@ export function createEditor({ log, onSaved, getStatus }) {
   function isOpen() { return editing !== null; }
   function current() { return editing; }
 
+  // 반복(루프) 횟수를 모두 반영한 총 재생 시간(ms). 중첩 루프는 곱연산, 속도 배율 반영.
+  function totalDurationMs() {
+    const steps = editing.steps;
+    const stack = []; let mult = 1, total = 0;
+    for (const s of steps) {
+      const t = s.event['$type'];
+      if (t === 'loopStart') { const c = Math.max(1, s.event.count || 1); stack.push(c); mult *= c; }
+      else if (t === 'loopEnd') { if (stack.length) mult /= stack.pop(); }
+      else if (t === 'delay') total += (s.delayBeforeMs || 0) * mult;
+    }
+    const speed = editing.speedMultiplier > 0 ? editing.speedMultiplier : 1;
+    return total / speed;
+  }
   function updateStats() {
     if (!editing) return;
     const real = editing.steps.filter((s) => s.event['$type'] !== 'record'); // 녹화 카드는 스텝 아님
     $('ed-stat-steps').textContent = real.length;
-    const dur = real.reduce((a, s) => a + (s.event['$type'] === 'delay' ? (s.delayBeforeMs || 0) : 0), 0);
-    $('ed-stat-dur').textContent = fmtMs(dur);
-    $('ed-stat-trigger').textContent = hotkeyToString(editing.trigger);
+    $('ed-stat-dur').textContent = fmtMs(totalDurationMs()); // 반복 모두 고려한 총 시간
   }
 
   // ---------- 언두/리두 ----------
@@ -165,13 +176,16 @@ export function createEditor({ log, onSaved, getStatus }) {
       else if (t === 'loopEnd' && lstack.length) pairs.push({ down: lstack.pop(), up: i, color: '#fb923c' });
     });
 
-    // 키·루프 짝을 한데 모아 우측 레인 할당(겹치면 다른 레인 → 충돌 방지)
-    const all = pairs.slice().sort((a, b) => a.down - b.down);
-    const laneEnds = [];
-    all.forEach((p) => {
-      let lane = laneEnds.findIndex((end) => p.down > end);
-      if (lane === -1) { lane = laneEnds.length; laneEnds.push(p.up); } else laneEnds[lane] = p.up;
-      p.lane = Math.min(lane, 5);
+    // 감싸 안는(span이 큰) 짝일수록 바깥(오른쪽) 레인. 좁은 것부터 처리해 '내부 최대 레인+1'.
+    const all = pairs.slice();
+    all.slice().sort((a, b) => (a.up - a.down) - (b.up - b.down)).forEach((p) => {
+      let inner = -1;
+      for (const q of all) {
+        if (q !== p && q.lane != null && q.down >= p.down && q.up <= p.up && (q.up - q.down) < (p.up - p.down)) {
+          inner = Math.max(inner, q.lane); // 이미 처리된(더 좁은) 내부 짝의 최대 레인
+        }
+      }
+      p.lane = Math.min(inner + 1, 5);
     });
 
     const hline = (x, y, w, color) => { const d = document.createElement('div'); d.className = 'pair-h'; d.style.left = x + 'px'; d.style.top = (y - 1) + 'px'; d.style.width = w + 'px'; d.style.background = color; wrap.appendChild(d); };
@@ -729,7 +743,10 @@ export function createEditor({ log, onSaved, getStatus }) {
     wrap.insertBefore(ph, els[0]); drag.placeholder = ph;
     const ghost = drag.anchorEl.cloneNode(true);
     ghost.classList.add('step-ghost'); ghost.classList.remove('sel');
-    ghost.style.width = drag.anchorEl.offsetWidth + 'px';
+    // 원본과 '정확히' 같은 너비(소수점까지)로 — 정수 반올림/재배치로 글자 reflow되는 것 방지
+    const gr = drag.anchorEl.getBoundingClientRect();
+    ghost.style.width = gr.width + 'px';
+    ghost.style.maxWidth = 'none';
     if (drag.uids.length > 1) {
       ghost.classList.add('multi'); // 뒤로 2장 더 겹쳐 사선 스택
       const b = document.createElement('div'); b.className = 'ghost-count'; b.textContent = drag.uids.length + '개'; ghost.appendChild(b);
