@@ -15,14 +15,17 @@ public class DelayEventTests
         {
             Name = "wait-test",
             RandomizeDelayPercent = 25,
-            Steps = { new MacroStep(new DelayEvent(), 250) },
+            Enabled = false,
+            Steps = { new MacroStep(new DelayEvent { RandomizePercent = 40 }, 250) },
         };
 
         var restored = MacroStore.Deserialize(MacroStore.Serialize(macro));
 
         Assert.Equal(25, restored.RandomizeDelayPercent);
+        Assert.False(restored.Enabled);
         Assert.Single(restored.Steps);
         Assert.IsType<DelayEvent>(restored.Steps[0].Event);
+        Assert.Equal(40, ((DelayEvent)restored.Steps[0].Event).RandomizePercent);
         Assert.Equal(250, restored.Steps[0].DelayBeforeMs);
     }
 }

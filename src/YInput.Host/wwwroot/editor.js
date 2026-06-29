@@ -746,7 +746,10 @@ export function createEditor({ log, onSaved, getStatus }) {
     const ghost = drag.anchorEl.cloneNode(true);
     ghost.classList.add('step-ghost'); ghost.classList.remove('sel');
     ghost.style.width = drag.anchorEl.offsetWidth + 'px';
-    if (drag.uids.length > 1) { const b = document.createElement('div'); b.className = 'ghost-count'; b.textContent = drag.uids.length + '개'; ghost.appendChild(b); }
+    if (drag.uids.length > 1) {
+      ghost.classList.add('multi'); // 뒤로 2장 더 겹쳐 사선 스택
+      const b = document.createElement('div'); b.className = 'ghost-count'; b.textContent = drag.uids.length + '개'; ghost.appendChild(b);
+    }
     document.body.appendChild(ghost); drag.ghost = ghost;
     els.forEach((el) => { el.style.display = 'none'; });
   }

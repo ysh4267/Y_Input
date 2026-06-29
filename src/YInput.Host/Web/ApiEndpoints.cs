@@ -69,6 +69,13 @@ public static class ApiEndpoints
             return Task.FromResult(Results.Ok(new { ok = true }));
         }));
 
+        // ---- 매크로 적용(활성) 토글 ----
+        app.MapPost("/api/macros/{id}/enabled", (string id, EnabledBody? body) => Guard(() =>
+        {
+            service.SetEnabled(id, body?.Enabled ?? true);
+            return Task.FromResult(Results.Ok(new { ok = true }));
+        }));
+
         // ---- 녹화 ----
         app.MapPost("/api/record/start", (HttpRequest req) => Guard(async () =>
         {
@@ -155,6 +162,19 @@ public static class ApiEndpoints
             return Results.Ok(new { quitting = true });
         });
 
+        // ---- Git 업데이트 동기화(개발 PC: 소스 트리 + dotnet SDK + git 필요) ----
+        app.MapGet("/api/app/update/check", () => Guard(async () =>
+        {
+            var r = await Task.Run(AppUpdater.Check);
+            return Results.Json(new { ok = r.Ok, behind = r.Behind, current = r.Current, message = r.Message });
+        }));
+        app.MapPost("/api/app/update", () => Guard(() =>
+        {
+            var r = AppUpdater.Start();
+            service.Log(r.Ok ? "info" : "error", r.Ok ? "업데이트 시작 — 곧 재빌드/재시작됩니다." : ("업데이트 실패: " + r.Message));
+            return Task.FromResult(Results.Json(new { started = r.Ok, message = r.Message }));
+        }));
+
         // ---- WebSocket ----
         app.Map("/ws", async (HttpContext ctx) =>
         {
@@ -182,6 +202,7 @@ public static class ApiEndpoints
         loopCount = m.LoopCount,
         speedMultiplier = m.SpeedMultiplier,
         trigger = m.Trigger?.ToString() ?? "",
+        enabled = m.Enabled,
         modifiedUtc = m.ModifiedUtc,
     };
 
@@ -212,6 +233,7 @@ public static class ApiEndpoints
         catch (Exception ex) { return Results.Json(new { error = ex.Message }, statusCode: 500); }
     }
 
+    private sealed record EnabledBody(bool Enabled = true);
     private sealed record StopRecordingBody(string? Name, bool Persist = true);
     private sealed record GamepadSendBody(string Control, int Value);
     private sealed record RecordStartBody(

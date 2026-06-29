@@ -203,6 +203,10 @@ input[type=range] { accent-color: var(--accent); }
 
 /* 드래그 고스트(포인터에 붙음) + 빈 자리 placeholder */
 .step-ghost { position: fixed; z-index: 1000; pointer-events: none; opacity: .92; border-color: var(--accent) !important; box-shadow: 0 10px 28px rgba(0,0,0,.45); }
+/* 다중 선택 드래그: 뒤로 2장 더 사선으로 겹친 스택 느낌 */
+.step-ghost.multi::before, .step-ghost.multi::after { content: ''; position: absolute; inset: 0; border-radius: 10px; border: 1px solid var(--border2); background: var(--card3); z-index: -1; }
+.step-ghost.multi::before { transform: translate(7px, 7px); }
+.step-ghost.multi::after { transform: translate(14px, 14px); }
 .step-ghost .ghost-count { position: absolute; top: -8px; right: -8px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 1px 7px; box-shadow: 0 2px 6px rgba(0,0,0,.4); }
 .step-placeholder { border: 2px dashed var(--accent); border-radius: 10px; background: rgba(79,140,255,.07); box-sizing: border-box; }
 
@@ -249,7 +253,7 @@ input[type=range] { accent-color: var(--accent); }
 
 /* 녹화하기 카드(3줄 패널) */
 .type-record { background: rgba(255,84,112,.16); color: var(--rec); }
-.pal-record .pal-ico { font-size: 11px; }
+.pal-record .pal-ico { font-size: 20px; line-height: 1; }
 .step.record-card { display: flex; flex-direction: column; align-items: stretch; gap: 9px; width: auto; align-self: stretch; max-width: 760px; cursor: default; padding: 12px 14px; border-color: rgba(255,84,112,.5); background: rgba(255,84,112,.06); }
 .step.record-card:hover { background: rgba(255,84,112,.09); }
 .step.record-card.sel { background: rgba(79,140,255,.14); }

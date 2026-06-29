@@ -204,6 +204,17 @@ public sealed class MacroService
         BroadcastStatus();
     }
 
+    /// <summary>매크로의 적용(활성) 여부를 토글한다. ON이면 트리거 핫키 무장, OFF면 보관만.</summary>
+    public void SetEnabled(string id, bool enabled)
+    {
+        var macro = _library.Load(id) ?? throw new FileNotFoundException("매크로를 찾을 수 없습니다: " + id);
+        macro.Enabled = enabled;
+        _library.Save(macro);
+        ReloadHotkeys();
+        Log("info", $"매크로 '{macro.Name}' 적용 {(enabled ? "켬" : "끔")}.");
+        BroadcastStatus();
+    }
+
     // ---------- 핫키 ----------
     public void ReloadHotkeys()
     {
@@ -212,7 +223,7 @@ public sealed class MacroService
         lock (_gate) _gamepadTriggers.Clear();
         foreach (var m in _library.LoadAll())
         {
-            if (m.Trigger is { IsEmpty: false } hk)
+            if (m.Enabled && m.Trigger is { IsEmpty: false } hk)
             {
                 try
                 {

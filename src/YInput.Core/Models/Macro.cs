@@ -24,6 +24,9 @@ public sealed class Macro
     /// <summary>이 매크로를 시작/정지하는 전역 핫키(선택).</summary>
     public Hotkey? Trigger { get; set; }
 
+    /// <summary>적용(활성) 여부. true면 트리거 핫키가 무장된다. false여도 수동 재생은 가능.</summary>
+    public bool Enabled { get; set; } = true;
+
     /// <summary>마지막 수정 시각(UTC, ISO8601). 호스트가 저장 시 설정.</summary>
     public DateTimeOffset ModifiedUtc { get; set; }
 

@@ -27,6 +27,7 @@ export const api = {
   createMacro: (macro) => request('POST', '/api/macros', macro),
   updateMacro: (id, macro) => request('PUT', `/api/macros/${id}`, macro),
   deleteMacro: (id) => request('DELETE', `/api/macros/${id}`),
+  setEnabled: (id, enabled) => request('POST', `/api/macros/${id}/enabled`, { enabled }),
 
   recordStart: (options) => request('POST', '/api/record/start', options || {}),
   recordStop: (name, persist = true) => request('POST', '/api/record/stop', { name, persist }),
@@ -43,4 +44,7 @@ export const api = {
   listenStop: () => request('POST', '/api/listen/stop'),
   monitorOn: () => request('POST', '/api/monitor/on'),
   monitorOff: () => request('POST', '/api/monitor/off'),
+
+  updateCheck: () => request('GET', '/api/app/update/check'),
+  updateApply: () => request('POST', '/api/app/update'),
 };
