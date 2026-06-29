@@ -52,6 +52,9 @@ internal sealed class TrayAppContext : ApplicationContext
         }
     }
 
+    /// <summary>외부(웹/스크립트) 요청으로 그레이스풀 종료. UI 스레드에서 ExitThread 호출.</summary>
+    public void RequestExit() => _ui.Post(_ => ExitThread(), null);
+
     public void ShowBalloon(string title, string text)
     {
         _ui.Post(_ =>

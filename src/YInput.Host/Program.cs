@@ -54,6 +54,7 @@ internal static class Program
 
         // 트레이 + 드라이버 부트스트랩(백그라운드)
         var tray = new TrayAppContext(service);
+        service.QuitRequested = tray.RequestExit; // /api/app/quit → 그레이스풀 종료
         tray.OpenUi(); // 실행 즉시 기본 브라우저로 편집 UI 열기
         RunBootstrap(service, tray);
 

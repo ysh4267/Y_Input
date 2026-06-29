@@ -33,6 +33,16 @@ public sealed class MacroService
     /// <summary>웹 UI 주소(상태에 포함).</summary>
     public string Url { get; set; } = "";
 
+    /// <summary>앱 종료 요청 콜백(트레이가 설정). /api/app/quit에서 호출.</summary>
+    public Action? QuitRequested { get; set; }
+
+    /// <summary>웹/스크립트에서 앱 종료를 요청한다(그레이스풀).</summary>
+    public void RequestQuit()
+    {
+        Log("info", "종료 요청 수신 — 앱을 종료합니다.");
+        QuitRequested?.Invoke();
+    }
+
     public MacroService(InputBackend backend, MacroLibrary library, Player player,
                         Recorder recorder, HotkeyManager hotkeys, RawInputMonitor rawInput, SocketHub hub)
     {

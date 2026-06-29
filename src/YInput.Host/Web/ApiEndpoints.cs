@@ -148,6 +148,13 @@ public static class ApiEndpoints
             return Task.FromResult(Results.Ok(new { ok = true }));
         }));
 
+        // ---- 앱 종료(빌드 후 재배포 자동화용) ----
+        app.MapPost("/api/app/quit", () =>
+        {
+            service.RequestQuit();
+            return Results.Ok(new { quitting = true });
+        });
+
         // ---- WebSocket ----
         app.Map("/ws", async (HttpContext ctx) =>
         {
