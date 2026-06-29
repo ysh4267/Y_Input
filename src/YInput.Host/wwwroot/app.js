@@ -54,7 +54,7 @@ function log(level, message, time) {
 }
 
 // ---------- 편집기(녹화는 편집기 안 '녹화하기' 카드로 통합) ----------
-const editor = createEditor({ log, onSaved: loadMacros, getStatus: () => state.status });
+const editor = createEditor({ log, onSaved: loadMacros, getStatus: () => state.status, getMacros: () => state.macros });
 
 // ---------- 상태 ----------
 function renderStatus(s) {
@@ -328,6 +328,15 @@ function confirmDeleteInline(li, id) {
   };
   ov.querySelector('.ov-no').onclick = (e) => { e.stopPropagation(); close(); };
   li.appendChild(ov);
+  // 다른 매크로가 '매크로 실행' 블록으로 이 매크로를 참조하면 경고로 알림(삭제는 가능 — 그 블록은 무효 처리)
+  api.macroUsage(id).then((u) => {
+    const names = (u && u.usedBy) || [];
+    if (names.length && li.contains(ov)) {
+      const q = ov.querySelector('.q');
+      const label = names.length <= 2 ? `'${names.join("', '")}'` : `${names.length}개 매크로`;
+      if (q) q.textContent = `${label}에서 사용 중! 삭제하면 그 블록이 무효가 됩니다. 삭제할까요?`;
+    }
+  }).catch(() => {});
 }
 async function duplicateMacro(id) {
   try {

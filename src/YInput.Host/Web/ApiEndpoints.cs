@@ -34,7 +34,10 @@ public static class ApiEndpoints
         // ---- 매크로 목록/조회 ----
         app.MapGet("/api/macros", () =>
         {
-            var summaries = service.ListMacros().Select(Summary);
+            var all = service.ListMacros();
+            var byId = new Dictionary<string, Macro>();
+            foreach (var m in all) byId[m.Id] = m;
+            var summaries = all.Select(m => Summary(m, byId));
             return Results.Json(summaries);
         });
 
@@ -45,6 +48,10 @@ public static class ApiEndpoints
                 ? Results.NotFound(new { error = "매크로를 찾을 수 없습니다." })
                 : Json(macro);
         });
+
+        // ---- 이 매크로를 참조(매크로 실행 블록)하는 다른 매크로들(삭제 경고용) ----
+        app.MapGet("/api/macros/{id}/usage", (string id) =>
+            Results.Json(new { usedBy = service.FindReferencing(id) }));
 
         // ---- 매크로 생성/수정 ----
         app.MapPost("/api/macros", (HttpRequest req) => Guard(async () =>
@@ -209,42 +216,53 @@ public static class ApiEndpoints
     private static IResult Json(Macro macro) =>
         Results.Text(MacroStore.Serialize(macro), "application/json", System.Text.Encoding.UTF8);
 
-    private static object Summary(Macro m) => new
+    private static object Summary(Macro m, IReadOnlyDictionary<string, Macro> byId) => new
     {
         id = m.Id,
         name = m.Name,
         stepCount = m.Steps.Count,
         loopCount = m.LoopCount,
-        durationMs = TotalDurationMs(m),
+        durationMs = TotalDurationMs(m, byId, new HashSet<string>()),
         speedMultiplier = m.SpeedMultiplier,
         trigger = m.Trigger?.ToString() ?? "",
         enabled = m.Enabled,
         modifiedUtc = m.ModifiedUtc,
     };
 
-    /// <summary>한 번 재생 기준 총 소요 시간(ms). 내부 반복(LoopStart/End) 배수를 반영하며
-    /// 편집기의 총 시간 계산과 동일하게 지연(Delay) 스텝의 DelayBeforeMs만 합산한다.</summary>
-    private static double TotalDurationMs(Macro m)
+    /// <summary>한 번 재생 기준 총 소요 시간(ms). 내부 반복(LoopStart/End) 배수를 반영하고
+    /// 지연(Delay) 스텝의 DelayBeforeMs를 합산하며, 매크로 참조(MacroRef)는 대상 매크로의
+    /// 1사이클 시간을 더한다(순환은 0으로 차단).</summary>
+    private static double TotalDurationMs(Macro m, IReadOnlyDictionary<string, Macro> byId, HashSet<string> path)
     {
-        var stack = new Stack<int>();
-        double mult = 1, total = 0;
-        foreach (var s in m.Steps)
+        if (!path.Add(m.Id)) return 0; // 순환 차단
+        try
         {
-            switch (s.Event)
+            var stack = new Stack<int>();
+            double mult = 1, total = 0;
+            foreach (var s in m.Steps)
             {
-                case LoopStartEvent ls:
-                    var c = Math.Max(1, ls.Count);
-                    stack.Push(c); mult *= c;
-                    break;
-                case LoopEndEvent:
-                    if (stack.Count > 0) mult /= stack.Pop();
-                    break;
-                case DelayEvent:
-                    total += s.DelayBeforeMs * mult;
-                    break;
+                switch (s.Event)
+                {
+                    case LoopStartEvent ls:
+                        var c = Math.Max(1, ls.Count);
+                        stack.Push(c); mult *= c;
+                        break;
+                    case LoopEndEvent:
+                        if (stack.Count > 0) mult /= stack.Pop();
+                        break;
+                    case DelayEvent:
+                        total += s.DelayBeforeMs * mult;
+                        break;
+                    case MacroRefEvent r:
+                        total += s.DelayBeforeMs * mult;
+                        if (!string.IsNullOrEmpty(r.MacroId) && byId.TryGetValue(r.MacroId, out var sub))
+                            total += TotalDurationMs(sub, byId, path) * mult;
+                        break;
+                }
             }
+            return total;
         }
-        return total;
+        finally { path.Remove(m.Id); }
     }
 
     private static async Task<Macro> ReadMacro(HttpRequest req)

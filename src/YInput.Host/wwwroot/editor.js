@@ -15,7 +15,7 @@ function hotkeyToString(t) {
   return p.join('+');
 }
 
-const TYPE_NAME = { keyboard: '키', mouse: '마우스', gamepad: '패드', text: '텍스트', delay: '지연', loopStart: '반복', loopEnd: '반복' };
+const TYPE_NAME = { keyboard: '키', mouse: '마우스', gamepad: '패드', text: '텍스트', delay: '지연', loopStart: '반복', loopEnd: '반복', macroRef: '매크로' };
 const fmtMs = (ms) => ms >= 1000 ? (ms / 1000).toFixed(2) + ' s' : Math.round(ms) + ' ms';
 const REDUCE_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -25,7 +25,7 @@ const ICON = {
   del: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.3H13.4"/><path d="M6.4 4.3V3.2A1.1 1.1 0 0 1 7.5 2.1H8.5A1.1 1.1 0 0 1 9.6 3.2V4.3"/><path d="M3.9 4.3 4.6 13A1.3 1.3 0 0 0 5.9 14.2H10.1A1.3 1.3 0 0 0 11.4 13L12.1 4.3"/><path d="M6.6 6.9V11.3M9.4 6.9V11.3"/></svg>',
 };
 
-export function createEditor({ log, onSaved, getStatus }) {
+export function createEditor({ log, onSaved, getStatus, getMacros }) {
   let editing = null;
   let selected = new Set();   // 선택된 스텝의 _uid 집합
   let lastUid = null;         // Shift 범위 선택 기준
@@ -85,11 +85,16 @@ export function createEditor({ log, onSaved, getStatus }) {
   // 반복(루프) 횟수를 모두 반영한 총 재생 시간(ms). 중첩 루프는 곱연산.
   function totalDurationMs() {
     const stack = []; let mult = 1, total = 0;
+    const macros = getMacros ? getMacros() : [];
     for (const s of editing.steps) {
       const t = s.event['$type'];
       if (t === 'loopStart') { const c = Math.max(1, s.event.count || 1); stack.push(c); mult *= c; }
       else if (t === 'loopEnd') { if (stack.length) mult /= stack.pop(); }
       else if (t === 'delay') total += (s.delayBeforeMs || 0) * mult;
+      else if (t === 'macroRef') {
+        const ref = macros.find((mm) => mm.id === s.event.macroId);
+        total += ((ref ? ref.durationMs || 0 : 0) + (s.delayBeforeMs || 0)) * mult;
+      }
     }
     return total;
   }
@@ -297,6 +302,30 @@ export function createEditor({ log, onSaved, getStatus }) {
       const span = document.createElement('span'); span.className = 'muted';
       span.textContent = '반복 끝 — 위 “반복”부터 여기까지가 한 묶음';
       td.append(span);
+    } else if (t === 'macroRef') {
+      // 다른 매크로 1사이클 실행 — 드롭다운으로 대상 선택(자기 자신 제외)
+      const sel = document.createElement('select');
+      const all = (getMacros ? getMacros() : []).filter((mm) => mm.id !== (editing && editing.id));
+      const ph = document.createElement('option'); ph.value = ''; ph.textContent = '— 매크로 선택 —';
+      sel.append(ph);
+      let found = false;
+      for (const mm of all) {
+        const o = document.createElement('option'); o.value = mm.id; o.textContent = mm.name;
+        if (mm.id === ev.macroId) { o.selected = true; found = true; }
+        sel.append(o);
+      }
+      if (ev.macroId && !found) { // 참조 대상이 사라짐(삭제 등)
+        const o = document.createElement('option'); o.value = ev.macroId;
+        o.textContent = (ev.name || ev.macroId) + ' (없음)'; o.selected = true; sel.append(o);
+      }
+      sel.onchange = () => {
+        pushUndo();
+        ev.macroId = sel.value;
+        const picked = (getMacros ? getMacros() : []).find((mm) => mm.id === sel.value);
+        ev.name = picked ? picked.name : '';
+        updateStats();
+      };
+      td.append(labelTag('실행'), sel);
     }
   }
 
@@ -562,6 +591,7 @@ export function createEditor({ log, onSaved, getStatus }) {
       case 'loop': return [
         { delayBeforeMs: 0, event: km.loopStartEvent(2) },
         { delayBeforeMs: 0, event: km.loopEndEvent() }];
+      case 'macroRef': return [{ delayBeforeMs: 0, event: { '$type': 'macroRef', macroId: '', name: '' } }];
       case 'record': return [{ delayBeforeMs: 0, event: { '$type': 'record', delayMode: 'record', fixedMs: 50, targets: { keyboard: true, mouseButtons: false, mouseMove: false, mouseWheel: false, gamepad: false } } }];
       default: return [];
     }

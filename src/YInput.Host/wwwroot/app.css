@@ -158,7 +158,7 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 
 /* 삭제 인라인 확인 오버레이(항목 위) — 어두운 빨강 불투명(아래 글자 완전히 가림) */
 .macro-del-overlay { position: absolute; inset: 0; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: #8c1d2b; border: 1px solid #8c1d2b; border-radius: 10px; z-index: 4; }
-.macro-del-overlay .q { margin-right: auto; color: #fff; font-weight: 700; font-size: 12.5px; }
+.macro-del-overlay .q { flex: 1; margin-right: 8px; color: #fff; font-weight: 700; font-size: 12px; line-height: 1.25; white-space: normal; word-break: keep-all; }
 .macro-del-overlay .ov-yes { background: #fff; color: var(--rec); border-color: #fff; }
 .macro-del-overlay .ov-no { color: #fff; border-color: rgba(255,255,255,.55); }
 

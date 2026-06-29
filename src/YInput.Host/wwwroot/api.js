@@ -24,6 +24,7 @@ export const api = {
 
   listMacros: () => request('GET', '/api/macros'),
   getMacro: (id) => request('GET', `/api/macros/${id}`),
+  macroUsage: (id) => request('GET', `/api/macros/${id}/usage`),
   createMacro: (macro) => request('POST', '/api/macros', macro),
   updateMacro: (id, macro) => request('PUT', `/api/macros/${id}`, macro),
   deleteMacro: (id) => request('DELETE', `/api/macros/${id}`),

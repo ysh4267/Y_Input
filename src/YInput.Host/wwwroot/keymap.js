@@ -278,11 +278,12 @@ export function summarizeEvent(ev) {
     case 'delay': return '대기(Wait)';
     case 'loopStart': return `반복 시작 ×${ev.count}`;
     case 'loopEnd': return '반복 끝';
+    case 'macroRef': return `매크로 실행 "${ev.name || ev.macroId || '?'}"`;
     default: return ev['$type'] || '?';
   }
 }
 
 export const TYPE_ICON = {
   keyboard: '⌨', mouse: '🖱', gamepad: '🎮', text: '🔤', delay: '⏱',
-  loopStart: '🔁', loopEnd: '🏁',
+  loopStart: '🔁', loopEnd: '🏁', macroRef: '🧩',
 };

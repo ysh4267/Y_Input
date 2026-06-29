@@ -159,10 +159,57 @@ public sealed class MacroService
         }
         Log("info", $"재생 시작: {macro.Name}");
         BroadcastStatus();
-        _ = _player.PlayAsync(macro); // 완료 시 Stopped 핸들러에서 Idle 복귀
+        _ = _player.PlayAsync(ExpandMacro(macro)); // 매크로 참조를 평탄화한 뒤 재생. 완료 시 Stopped에서 Idle 복귀
     }
 
     public void StopPlayback() => _player.Stop();
+
+    /// <summary>매크로 참조(MacroRefEvent)를 대상 매크로의 스텝으로 재귀 인라인 전개한다(순환/누락은 건너뜀).
+    /// 반환 매크로는 최상위의 LoopCount/Speed를 유지하고 스텝만 평탄화된다(대상 매크로는 1사이클 실행).</summary>
+    private Macro ExpandMacro(Macro top)
+    {
+        var flat = new List<MacroStep>();
+        var path = new HashSet<string>();
+        void Walk(Macro m)
+        {
+            foreach (var s in m.Steps)
+            {
+                if (s.Event is MacroRefEvent r)
+                {
+                    if (string.IsNullOrEmpty(r.MacroId)) continue;
+                    if (path.Contains(r.MacroId)) { Log("warn", $"매크로 참조 순환 무시: {(string.IsNullOrEmpty(r.Name) ? r.MacroId : r.Name)}"); continue; }
+                    var sub = _library.Load(r.MacroId);
+                    if (sub is null) { Log("warn", $"참조 매크로 없음(건너뜀): {(string.IsNullOrEmpty(r.Name) ? r.MacroId : r.Name)}"); continue; }
+                    if (s.DelayBeforeMs > 0) flat.Add(new MacroStep(new DelayEvent(), s.DelayBeforeMs)); // 참조 블록 선지연 보존
+                    path.Add(r.MacroId);
+                    Walk(sub);
+                    path.Remove(r.MacroId);
+                }
+                else flat.Add(s);
+            }
+        }
+        path.Add(top.Id);
+        Walk(top);
+        return new Macro
+        {
+            Id = top.Id, Name = top.Name, Steps = flat,
+            LoopCount = top.LoopCount, SpeedMultiplier = top.SpeedMultiplier,
+            RandomizeDelayPercent = top.RandomizeDelayPercent, Trigger = top.Trigger, Enabled = top.Enabled,
+        };
+    }
+
+    /// <summary>주어진 매크로를 MacroRefEvent로 참조하는 다른 매크로들의 이름 목록(삭제 경고용).</summary>
+    public IReadOnlyList<string> FindReferencing(string id)
+    {
+        var names = new List<string>();
+        foreach (var m in _library.LoadAll())
+        {
+            if (m.Id == id) continue;
+            if (m.Steps.Any(s => s.Event is MacroRefEvent r && r.MacroId == id))
+                names.Add(m.Name);
+        }
+        return names;
+    }
 
     // ---------- 게임패드 ----------
     public void ConnectGamepad()

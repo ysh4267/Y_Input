@@ -14,6 +14,7 @@ namespace YInput.Core.Models;
 [JsonDerivedType(typeof(DelayEvent), "delay")]
 [JsonDerivedType(typeof(LoopStartEvent), "loopStart")]
 [JsonDerivedType(typeof(LoopEndEvent), "loopEnd")]
+[JsonDerivedType(typeof(MacroRefEvent), "macroRef")]
 public abstract class InputEvent
 {
     /// <summary>사람이 읽을 수 있는 요약(에디터 표시용).</summary>
@@ -128,4 +129,20 @@ public sealed class LoopEndEvent : InputEvent
 {
     [JsonIgnore]
     public override string Summary => "Loop end";
+}
+
+/// <summary>
+/// 다른 매크로를 한 사이클 실행하는 블록(매크로 참조). 재생 시 <see cref="MacroId"/> 매크로의
+/// 스텝들을 그 자리에 인라인 전개해 실행한다(순환은 무시). 반복이 필요하면 반복 블록으로 감싼다.
+/// </summary>
+public sealed class MacroRefEvent : InputEvent
+{
+    /// <summary>실행할 대상 매크로의 Id.</summary>
+    public string MacroId { get; set; } = string.Empty;
+
+    /// <summary>표시용 캐시 이름(편집기 렌더용, 실행에는 사용 안 함).</summary>
+    public string Name { get; set; } = string.Empty;
+
+    [JsonIgnore]
+    public override string Summary => $"Run macro {(string.IsNullOrEmpty(Name) ? MacroId : Name)}";
 }
