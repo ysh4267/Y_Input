@@ -1,12 +1,21 @@
 import { api } from './api.js';
 import { createEditor } from './editor.js';
 import { confirmDialog, installLockdown } from './ui.js';
+import * as km from './keymap.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const state = { status: null, macros: [] };
+let runShownId = null;    // 실행 페이지에 스텝 표시 중인 매크로 id
+let lastStepIndex = -1;   // 재생 진행 중 현재 스텝(하이라이트용)
+
+// ---------- 탭 ----------
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.page').forEach((p) => p.classList.toggle('active', p.id === 'page-' + name));
+}
 
 // ---------- 로그 ----------
 function log(level, message, time) {
@@ -53,34 +62,57 @@ function renderStatus(s) {
 
   $('foot-url').textContent = s.url || '';
   editor.onStatus(s);
+  if (s.state !== 'playing') { lastStepIndex = -1; highlightRunStep(-1); }
   renderMacroActive();
 }
 
-// ---------- 매크로 목록 ----------
+// ---------- 매크로 목록(실행 탭=재생+적용토글 / 편집 탭=복제) ----------
 async function loadMacros() {
   state.macros = await api.listMacros();
-  const list = $('macro-list');
-  list.innerHTML = '';
-  $('macro-empty').hidden = state.macros.length > 0;
+  renderMacroList($('macro-list-run'), $('macro-empty-run'), 'run');
+  renderMacroList($('macro-list-edit'), $('macro-empty-edit'), 'edit');
+  if (runShownId && !state.macros.some((m) => m.id === runShownId)) clearRunSteps();
+  renderMacroActive();
+}
+
+function renderMacroList(listEl, emptyEl, mode) {
+  if (!listEl) return;
+  listEl.innerHTML = '';
+  if (emptyEl) emptyEl.hidden = state.macros.length > 0;
   for (const m of state.macros) {
     const li = document.createElement('li');
     li.className = 'macro-item';
     li.dataset.id = m.id;
+    const sub = `${m.stepCount}스텝 · ${m.loopCount === 0 ? '∞' : m.loopCount}회 · ${m.speedMultiplier}x · 🔑${esc(m.trigger || '없음')}`;
+    const actions = mode === 'run'
+      ? `<label class="toggle" title="적용(트리거 활성)"><input type="checkbox" class="act-toggle" ${m.enabled ? 'checked' : ''}><span class="track"></span><span class="knob"></span></label>
+         <button class="btn sm act-play" title="재생/정지">▶</button>
+         <button class="btn ghost sm act-del" title="삭제">🗑</button>`
+      : `<button class="btn ghost sm act-dup" title="복제">⎘</button>
+         <button class="btn ghost sm act-del" title="삭제">🗑</button>`;
     li.innerHTML = `
-      <div class="macro-meta">
+      <div class="macro-top">
         <span class="name">${esc(m.name)}</span>
-        <span class="sub">${m.stepCount}스텝 · ${m.loopCount === 0 ? '∞' : m.loopCount}회 · ${m.speedMultiplier}x · 🔑${esc(m.trigger || '없음')}</span>
+        <div class="macro-actions">${actions}</div>
       </div>
-      <div class="macro-actions">
-        <button class="btn sm act-play">▶</button>
-        <button class="btn ghost sm act-del">🗑</button>
-      </div>`;
-    li.onclick = (e) => { if (!e.target.closest('button')) openMacro(m.id); };
-    li.querySelector('.act-play').onclick = () => togglePlay(m.id);
+      <div class="macro-sub">${sub}</div>`;
+    li.onclick = (e) => {
+      if (e.target.closest('button, label, input')) return;
+      if (mode === 'run') selectRunMacro(m.id); else openMacro(m.id);
+    };
     li.querySelector('.act-del').onclick = () => removeMacro(m.id, m.name);
-    list.appendChild(li);
+    if (mode === 'run') {
+      li.querySelector('.act-play').onclick = () => togglePlay(m.id);
+      const tg = li.querySelector('.act-toggle');
+      tg.onchange = async () => {
+        try { await api.setEnabled(m.id, tg.checked); }
+        catch (e) { log('error', e.message); tg.checked = !tg.checked; }
+      };
+    } else {
+      li.querySelector('.act-dup').onclick = () => duplicateMacro(m.id);
+    }
+    listEl.appendChild(li);
   }
-  renderMacroActive();
 }
 
 function renderMacroActive() {
@@ -91,6 +123,46 @@ function renderMacroActive() {
     const pb = el.querySelector('.act-play');
     if (pb) pb.textContent = playing ? '■' : '▶';
   });
+}
+
+// ---------- 실행 페이지: 현재 매크로 동작 순서(읽기전용) + 재생 하이라이트 ----------
+async function selectRunMacro(id) {
+  try { renderRunSteps(await api.getMacro(id)); }
+  catch (e) { log('error', e.message); }
+}
+function clearRunSteps() {
+  runShownId = null;
+  if ($('run-steps')) $('run-steps').innerHTML = '';
+  if ($('run-steps-empty')) $('run-steps-empty').hidden = false;
+  if ($('run-steps-title')) $('run-steps-title').textContent = '현재 매크로';
+}
+function renderRunSteps(macro) {
+  runShownId = macro.id;
+  const wrap = $('run-steps'); if (!wrap) return;
+  wrap.innerHTML = '';
+  const steps = macro.steps || [];
+  $('run-steps-empty').hidden = steps.length > 0;
+  $('run-steps-title').textContent = macro.name || '현재 매크로';
+  steps.forEach((s, i) => {
+    const t = s.event['$type'];
+    const row = document.createElement('div'); row.className = 'run-steps-row'; row.dataset.i = i;
+    const num = document.createElement('span'); num.className = 'rs-num'; num.textContent = i + 1;
+    const ico = document.createElement('span'); ico.className = 'rs-ico type-' + t; ico.textContent = km.TYPE_ICON[t] || '•';
+    const label = document.createElement('span'); label.className = 'rs-label';
+    label.textContent = t === 'delay' ? `지연 ${Math.round(s.delayBeforeMs || 0)} ms` : km.summarizeEvent(s.event);
+    row.append(num, ico, label);
+    wrap.appendChild(row);
+  });
+  const st = state.status;
+  const playingThis = st && st.state === 'playing' && st.currentMacroId === macro.id;
+  highlightRunStep(playingThis ? lastStepIndex : -1);
+}
+function highlightRunStep(idx) {
+  const wrap = $('run-steps'); if (!wrap) return;
+  wrap.querySelectorAll('.run-steps-row.playing').forEach((r) => r.classList.remove('playing'));
+  if (idx < 0) return;
+  const row = wrap.querySelector(`.run-steps-row[data-i="${idx}"]`);
+  if (row) { row.classList.add('playing'); row.scrollIntoView({ block: 'nearest' }); }
 }
 
 async function openMacro(id) {
@@ -109,6 +181,14 @@ async function removeMacro(id, name) {
   if (!ok) return;
   try { await api.deleteMacro(id); await loadMacros(); if (editor.current()?.id === id) editor.close(); }
   catch (e) { log('error', e.message); }
+}
+async function duplicateMacro(id) {
+  try {
+    const m = await api.getMacro(id);
+    await api.createMacro({ ...m, id: '', name: (m.name || '매크로') + ' 복사' });
+    await loadMacros();
+    log('info', `복제됨: ${m.name} 복사`);
+  } catch (e) { log('error', e.message); }
 }
 
 // ---------- WebSocket ----------
@@ -152,11 +232,38 @@ function showProgress(p) {
   $('progress-text').textContent = `루프 ${p.loop + 1} · 스텝 ${p.stepIndex + 1}/${p.stepCount}`;
   clearTimeout(showProgress._t);
   showProgress._t = setTimeout(() => { box.hidden = true; }, 1500);
+  // 실행 페이지: 현재 재생 중인 매크로 스텝을 자동 표시 + 현재 스텝 하이라이트
+  lastStepIndex = p.stepIndex;
+  const cur = state.status && state.status.currentMacroId;
+  if (cur && runShownId !== cur) selectRunMacro(cur);  // 최초 1회 로드(이후 progress는 바로 하이라이트)
+  else if (cur && runShownId === cur) highlightRunStep(p.stepIndex);
 }
 
-// ---------- 사이드바 와이어링 ----------
+// ---------- 업데이트(Git 동기화) ----------
+async function onUpdateCheck() {
+  $('update-status').textContent = '확인 중…';
+  $('btn-update-apply').disabled = true;
+  try {
+    const r = await api.updateCheck();
+    if (!r.ok) { $('update-status').textContent = '확인 실패: ' + (r.message || ''); return; }
+    if (r.behind > 0) { $('update-status').textContent = `${r.behind}개 업데이트 가능 (현재 ${r.current})`; $('btn-update-apply').disabled = false; }
+    else $('update-status').textContent = `최신 상태 (현재 ${r.current})`;
+  } catch (e) { $('update-status').textContent = '확인 실패: ' + e.message; }
+}
+async function onUpdateApply() {
+  const ok = await confirmDialog('최신 코드로 업데이트하고 앱을 재시작할까요?\n(git pull → 빌드 → 재실행)', { title: '업데이트 적용', ok: '업데이트', cancel: '취소' });
+  if (!ok) return;
+  $('update-status').textContent = '업데이트 중… 빌드 후 자동 재시작됩니다.';
+  $('btn-update-apply').disabled = true; $('btn-update-check').disabled = true;
+  try { await api.updateApply(); } catch (e) { /* 곧 종료되어 응답이 안 올 수 있음 */ }
+}
+
+// ---------- 와이어링 ----------
 function wire() {
-  $('btn-new').onclick = () => editor.open(null);
+  document.querySelectorAll('.tab-btn').forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
+  $('btn-update-check').onclick = onUpdateCheck;
+  $('btn-update-apply').onclick = onUpdateApply;
+  $('btn-new').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-clear-log').onclick = () => { $('log').innerHTML = ''; };
   $('btn-monitor').onclick = async () => {
     try { if (state.status?.monitoring) await api.monitorOff(); else await api.monitorOn(); }
@@ -178,6 +285,7 @@ function wire() {
 async function init() {
   installLockdown(); // 텍스트 드래그·브라우저 단축키·우클릭 차단
   wire();
+  switchTab('edit'); // 기본: 매크로 편집 탭
   connectWs();
   try { renderStatus(await api.status()); } catch (e) { log('error', e.message); }
   await loadMacros();

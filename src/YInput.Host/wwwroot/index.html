@@ -9,147 +9,187 @@
 <body>
   <header class="topbar">
     <div class="brand">Y_Input</div>
+    <nav class="tabs" id="tabs">
+      <button class="tab-btn" data-tab="run">매크로 실행</button>
+      <button class="tab-btn active" data-tab="edit">매크로 편집</button>
+    </nav>
     <div class="status-pills">
       <span id="state-badge" class="badge idle">대기</span>
       <span id="ws-dot" class="ws-dot off" title="실시간 연결"></span>
     </div>
   </header>
 
-  <main class="layout">
-    <!-- 좌측 사이드바 -->
-    <aside class="sidebar">
-      <div class="card compact" id="driver-card">
-        <h2>드라이버 / 장치</h2>
-        <ul class="kv">
-          <li><span>Interception</span><b id="d-interception">—</b></li>
-          <li><span>ViGEmBus</span><b id="d-vigem">—</b></li>
-          <li><span>관리자</span><b id="d-admin">—</b></li>
-        </ul>
-        <p id="device-hint" class="hint"></p>
-        <div class="row">
-          <button id="btn-install" class="btn ghost sm">드라이버 설치/점검</button>
-        </div>
-        <div class="row">
-          <button id="btn-pad-connect" class="btn ghost sm">패드 연결</button>
-          <button id="btn-pad-disconnect" class="btn ghost sm">해제</button>
-          <button id="btn-pad-test" class="btn ghost sm">A 테스트</button>
-        </div>
-      </div>
-
-      <div class="card compact">
-        <div class="card-head">
-          <h2>매크로</h2>
-          <div class="row">
-            <button id="btn-new" class="btn ghost sm">+ 새로</button>
-          </div>
-        </div>
-        <ul id="macro-list" class="macro-list"></ul>
-        <p id="macro-empty" class="hint">저장된 매크로가 없습니다.</p>
-      </div>
-
-      <div class="card compact">
-        <div class="card-head">
-          <h2>로그</h2>
-          <div class="row">
-            <button id="btn-monitor" class="btn ghost sm" title="모든 입력(키보드·마우스·게임패드·HID) 인식 표시">입력 모니터</button>
-            <button id="btn-clear-log" class="btn ghost sm">지우기</button>
-          </div>
-        </div>
-        <div id="progress" class="progress" hidden>
-          <div class="bar-line"><span id="progress-bar"></span></div>
-          <span id="progress-text"></span>
-        </div>
-        <div id="log" class="log"></div>
-      </div>
-    </aside>
-
-    <!-- 우측 작업영역 -->
-    <section class="workspace">
-      <div id="empty-state" class="empty-state">
-        <p>왼쪽에서 매크로를 선택하거나 <b>새로</b> / <b>녹화</b>로 시작하세요.</p>
-      </div>
-
-      <div id="editor" class="editor" hidden>
-        <!-- 편집기 헤더 -->
-        <div class="editor-head">
-          <div class="editor-title">
-            <input id="ed-name" class="ed-name" type="text" placeholder="매크로 이름" />
-            <div class="editor-sub">
-              <span><b id="ed-stat-steps">0</b> 스텝</span>
-              <span class="dot-sep">·</span>
-              <span>약 <b id="ed-stat-dur">0 ms</b></span>
-              <span class="dot-sep">·</span>
-              <span>트리거 <b id="ed-stat-trigger" class="trigger-chip">없음</b></span>
+  <main class="main">
+    <!-- ============ 매크로 실행 페이지 ============ -->
+    <section id="page-run" class="page">
+      <div class="run-layout">
+        <!-- 좌: 드라이버 + 업데이트 -->
+        <div class="run-aside">
+          <div class="card compact" id="driver-card">
+            <h2>드라이버 / 장치</h2>
+            <ul class="kv">
+              <li><span>Interception</span><b id="d-interception">—</b></li>
+              <li><span>ViGEmBus</span><b id="d-vigem">—</b></li>
+              <li><span>관리자</span><b id="d-admin">—</b></li>
+            </ul>
+            <p id="device-hint" class="hint"></p>
+            <div class="row">
+              <button id="btn-install" class="btn ghost sm">드라이버 설치/점검</button>
+            </div>
+            <div class="row">
+              <button id="btn-pad-connect" class="btn ghost sm">패드 연결</button>
+              <button id="btn-pad-disconnect" class="btn ghost sm">해제</button>
+              <button id="btn-pad-test" class="btn ghost sm">A 테스트</button>
             </div>
           </div>
-          <div class="editor-actions">
-            <button id="btn-play" class="btn primary">▶ 재생</button>
-            <button id="btn-save" class="btn">저장</button>
-            <button id="btn-cancel" class="btn ghost">닫기</button>
-          </div>
-        </div>
 
-        <!-- 재생 설정 바 -->
-        <div class="bar">
-          <div class="bar-group">
-            <span class="bar-label">반복</span>
-            <div class="seg" id="seg-repeat">
-              <button class="seg-btn" data-val="once" title="한 번 재생">한 번</button>
-              <button class="seg-btn" data-val="count" title="지정 횟수만큼 반복">반복</button>
-              <button class="seg-btn" data-val="inf" title="정지키를 누를 때까지 반복(토글)">무한 ∞</button>
+          <div class="card compact" id="update-card">
+            <h2>업데이트</h2>
+            <p id="update-status" class="hint">Git 저장소에서 최신 빌드로 동기화합니다.</p>
+            <div class="row">
+              <button id="btn-update-check" class="btn ghost sm">업데이트 확인</button>
+              <button id="btn-update-apply" class="btn sm" disabled>업데이트 적용</button>
             </div>
-            <input id="ed-loop" type="number" min="1" step="1" value="1" class="mini" title="반복 횟수" />
-          </div>
-          <div class="bar-group">
-            <span class="bar-label">속도 <b id="ed-speed-val">1.0x</b></span>
-            <input id="ed-speed" type="range" min="0.1" max="5" step="0.1" value="1" />
-          </div>
-          <div class="bar-group grow">
-            <span class="bar-label">트리거</span>
-            <input id="ed-hotkey" type="text" readonly placeholder="클릭 후 키·마우스(엄지 X1/X2)" />
-            <button id="ed-hotkey-pad" class="btn ghost sm" title="게임패드 버튼을 트리거로 잡기">🎮</button>
-            <button id="ed-hotkey-clear" class="btn ghost sm" title="트리거 지우기">✕</button>
           </div>
         </div>
 
-        <!-- 스텝 툴바: 선택 시 액션바(좌) + 전체 선택(우, 항상) -->
-        <div class="steps-toolbar">
-          <div id="sel-bar" class="sel-bar" hidden>
-            <span class="sel-count"><b id="sel-count">0</b>개 선택</span>
-            <button id="btn-dup" class="btn ghost sm">⎘ 복제</button>
-            <button id="btn-up" class="btn ghost sm">↑ 위로</button>
-            <button id="btn-down" class="btn ghost sm">↓ 아래로</button>
-            <button id="btn-delay-before" class="btn ghost sm">＋이전 지연</button>
-            <button id="btn-delay-after" class="btn ghost sm">＋이후 지연</button>
-            <button id="btn-del" class="btn ghost sm danger">✕ 삭제</button>
-            <button id="btn-selclear" class="btn ghost sm">선택 해제</button>
-          </div>
-          <div class="spacer"></div>
-          <button id="btn-selall" class="btn ghost sm">전체 선택</button>
+        <!-- 가운데: 매크로 목록(재생) -->
+        <div class="card compact run-list-card">
+          <div class="card-head"><h2>매크로 목록</h2></div>
+          <ul id="macro-list-run" class="macro-list"></ul>
+          <p id="macro-empty-run" class="hint">저장된 매크로가 없습니다.</p>
         </div>
 
-        <!-- 동작 팔레트(좌) + 스텝 리스트(우) -->
-        <div class="editor-body">
-          <aside class="palette" id="palette">
-            <div class="palette-title">동작</div>
-            <button class="pal-item pal-record" data-type="record" draggable="true"><span class="pal-ico type-record">●</span> 녹화하기 <span class="pal-sub">입력 캡처</span></button>
-            <button class="pal-item" data-type="input-down" draggable="true"><span class="pal-ico type-keyboard">⌨</span> 입력 Down <span class="pal-sub">키·마우스·패드</span></button>
-            <button class="pal-item" data-type="input-up" draggable="true"><span class="pal-ico type-keyboard">⌨</span> 입력 Up <span class="pal-sub">키·마우스·패드</span></button>
-            <button class="pal-item" data-type="delay" draggable="true"><span class="pal-ico type-delay">⏱</span> 지연 (Wait)</button>
-            <button class="pal-item" data-type="text" draggable="true"><span class="pal-ico type-text">🔤</span> 텍스트</button>
-            <button class="pal-item" data-type="loop" draggable="true"><span class="pal-ico type-loopStart">🔁</span> 반복 (N회)</button>
-          </aside>
+        <!-- 우: 현재 매크로 동작 순서 -->
+        <div class="card compact run-steps-card">
+          <div class="card-head"><h2 id="run-steps-title">현재 매크로</h2></div>
+          <div id="run-steps" class="run-steps"></div>
+          <p id="run-steps-empty" class="hint">왼쪽 목록에서 매크로를 선택하면 동작 순서가 표시됩니다.</p>
+        </div>
+      </div>
+    </section>
 
-          <div class="steps-wrap">
-            <div class="steps-head">
-              <span class="sh-act"></span>
-              <span class="sh-num">#</span>
-              <span class="sh-type">타입</span>
-              <span class="sh-detail">동작</span>
+    <!-- ============ 매크로 편집 페이지 ============ -->
+    <section id="page-edit" class="page active">
+      <div class="layout">
+        <!-- 좌측 사이드바: 매크로 목록(위) + 로그(아래) -->
+        <aside class="sidebar">
+          <div class="card compact sb-macros">
+            <div class="card-head">
+              <h2>매크로</h2>
+              <div class="row">
+                <button id="btn-new" class="btn ghost sm">+ 새로</button>
+              </div>
             </div>
-            <div id="steps" class="steps"></div>
+            <ul id="macro-list-edit" class="macro-list"></ul>
+            <p id="macro-empty-edit" class="hint">저장된 매크로가 없습니다.</p>
           </div>
-        </div>
+
+          <div class="card compact sb-log">
+            <div class="card-head">
+              <h2>로그</h2>
+              <div class="row">
+                <button id="btn-monitor" class="btn ghost sm" title="모든 입력(키보드·마우스·게임패드·HID) 인식 표시">입력 모니터</button>
+                <button id="btn-clear-log" class="btn ghost sm">지우기</button>
+              </div>
+            </div>
+            <div id="progress" class="progress" hidden>
+              <div class="bar-line"><span id="progress-bar"></span></div>
+              <span id="progress-text"></span>
+            </div>
+            <div id="log" class="log"></div>
+          </div>
+        </aside>
+
+        <!-- 우측 작업영역 -->
+        <section class="workspace">
+          <div id="empty-state" class="empty-state">
+            <p>왼쪽에서 매크로를 선택하거나 <b>새로</b> / <b>녹화</b>로 시작하세요.</p>
+          </div>
+
+          <div id="editor" class="editor" hidden>
+            <!-- 편집기 헤더 -->
+            <div class="editor-head">
+              <div class="editor-title">
+                <input id="ed-name" class="ed-name" type="text" placeholder="매크로 이름" />
+                <div class="editor-sub">
+                  <span><b id="ed-stat-steps">0</b> 스텝</span>
+                  <span class="dot-sep">·</span>
+                  <span>약 <b id="ed-stat-dur">0 ms</b></span>
+                  <span class="dot-sep">·</span>
+                  <span>트리거 <b id="ed-stat-trigger" class="trigger-chip">없음</b></span>
+                </div>
+              </div>
+              <div class="editor-actions">
+                <button id="btn-play" class="btn primary">▶ 재생</button>
+                <button id="btn-save" class="btn">저장</button>
+                <button id="btn-cancel" class="btn ghost">닫기</button>
+              </div>
+            </div>
+
+            <!-- 재생 설정 바 -->
+            <div class="bar">
+              <div class="bar-group">
+                <span class="bar-label">반복</span>
+                <div class="seg" id="seg-repeat">
+                  <button class="seg-btn" data-val="once" title="한 번 재생">한 번</button>
+                  <button class="seg-btn" data-val="count" title="지정 횟수만큼 반복">반복</button>
+                  <button class="seg-btn" data-val="inf" title="정지키를 누를 때까지 반복(토글)">무한 ∞</button>
+                </div>
+                <input id="ed-loop" type="number" min="1" step="1" value="1" class="mini" title="반복 횟수" />
+              </div>
+              <div class="bar-group">
+                <span class="bar-label">속도 <b id="ed-speed-val">1.0x</b></span>
+                <input id="ed-speed" type="range" min="0.1" max="5" step="0.1" value="1" />
+              </div>
+              <div class="bar-group grow">
+                <span class="bar-label">트리거</span>
+                <input id="ed-hotkey" type="text" readonly placeholder="클릭 후 키·마우스(엄지 X1/X2)" />
+                <button id="ed-hotkey-pad" class="btn ghost sm" title="게임패드 버튼을 트리거로 잡기">🎮</button>
+                <button id="ed-hotkey-clear" class="btn ghost sm" title="트리거 지우기">✕</button>
+              </div>
+            </div>
+
+            <!-- 스텝 툴바: 선택 시 액션바(좌) + 전체 선택(우, 항상) -->
+            <div class="steps-toolbar">
+              <div id="sel-bar" class="sel-bar" hidden>
+                <span class="sel-count"><b id="sel-count">0</b>개 선택</span>
+                <button id="btn-dup" class="btn ghost sm">⎘ 복제</button>
+                <button id="btn-up" class="btn ghost sm">↑ 위로</button>
+                <button id="btn-down" class="btn ghost sm">↓ 아래로</button>
+                <button id="btn-delay-before" class="btn ghost sm">＋이전 지연</button>
+                <button id="btn-delay-after" class="btn ghost sm">＋이후 지연</button>
+                <button id="btn-del" class="btn ghost sm danger">✕ 삭제</button>
+                <button id="btn-selclear" class="btn ghost sm">선택 해제</button>
+              </div>
+              <div class="spacer"></div>
+              <button id="btn-selall" class="btn ghost sm">전체 선택</button>
+            </div>
+
+            <!-- 동작 팔레트(좌) + 스텝 리스트(우) -->
+            <div class="editor-body">
+              <aside class="palette" id="palette">
+                <div class="palette-title">동작</div>
+                <button class="pal-item pal-record" data-type="record" draggable="true"><span class="pal-ico type-record">●</span> 녹화하기 <span class="pal-sub">입력 캡처</span></button>
+                <button class="pal-item" data-type="input-down" draggable="true"><span class="pal-ico type-keyboard">⌨</span> 입력 Down <span class="pal-sub">키·마우스·패드</span></button>
+                <button class="pal-item" data-type="input-up" draggable="true"><span class="pal-ico type-keyboard">⌨</span> 입력 Up <span class="pal-sub">키·마우스·패드</span></button>
+                <button class="pal-item" data-type="delay" draggable="true"><span class="pal-ico type-delay">⏱</span> 지연 (Wait)</button>
+                <button class="pal-item" data-type="text" draggable="true"><span class="pal-ico type-text">🔤</span> 텍스트</button>
+                <button class="pal-item" data-type="loop" draggable="true"><span class="pal-ico type-loopStart">🔁</span> 반복 (N회)</button>
+              </aside>
+
+              <div class="steps-wrap">
+                <div class="steps-head">
+                  <span class="sh-act"></span>
+                  <span class="sh-num">#</span>
+                  <span class="sh-type">타입</span>
+                  <span class="sh-detail">동작</span>
+                </div>
+                <div id="steps" class="steps"></div>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
     </section>
   </main>
