@@ -115,7 +115,6 @@ function renderMacroList(listEl, emptyEl, mode) {
           <label class="toggle" title="적용(트리거 활성)"><input type="checkbox" class="act-toggle" ${m.enabled ? 'checked' : ''}><span class="track"></span><span class="knob"></span></label>
           <div class="macro-meta"><span class="name">${esc(m.name)}</span><span class="macro-sub">${m.stepCount}스텝</span></div>
           <div class="macro-actions">
-            <button class="mbtn-trig act-trigger" title="트리거 설정(클릭 후 키/마우스/패드 입력)">${ICON.trigger}<span class="trig-val">${esc(m.trigger || '없음')}</span></button>
             <button class="mbtn act-edit" title="편집">${ICON.edit}</button>
             <button class="mbtn act-del" title="삭제">${ICON.del}</button>
           </div>
@@ -128,6 +127,7 @@ function renderMacroList(listEl, emptyEl, mode) {
             <button class="seg-btn ${repMode === 'inf' ? 'on' : ''}" data-val="inf">무한∞</button>
           </div>
           <input type="number" class="mini pl-count" min="1" value="${repCount}" ${repMode === 'count' ? '' : 'hidden'} title="반복 횟수">
+          <button class="mbtn-trig act-trigger" title="트리거 설정(클릭 후 키/마우스/패드 입력)">${ICON.trigger}<span class="trig-val">${esc(m.trigger || '없음')}</span></button>
         </div>`;
     } else {
       const sub = `${m.stepCount}스텝 · ${m.loopCount === 0 ? '∞' : m.loopCount}회`;
