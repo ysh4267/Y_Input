@@ -131,9 +131,11 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 .mbtn-trig:hover { color: var(--text); border-color: var(--accent); }
 .mbtn-trig.capturing { color: var(--accent); border-color: var(--accent); animation: pulse 1s infinite; }
 
-/* 삭제 인라인 확인 오버레이(항목 위) */
-.macro-del-overlay { position: absolute; inset: 0; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: rgba(255,84,112,.18); border: 1px solid var(--rec); border-radius: 10px; z-index: 4; }
-.macro-del-overlay .q { margin-right: auto; color: var(--rec); font-weight: 700; font-size: 12.5px; }
+/* 삭제 인라인 확인 오버레이(항목 위) — 거의 불투명한 빨강으로 아래 글자 가림 */
+.macro-del-overlay { position: absolute; inset: 0; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: rgba(255,84,112,.92); border: 1px solid var(--rec); border-radius: 10px; z-index: 4; }
+.macro-del-overlay .q { margin-right: auto; color: #fff; font-weight: 700; font-size: 12.5px; }
+.macro-del-overlay .ov-yes { background: #fff; color: var(--rec); border-color: #fff; }
+.macro-del-overlay .ov-no { color: #fff; border-color: rgba(255,255,255,.55); }
 
 /* on/off 토글 스위치(적용 여부) */
 .toggle { position: relative; display: inline-block; width: 34px; height: 18px; flex-shrink: 0; cursor: pointer; }
