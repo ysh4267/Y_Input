@@ -43,12 +43,14 @@ export function createEditor({ log, onSaved, getStatus }) {
   let stepCapture = null;     // 게임패드 캡처 라우팅 콜백
   let dropLine = null;        // 팔레트 드롭 위치 표시선
 
-  // 녹화 카드 상태
+  // 녹화 카드 상태(실시간 녹화)
   let recordingUid = null;    // 현재 녹화 중인 '녹화하기' 카드의 _uid
   let recBusy = false;        // 시작 처리 중 중복 방지
-  let recAutoTimer = null;    // 지속 시간 자동 정지 타이머
-  let recCountTimer = null;   // 남은 시간 카운트 표시 타이머
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let recUids = new Set();    // 이번 녹화로 추가된 스텝 _uid(녹화 카드 바로 아래, 연속)
+  let tickingUid = null;      // 진행 중(측정 중) 지연 카드의 _uid
+  let tickStart = 0;          // 현재 지연 측정 시작(performance.now)
+  let pendingServerGap = null;// 다음 입력 직전 지연(서버 측정값) — 있으면 우선 사용
+  let recTickTimer = null;    // 진행 중 지연 카드 실시간 갱신 타이머
 
   // 클립보드·언두
   let clipboard = [];
@@ -84,8 +86,6 @@ export function createEditor({ log, onSaved, getStatus }) {
 
     $('ed-speed').value = editing.speedMultiplier || 1;
     $('ed-speed-val').textContent = (editing.speedMultiplier || 1).toFixed(1) + 'x';
-    $('ed-random').value = editing.randomizeDelayPercent || 0;
-    $('ed-random-val').textContent = (editing.randomizeDelayPercent || 0) + '%';
     $('ed-hotkey').value = hotkeyToString(editing.trigger);
     renderSteps();
     onStatus(getStatus());
@@ -150,72 +150,59 @@ export function createEditor({ log, onSaved, getStatus }) {
     });
   }
 
-  // 키 Down↔Up 같은 키끼리 스택 매칭 → 카드 밖 우측 ']'(뒤집어진 ㄷ) 브래킷
+  // 키 Down↔Up 짝 + 반복 시작↔끝 짝 → 모두 카드 밖 '우측' ']'(뒤집어진 ㄷ) 브래킷(레인 분리)
   function renderPairLines() {
     if (draggingUids.size) return; // 드래그 중엔 생략(드롭 후 재렌더로 다시 그림)
     const wrap = stepsEl();
     const rows = [...wrap.querySelectorAll('.step')];
-    const stack = [], pairs = [];
+    const pairs = [];
+
+    // 키 Down↔Up(같은 키 스택 매칭) — 팔레트 색 순환
+    const COLORS = ['#6b8cff', '#34d399', '#c084fc', '#f0a93b', '#f472b6'];
+    const kstack = [], kpairs = [];
     editing.steps.forEach((s, i) => {
       const ev = s.event;
       if (ev['$type'] !== 'keyboard') return;
       if ((ev.state & 1) === 1) {
-        for (let k = stack.length - 1; k >= 0; k--) {
-          if (stack[k].code === ev.code) { pairs.push({ down: stack[k].i, up: i }); stack.splice(k, 1); break; }
+        for (let k = kstack.length - 1; k >= 0; k--) {
+          if (kstack[k].code === ev.code) { kpairs.push({ down: kstack[k].i, up: i }); kstack.splice(k, 1); break; }
         }
-      } else stack.push({ code: ev.code, i });
+      } else kstack.push({ code: ev.code, i });
     });
-    pairs.sort((a, b) => a.down - b.down);
+    kpairs.sort((a, b) => a.down - b.down);
+    kpairs.forEach((p, pi) => { p.color = COLORS[pi % COLORS.length]; pairs.push(p); });
+
+    // 반복(루프) 시작↔끝 — 주황색, 같은 우측 영역
+    const lstack = [];
+    editing.steps.forEach((s, i) => {
+      const t = s.event['$type'];
+      if (t === 'loopStart') lstack.push(i);
+      else if (t === 'loopEnd' && lstack.length) pairs.push({ down: lstack.pop(), up: i, color: '#fb923c' });
+    });
+
+    // 키·루프 짝을 한데 모아 우측 레인 할당(겹치면 다른 레인 → 충돌 방지)
+    const all = pairs.slice().sort((a, b) => a.down - b.down);
     const laneEnds = [];
-    pairs.forEach((p) => {
+    all.forEach((p) => {
       let lane = laneEnds.findIndex((end) => p.down > end);
       if (lane === -1) { lane = laneEnds.length; laneEnds.push(p.up); } else laneEnds[lane] = p.up;
-      p.lane = Math.min(lane, 7);
+      p.lane = Math.min(lane, 5);
     });
-    const COLORS = ['#6b8cff', '#34d399', '#c084fc', '#f0a93b', '#f472b6'];
+
     const hline = (x, y, w, color) => { const d = document.createElement('div'); d.className = 'pair-h'; d.style.left = x + 'px'; d.style.top = (y - 1) + 'px'; d.style.width = w + 'px'; d.style.background = color; wrap.appendChild(d); };
     const vline = (x, y, h, color) => { const d = document.createElement('div'); d.className = 'pair-v'; d.style.left = x + 'px'; d.style.top = y + 'px'; d.style.height = h + 'px'; d.style.background = color; wrap.appendChild(d); };
     const node = (x, y, color) => { const d = document.createElement('div'); d.className = 'pair-node'; d.style.left = x + 'px'; d.style.top = y + 'px'; d.style.background = color; wrap.appendChild(d); };
-    pairs.forEach((p, pi) => {
+    all.forEach((p) => {
       const cd = rows[p.down], cu = rows[p.up];
       if (!cd || !cu) return;
-      const color = COLORS[pi % COLORS.length];
       const cardRight = cd.offsetLeft + cd.offsetWidth;
       const bx = cardRight + 8 + p.lane * 14;        // 브래킷 세로선 x
       const dY = cd.offsetTop + cd.offsetHeight / 2;
       const uY = cu.offsetTop + cu.offsetHeight / 2;
-      vline(bx, Math.min(dY, uY), Math.abs(uY - dY), color);    // 세로
-      hline(cardRight, dY, bx - cardRight + 2, color);          // down 가로 스텁
-      hline(cardRight, uY, bx - cardRight + 2, color);          // up 가로 스텁
-      node(cardRight, dY, color); node(cardRight, uY, color);   // 카드 우변 노드
-    });
-
-    // 반복(루프) 시작↔끝 연결 — 카드 왼쪽 '[' 브래킷
-    const lstack = [], lpairs = [];
-    editing.steps.forEach((s, i) => {
-      const t = s.event['$type'];
-      if (t === 'loopStart') lstack.push(i);
-      else if (t === 'loopEnd' && lstack.length) lpairs.push({ down: lstack.pop(), up: i });
-    });
-    lpairs.sort((a, b) => a.down - b.down);
-    const lLane = [];
-    lpairs.forEach((p) => {
-      let lane = lLane.findIndex((end) => p.down > end);
-      if (lane === -1) { lane = lLane.length; lLane.push(p.up); } else lLane[lane] = p.up;
-      p.lane = Math.min(lane, 1);
-    });
-    lpairs.forEach((p) => {
-      const cd = rows[p.down], cu = rows[p.up];
-      if (!cd || !cu) return;
-      const color = '#fb923c'; // --t-loop
-      const cardLeft = cd.offsetLeft;
-      const lx = cardLeft - 6 - p.lane * 8;
-      const dY = cd.offsetTop + cd.offsetHeight / 2;
-      const uY = cu.offsetTop + cu.offsetHeight / 2;
-      vline(lx, Math.min(dY, uY), Math.abs(uY - dY), color);
-      hline(lx, dY, cardLeft - lx, color);
-      hline(lx, uY, cardLeft - lx, color);
-      node(cardLeft, dY, color); node(cardLeft, uY, color);
+      vline(bx, Math.min(dY, uY), Math.abs(uY - dY), p.color);  // 세로
+      hline(cardRight, dY, bx - cardRight + 2, p.color);        // 시작(위) 가로 스텁
+      hline(cardRight, uY, bx - cardRight + 2, p.color);        // 끝(아래) 가로 스텁
+      node(cardRight, dY, p.color); node(cardRight, uY, p.color);
     });
   }
 
@@ -227,6 +214,7 @@ export function createEditor({ log, onSaved, getStatus }) {
     if (draggingUids.has(step._uid)) row.classList.add('dragging');
 
     if (t === 'record') { buildRecordCard(row, step); return row; } // 녹화하기 카드(3줄 패널)
+    if (t === 'delay' && step._uid === tickingUid) row.classList.add('rec-ticking'); // 측정 중 지연
 
     // 행 액션(복제/삭제) — 카드 우측 끝(아래 detail 뒤에 append)
     const act = document.createElement('div'); act.className = 'step-act';
@@ -292,10 +280,23 @@ export function createEditor({ log, onSaved, getStatus }) {
       txt.placeholder = '입력할 텍스트'; txt.onchange = () => { pushUndo(); ev.text = txt.value; };
       td.append(txt, numInput(ev.perKeyDelayMs || 0, (v) => ev.perKeyDelayMs = v, '키당ms'));
     } else if (t === 'delay') {
+      if (step._uid === tickingUid) {
+        // 녹화 중 '측정 중' 지연 — 실시간으로 흐른 시간 표시(편집 불가)
+        const live = document.createElement('span'); live.className = 'rec-tick-val';
+        live.textContent = fmtMs(step.delayBeforeMs || 0);
+        td.append(labelTag('지연 측정 중'), live);
+        return;
+      }
       const n = document.createElement('input');
       n.type = 'number'; n.min = '0'; n.step = '1'; n.value = Math.round(step.delayBeforeMs || 0); n.title = '대기 시간(ms)';
       n.onchange = () => { pushUndo(); step.delayBeforeMs = Math.max(0, parseFloat(n.value) || 0); n.value = Math.round(step.delayBeforeMs); updateStats(); };
-      td.append(labelTag('대기'), n, labelTag('ms 만큼 멈춤'));
+      // 개별 휴머나이즈(±%) — 이 지연만 무작위로 흔듦
+      const hz = document.createElement('input'); hz.type = 'range'; hz.min = '0'; hz.max = '90'; hz.step = '5';
+      hz.className = 'rec-humanize'; hz.value = ev.randomizePercent || 0; hz.title = '휴머나이즈(±%) — 재생 시 이 지연을 무작위로 흔듦';
+      const hzv = document.createElement('span'); hzv.className = 'hz-val'; hzv.textContent = (ev.randomizePercent || 0) + '%';
+      hz.oninput = () => { hzv.textContent = hz.value + '%'; };
+      hz.onchange = () => { pushUndo(); ev.randomizePercent = parseInt(hz.value, 10) || 0; hzv.textContent = ev.randomizePercent + '%'; };
+      td.append(labelTag('대기'), n, labelTag('ms'), labelTag('휴머나이즈'), hz, hzv);
     } else if (t === 'loopStart') {
       const n = document.createElement('input');
       n.type = 'number'; n.min = '1'; n.value = Math.max(1, ev.count || 2); n.title = '반복 횟수';
@@ -360,13 +361,10 @@ export function createEditor({ log, onSaved, getStatus }) {
     const status = document.createElement('span'); status.className = 'rec-status rec-go-status';
     go.onclick = (e) => {
       e.stopPropagation();
-      const st = getStatus();
-      if (st && st.state === 'recording' && recordingUid === step._uid) stopRecord();
-      else startRecord(step, status);
+      if (recordingUid === step._uid) stopRecord();
+      else startRecord(step);
     };
-    const dur = document.createElement('input'); dur.type = 'number'; dur.min = '0'; dur.step = '1'; dur.className = 'mini rec-dur';
-    dur.value = Math.max(0, parseInt(ev.durationSec, 10) || 0); dur.title = '녹화 지속 시간(초) — 지정 초가 지나면 자동 정지, 0이면 수동 정지';
-    dur.onchange = () => { ev.durationSec = Math.max(0, parseInt(dur.value, 10) || 0); dur.value = ev.durationSec; };
+    const hint = document.createElement('span'); hint.className = 'muted'; hint.textContent = '아래에 실시간으로 기록 — 종료 버튼으로 끝내기';
     const spacer = document.createElement('span'); spacer.className = 'rec-spacer';
     const del = document.createElement('button'); del.className = 'rowbtn del'; del.title = '녹화 카드 제거'; del.innerHTML = ICON.del;
     del.onclick = (e) => {
@@ -374,7 +372,7 @@ export function createEditor({ log, onSaved, getStatus }) {
       if (recordingUid === step._uid) { log('warn', '녹화 중에는 카드를 제거할 수 없습니다.'); return; }
       pushUndo(); selected.delete(step._uid); editing.steps.splice(idxOfUid(step._uid), 1); renderSteps();
     };
-    r1.append(go, status, labelTag('지속'), dur, labelTag('초 (0=수동)'), spacer, del);
+    r1.append(go, status, hint, spacer, del);
 
     // 2줄: 지연(실제/고정/없음) + 고정 ms
     const r2 = document.createElement('div'); r2.className = 'rec-row';
@@ -400,9 +398,7 @@ export function createEditor({ log, onSaved, getStatus }) {
       c.onclick = (e) => { e.stopPropagation(); ev.targets[key] = !ev.targets[key]; c.classList.toggle('on', ev.targets[key]); };
       chips.appendChild(c);
     });
-    const cd = document.createElement('button'); cd.className = 'chip' + (ev.countdown ? ' on' : ''); cd.textContent = '⏱ 3초'; cd.title = '시작 전 3초 카운트다운';
-    cd.onclick = (e) => { e.stopPropagation(); ev.countdown = !ev.countdown; cd.classList.toggle('on', ev.countdown); };
-    r3.append(labelTag('기록 대상'), chips, cd);
+    r3.append(labelTag('기록 대상'), chips);
 
     row.append(r1, r2, r3);
   }
@@ -412,56 +408,116 @@ export function createEditor({ log, onSaved, getStatus }) {
     const t = ev.targets || {};
     return { keyboard: !!t.keyboard, mouseButtons: !!t.mouseButtons, mouseMove: !!t.mouseMove, mouseWheel: !!t.mouseWheel, gamepad: !!t.gamepad, fixedDelayMs };
   }
-  async function startRecord(step, statusEl) {
+  // 녹화 카드 바로 아래(연속 녹화 영역) 끝 위치
+  function recInsertAt(cardIdx) {
+    let at = cardIdx + 1;
+    while (at < editing.steps.length && recUids.has(editing.steps[at]._uid)) at++;
+    return at;
+  }
+  // 새 '측정 중' 지연 카드를 녹화 영역 끝에 추가하고 실시간 타이머로 흐른 시간 표시
+  function startTickingDelay() {
+    const ci = idxOfUid(recordingUid); if (ci < 0) return;
+    const d = tagUids([{ delayBeforeMs: 0, event: { '$type': 'delay', randomizePercent: 0 } }])[0];
+    editing.steps.splice(recInsertAt(ci), 0, d);
+    recUids.add(d._uid); tickingUid = d._uid; tickStart = performance.now();
+    renderSteps();
+    scrollLiveIntoView(d._uid);
+  }
+  // 100ms마다 진행 중 지연 카드의 흐른 시간 갱신(텍스트만)
+  function tickDelay() {
+    if (tickingUid == null) return;
+    const s = editing.steps.find((x) => x._uid === tickingUid); if (!s) return;
+    s.delayBeforeMs = Math.max(0, performance.now() - tickStart);
+    const el = stepsEl().querySelector('.rec-ticking .rec-tick-val');
+    if (el) el.textContent = fmtMs(s.delayBeforeMs);
+  }
+  async function startRecord(step) {
     if (recBusy) return;
     const st = getStatus();
     if (st && st.state !== 'idle') { log('warn', '녹화/재생 중에는 새 녹화를 시작할 수 없습니다.'); return; }
     recBusy = true;
     try {
-      const ev = step.event;
-      if (ev.countdown) { for (let n = 3; n >= 1; n--) { statusEl.textContent = n + '…'; await sleep(700); } }
-      statusEl.textContent = '';
-      await api.recordStart(recOptionsOf(ev));
+      await api.recordStart(recOptionsOf(step.event));
       recordingUid = step._uid;
-      log('info', '녹화 시작 — 입력을 기록합니다.');
+      recUids = new Set(); pendingServerGap = null;
+      pushUndo(); // 녹화 직전 스냅샷(언두 한 번으로 녹화 전체 되돌림)
+      log('info', '녹화 시작 — 입력을 실시간으로 기록합니다. 종료 버튼으로 끝내세요.');
+      startTickingDelay();
+      if (!recTickTimer) recTickTimer = setInterval(tickDelay, 100);
       syncRecordButtons(getStatus());
-      const dur = Math.max(0, parseInt(ev.durationSec, 10) || 0);
-      if (dur > 0) {
-        let left = dur; statusEl.textContent = left + 's';
-        recCountTimer = setInterval(() => { left -= 1; statusEl.textContent = (left > 0 ? left + 's' : ''); }, 1000);
-        recAutoTimer = setTimeout(() => stopRecord(), dur * 1000);
-      }
     } catch (e) { log('error', e.message); recordingUid = null; }
     finally { recBusy = false; }
   }
+  // 서버 실시간 스텝 수신: 지연 스텝은 다음 입력의 '직전 지연' 값으로 보관, 입력 스텝은 카드로 추가
+  function onRecordedStep(data) {
+    if (recordingUid == null || !data || !data.event) return;
+    if (data.event['$type'] === 'delay') { pendingServerGap = data.delayBeforeMs || 0; return; }
+    // 진행 중 지연 카드 확정(서버 측정값 우선, 없으면 클라 측정 — 첫 입력 직전 지연)
+    if (tickingUid != null) {
+      const s = editing.steps.find((x) => x._uid === tickingUid);
+      const gap = pendingServerGap != null ? pendingServerGap : Math.max(0, performance.now() - tickStart);
+      if (s) s.delayBeforeMs = gap;
+    }
+    pendingServerGap = null; tickingUid = null;
+    const ci = idxOfUid(recordingUid); if (ci < 0) return;
+    const inp = tagUids([{ delayBeforeMs: 0, event: data.event }])[0];
+    const tick = tagUids([{ delayBeforeMs: 0, event: { '$type': 'delay', randomizePercent: 0 } }])[0];
+    editing.steps.splice(recInsertAt(ci), 0, inp, tick); // 입력 카드 + 다음 측정용 지연 카드
+    recUids.add(inp._uid); recUids.add(tick._uid);
+    tickingUid = tick._uid; tickStart = performance.now();
+    renderSteps();
+    scrollLiveIntoView(tick._uid);
+  }
+  function scrollLiveIntoView(uid) {
+    const el = stepsEl().querySelector(`.step[data-uid="${uid}"]`);
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }
+  // 녹화 종료 버튼 클릭(=마지막 왼쪽 클릭)과 그 직전 지연은 결과에서 제외
+  function stripTrailingStopClick(region) {
+    const LEFT = km.MOUSE.LeftDown | km.MOUSE.LeftUp;
+    const isLeft = (s) => s.event['$type'] === 'mouse' && ((s.event.buttonState || 0) & LEFT) !== 0;
+    const isDelay = (s) => s.event['$type'] === 'delay';
+    const arr = region.slice();
+    let btn = 0;
+    while (arr.length && btn < 2) {
+      const last = arr[arr.length - 1];
+      if (isDelay(last)) { arr.pop(); continue; }
+      if (isLeft(last)) { arr.pop(); btn++; continue; }
+      break;
+    }
+    while (arr.length && isDelay(arr[arr.length - 1])) arr.pop();
+    return arr;
+  }
   async function stopRecord() {
-    if (recAutoTimer) { clearTimeout(recAutoTimer); recAutoTimer = null; }
-    if (recCountTimer) { clearInterval(recCountTimer); recCountTimer = null; }
-    const uid = recordingUid; recordingUid = null;
-    try {
-      const macro = await api.recordStop('');
-      const steps = (macro && macro.steps) || [];
-      const idx = uid != null ? idxOfUid(uid) : -1;
-      if (idx < 0) { log('warn', '녹화 카드가 사라져 결과를 넣지 못했습니다.'); return; }
-      if (!steps.length) { log('info', '캡처된 입력이 없습니다.'); syncRecordButtons(getStatus()); return; }
-      pushUndo();
-      const captured = tagUids(steps.map((s) => ({ delayBeforeMs: s.delayBeforeMs || 0, event: s.event })));
-      editing.steps.splice(idx, 1, ...captured); // 녹화 카드 자리에 캡처 결과 삽입(카드 대체)
-      selected = new Set(captured.map((s) => s._uid)); lastUid = captured[0]._uid;
-      renderSteps();
-      log('info', `녹화 완료: ${captured.length} 스텝`);
-    } catch (e) { log('error', e.message); }
+    if (recTickTimer) { clearInterval(recTickTimer); recTickTimer = null; }
+    const cardUid = recordingUid; recordingUid = null; // 이후 도착하는 종료 클릭 이벤트는 무시
+    const tick = tickingUid; tickingUid = null;
+    try { await api.recordStop('', false); } catch (e) { log('error', e.message); }
+    const ci = cardUid != null ? idxOfUid(cardUid) : -1;
+    if (ci < 0) { recUids = new Set(); pendingServerGap = null; return; }
+    // 진행 중(측정 중) 지연 카드 제거
+    if (tick != null) { const ti = idxOfUid(tick); if (ti >= 0) editing.steps.splice(ti, 1); recUids.delete(tick); }
+    // 녹화 영역(녹화 카드 바로 아래 연속) 수집 → 종료 클릭 정리
+    const region = []; let j = ci + 1;
+    while (j < editing.steps.length && recUids.has(editing.steps[j]._uid)) { region.push(editing.steps[j]); j++; }
+    const stripped = stripTrailingStopClick(region);
+    editing.steps.splice(ci, 1 + region.length, ...stripped); // 녹화 카드 제거 + 정리된 결과 삽입
+    recUids = new Set(); pendingServerGap = null;
+    selected = new Set(stripped.map((s) => s._uid)); lastUid = stripped.length ? stripped[0]._uid : null;
+    renderSteps();
+    log('info', `녹화 완료: ${stripped.length} 스텝`);
   }
   function syncRecordButtons(st) {
-    const recing = !!(st && st.state === 'recording');
     const playing = !!(st && st.state === 'playing');
     stepsEl().querySelectorAll('.step.record-card').forEach((row) => {
       const uid = +row.dataset.uid;
       const go = row.querySelector('.rec-go'); if (!go) return;
-      const isMe = recing && recordingUid === uid;
-      go.textContent = isMe ? '■ 녹화 정지' : '● 녹화 시작';
+      const isMe = recordingUid === uid; // 우리 상태 기준(상태 브로드캐스트 지연과 무관)
+      go.textContent = isMe ? '■ 녹화 종료' : '● 녹화 시작';
       go.classList.toggle('active', isMe);
-      go.disabled = playing || (recing && !isMe);
+      go.disabled = playing || (recordingUid != null && !isMe);
+      const status = row.querySelector('.rec-go-status');
+      if (status) status.textContent = isMe ? '기록 중…' : '';
     });
   }
 
@@ -502,12 +558,12 @@ export function createEditor({ log, onSaved, getStatus }) {
     switch (type) {
       case 'input-down': return [{ delayBeforeMs: 0, event: km.kbEventsFromKey('KeyA', 'down')[0] }];
       case 'input-up': return [{ delayBeforeMs: 0, event: km.kbEventsFromKey('KeyA', 'up')[0] }];
-      case 'delay': return [{ delayBeforeMs: 100, event: { '$type': 'delay' } }];
+      case 'delay': return [{ delayBeforeMs: 100, event: { '$type': 'delay', randomizePercent: 0 } }];
       case 'text': return [{ delayBeforeMs: 0, event: { '$type': 'text', text: '', perKeyDelayMs: 0 } }];
       case 'loop': return [
         { delayBeforeMs: 0, event: km.loopStartEvent(2) },
         { delayBeforeMs: 0, event: km.loopEndEvent() }];
-      case 'record': return [{ delayBeforeMs: 0, event: { '$type': 'record', durationSec: 0, delayMode: 'record', fixedMs: 50, countdown: true, targets: { keyboard: true, mouseButtons: true, mouseMove: false, mouseWheel: true, gamepad: false } } }];
+      case 'record': return [{ delayBeforeMs: 0, event: { '$type': 'record', delayMode: 'record', fixedMs: 50, targets: { keyboard: true, mouseButtons: true, mouseMove: false, mouseWheel: true, gamepad: false } } }];
       default: return [];
     }
   }
@@ -792,7 +848,7 @@ export function createEditor({ log, onSaved, getStatus }) {
     const mode = getSeg($('seg-repeat'));
     editing.loopCount = mode === 'inf' ? 0 : mode === 'once' ? 1 : (parseInt($('ed-loop').value, 10) || 1);
     editing.speedMultiplier = parseFloat($('ed-speed').value) || 1.0;
-    editing.randomizeDelayPercent = parseInt($('ed-random').value, 10) || 0;
+    // 휴머나이즈는 각 '지연' 블록(event.randomizePercent)에 개별 저장 — 전역 값 없음
     // _uid는 직렬화에서 제외, 녹화하기 카드(record)는 저장 대상 아님
     return { ...editing, steps: editing.steps.filter((s) => s.event['$type'] !== 'record').map((s) => ({ delayBeforeMs: s.delayBeforeMs || 0, event: s.event })) };
   }
@@ -831,7 +887,6 @@ export function createEditor({ log, onSaved, getStatus }) {
   $('seg-repeat').querySelectorAll('.seg-btn').forEach((b) => b.onclick = () => { setSeg($('seg-repeat'), b.dataset.val); syncLoopInput(); });
   $('ed-loop').onchange = () => { if (parseInt($('ed-loop').value, 10) < 1) $('ed-loop').value = 1; };
   $('ed-speed').oninput = () => { $('ed-speed-val').textContent = parseFloat($('ed-speed').value).toFixed(1) + 'x'; };
-  $('ed-random').oninput = () => { $('ed-random-val').textContent = $('ed-random').value + '%'; };
   $('btn-save').onclick = save;
   $('btn-cancel').onclick = close;
   $('btn-play').onclick = play;
@@ -927,5 +982,5 @@ export function createEditor({ log, onSaved, getStatus }) {
     log('info', '트리거 설정: ' + hk.value);
   }
 
-  return { open, close, isOpen, current, onStatus, onInputDetected };
+  return { open, close, isOpen, current, onStatus, onInputDetected, onRecordedStep };
 }

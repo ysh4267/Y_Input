@@ -29,7 +29,7 @@ export const api = {
   deleteMacro: (id) => request('DELETE', `/api/macros/${id}`),
 
   recordStart: (options) => request('POST', '/api/record/start', options || {}),
-  recordStop: (name) => request('POST', '/api/record/stop', { name }),
+  recordStop: (name, persist = true) => request('POST', '/api/record/stop', { name, persist }),
   play: (id) => request('POST', `/api/play/${id}`),
   stop: () => request('POST', '/api/stop'),
 

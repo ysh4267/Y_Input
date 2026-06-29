@@ -174,8 +174,9 @@ input[type=range] { accent-color: var(--accent); }
 /* 스텝 리스트 — 좌측 정렬 카드 + 우측 세트 브래킷 */
 .steps-wrap { min-width: 0; display: flex; flex-direction: column; }
 .steps-head { display: none; } /* 카드 레이아웃에서는 열 헤더 숨김 */
-.step { display: grid; grid-template-columns: 40px 84px 300px 56px; align-items: center; gap: 8px; padding: 8px 12px; width: fit-content; }
-.steps { flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 10px 24px; max-height: 52vh; overflow-y: auto; min-height: 160px; position: relative; }
+/* 카드를 좌우로 넓게(녹화 카드처럼) — 우측은 세트 브래킷용 여백 확보 */
+.step { display: grid; grid-template-columns: 40px 84px minmax(220px, 1fr) 56px; align-items: center; gap: 8px; padding: 8px 12px; width: auto; max-width: 760px; }
+.steps { flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 10px 84px 10px 24px; max-height: 52vh; overflow-y: auto; min-height: 160px; position: relative; }
 .steps-empty { margin: 2px 0; padding: 44px 16px; text-align: center; color: var(--muted); font-size: 13px; border: 2px dashed var(--border2); border-radius: 12px; }
 .marquee { position: absolute; border: 1px solid var(--accent); background: rgba(79,140,255,.12); pointer-events: none; z-index: 5; border-radius: 3px; }
 .drop-line { position: absolute; left: 12px; right: 12px; height: 2px; background: var(--accent); border-radius: 1px; box-shadow: 0 0 6px var(--accent); pointer-events: none; z-index: 6; }
@@ -248,14 +249,21 @@ input[type=range] { accent-color: var(--accent); }
 /* 녹화하기 카드(3줄 패널) */
 .type-record { background: rgba(255,84,112,.16); color: var(--rec); }
 .pal-record .pal-ico { font-size: 11px; }
-.step.record-card { display: flex; flex-direction: column; align-items: stretch; gap: 9px; width: auto; align-self: stretch; max-width: 720px; cursor: default; padding: 12px 14px; border-color: rgba(255,84,112,.5); background: rgba(255,84,112,.06); }
+.step.record-card { display: flex; flex-direction: column; align-items: stretch; gap: 9px; width: auto; align-self: stretch; max-width: 760px; cursor: default; padding: 12px 14px; border-color: rgba(255,84,112,.5); background: rgba(255,84,112,.06); }
 .step.record-card:hover { background: rgba(255,84,112,.09); }
 .step.record-card.sel { background: rgba(79,140,255,.14); }
 .record-card .rec-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .record-card .rec-spacer { flex: 1; min-width: 8px; }
-.record-card .rec-dur { width: 60px; }
 .record-card .rec-go { min-width: 108px; }
 .record-card .rec-go-status { min-width: 22px; color: var(--warn); font-weight: 700; }
+
+/* 녹화 중 '측정 중' 지연 카드(실시간으로 흐른 시간 표시) */
+.step.rec-ticking { border-style: dashed; border-color: var(--accent); background: rgba(79,140,255,.07); }
+.step.rec-ticking .rec-tick-val { font-family: Consolas, monospace; font-weight: 700; color: var(--accent); animation: pulse 1.1s infinite; }
+
+/* 개별 지연 휴머나이즈 슬라이더 */
+.rec-humanize { width: 92px; accent-color: var(--accent); vertical-align: middle; }
+.step-detail .hz-val { font-size: 11px; color: var(--muted); min-width: 30px; font-variant-numeric: tabular-nums; }
 
 .footer { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 9px 18px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
 .footer code { color: var(--text); }

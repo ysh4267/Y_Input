@@ -103,6 +103,9 @@ public sealed class TextEvent : InputEvent
 /// </summary>
 public sealed class DelayEvent : InputEvent
 {
+    /// <summary>이 지연에만 적용되는 휴머나이즈(±%) 무작위 흔들림(0=없음). 재생 시 Player가 사용.</summary>
+    public int RandomizePercent { get; set; } = 0;
+
     [JsonIgnore]
     public override string Summary => "Wait";
 }

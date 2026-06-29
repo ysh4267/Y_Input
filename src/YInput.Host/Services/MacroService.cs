@@ -69,7 +69,8 @@ public sealed class MacroService
             _hub.Broadcast("progress", new { loop = p.Loop, stepIndex = p.StepIndex, stepCount = p.StepCount });
         _player.Failed += (_, ex) => Log("error", "재생 오류: " + ex.Message);
         _recorder.StepRecorded += (_, step) =>
-            _hub.Broadcast("recordedStep", new { summary = step.Event.Summary, delayBeforeMs = step.DelayBeforeMs });
+            // 실시간 카드 렌더용으로 전체 이벤트(@event)도 함께 보냄($type 포함 직렬화).
+            _hub.Broadcast("recordedStep", new { summary = step.Event.Summary, delayBeforeMs = step.DelayBeforeMs, @event = step.Event });
 
         ReloadHotkeys();
     }
@@ -125,7 +126,8 @@ public sealed class MacroService
         BroadcastStatus();
     }
 
-    public Macro StopRecording(string? name)
+    /// <summary>녹화 종료. persist=false면 라이브러리에 저장하지 않고 매크로만 반환(편집기 '녹화하기' 카드용).</summary>
+    public Macro StopRecording(string? name, bool persist = true)
     {
         Macro macro;
         lock (_gate)
@@ -134,11 +136,11 @@ public sealed class MacroService
                 throw new InvalidOperationException("녹화 중이 아닙니다.");
             var finalName = string.IsNullOrWhiteSpace(name) ? $"매크로 {DateTime.Now:MMdd-HHmmss}" : name!.Trim();
             macro = _recorder.Stop(finalName);
-            _library.Save(macro);
+            if (persist) _library.Save(macro);
             _state = AppState.Idle;
         }
         ReloadHotkeys();
-        Log("info", $"녹화 저장: {macro.Name} ({macro.Steps.Count} 스텝)");
+        Log("info", persist ? $"녹화 저장: {macro.Name} ({macro.Steps.Count} 스텝)" : $"녹화 종료 ({macro.Steps.Count} 스텝)");
         BroadcastStatus();
         return macro;
     }

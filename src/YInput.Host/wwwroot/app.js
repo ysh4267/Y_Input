@@ -123,7 +123,7 @@ function connectWs() {
     switch (msg.type) {
       case 'status': renderStatus(msg.data); break;
       case 'log': log(msg.data.level, msg.data.message, msg.data.time); break;
-      case 'recordedStep': log('step', `+ ${msg.data.summary} (${Math.round(msg.data.delayBeforeMs)}ms)`); break;
+      case 'recordedStep': editor.onRecordedStep(msg.data); break;
       case 'progress': showProgress(msg.data); break;
       case 'inputDetected': editor.onInputDetected(msg.data); break;
       case 'inputMonitor': log('monitor', `[${msg.data.source}] ${msg.data.label}`, msg.data.time); break;

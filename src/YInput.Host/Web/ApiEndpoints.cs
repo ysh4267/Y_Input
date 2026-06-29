@@ -79,7 +79,7 @@ public static class ApiEndpoints
 
         app.MapPost("/api/record/stop", (StopRecordingBody? body) => Guard(() =>
         {
-            var macro = service.StopRecording(body?.Name);
+            var macro = service.StopRecording(body?.Name, body?.Persist ?? true);
             return Task.FromResult(Json(macro));
         }));
 
@@ -212,7 +212,7 @@ public static class ApiEndpoints
         catch (Exception ex) { return Results.Json(new { error = ex.Message }, statusCode: 500); }
     }
 
-    private sealed record StopRecordingBody(string? Name);
+    private sealed record StopRecordingBody(string? Name, bool Persist = true);
     private sealed record GamepadSendBody(string Control, int Value);
     private sealed record RecordStartBody(
         bool Keyboard = true,
