@@ -1,6 +1,5 @@
 import { api } from './api.js';
 import * as km from './keymap.js';
-import { promptDialog } from './ui.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -36,6 +35,7 @@ export function createEditor({ log, onSaved, getStatus }) {
   let marquee = null;
   let draggingUids = new Set();
   let stepCapture = null;     // 게임패드 캡처 라우팅 콜백
+  let dropLine = null;        // 팔레트 드롭 위치 표시선
 
   // 클립보드·언두
   let clipboard = [];
@@ -110,7 +110,7 @@ export function createEditor({ log, onSaved, getStatus }) {
     if (!editing.steps.length) {
       const empty = document.createElement('div');
       empty.className = 'steps-empty';
-      empty.textContent = '스텝이 없습니다 — 왼쪽 “동작”을 끌어다 놓거나 클릭해 추가하세요.';
+      empty.textContent = '왼쪽 “동작”을 여기로 끌어다 놓거나 클릭해 추가하세요';
       wrap.appendChild(empty);
     } else {
       editing.steps.forEach((step, i) => wrap.appendChild(buildRow(step, i)));
@@ -233,15 +233,6 @@ export function createEditor({ log, onSaved, getStatus }) {
 
     row.appendChild(act); // 복제/삭제 — 카드 우측 끝
 
-    // 팔레트 드롭(HTML5) — 이 행 위치에 삽입
-    row.addEventListener('dragover', (e) => { if (dragType) { e.preventDefault(); row.classList.add('dragover'); } });
-    row.addEventListener('dragleave', () => row.classList.remove('dragover'));
-    row.addEventListener('drop', (e) => {
-      row.classList.remove('dragover');
-      if (!dragType) return;
-      e.preventDefault(); e.stopPropagation();
-      insertTypeAt(dragType, i); dragType = null;
-    });
     return row;
   }
 
@@ -417,10 +408,6 @@ export function createEditor({ log, onSaved, getStatus }) {
   }
 
   // ---------- 일괄/이동 ----------
-  function delayTargets() {
-    const idxs = selected.size ? selIdxs() : editing.steps.map((_, i) => i);
-    return idxs.filter((i) => editing.steps[i].event['$type'] === 'delay');
-  }
   function duplicateSel() {
     const s = selIdxs(); if (!s.length) return;
     pushUndo();
@@ -447,23 +434,15 @@ export function createEditor({ log, onSaved, getStatus }) {
     renderSteps();
     playFlip(before);
   }
-  async function bulkSet() {
-    const tgt = delayTargets();
-    if (!tgt.length) { log('warn', '선택에 ‘지연’ 블록이 없습니다.'); return; }
-    const v = await promptDialog('지연(ms) 값 (선택한 지연 블록에 적용):', '50', { title: '지연 설정' });
-    if (v === null) return;
-    const ms = parseFloat(v); if (isNaN(ms)) return;
+  // 좌측 ‘지연’ 팔레트와 동일한 지연 블록을 선택 위(before)/아래(after)에 추가
+  function addDelay(after) {
+    const idxs = selIdxs(); if (!idxs.length) return;
     pushUndo();
-    tgt.forEach((i) => editing.steps[i].delayBeforeMs = Math.max(0, ms)); renderSteps();
-  }
-  async function bulkScale() {
-    const tgt = delayTargets();
-    if (!tgt.length) { log('warn', '선택에 ‘지연’ 블록이 없습니다.'); return; }
-    const v = await promptDialog('지연 배율(예: 0.5=절반, 2=두배):', '1', { title: '지연 배율' });
-    if (v === null) return;
-    const f = parseFloat(v); if (isNaN(f) || f <= 0) return;
-    pushUndo();
-    tgt.forEach((i) => editing.steps[i].delayBeforeMs = Math.round((editing.steps[i].delayBeforeMs || 0) * f)); renderSteps();
+    const at = after ? Math.max(...idxs) + 1 : Math.min(...idxs);
+    const d = tagUids(makeSteps('delay'))[0];
+    editing.steps.splice(at, 0, d);
+    selectOnly(d._uid);
+    renderSteps();
   }
 
   // ---------- 클립보드 ----------
@@ -583,7 +562,7 @@ export function createEditor({ log, onSaved, getStatus }) {
     let target = null;
     for (const c of cards) {
       const r = c.getBoundingClientRect();
-      if (pointerY < r.top + r.height / 2) { target = c; break; }
+      if (pointerY < r.top + r.height * 0.8) { target = c; break; } // 더 일찍 비키게
     }
     if (target === drag.placeholder) return;
     const before = captureRectsOf(cards.concat(drag.placeholder));
@@ -607,6 +586,28 @@ export function createEditor({ log, onSaved, getStatus }) {
     d.placeholder.remove();
     renderSteps();
   }
+
+  // 팔레트 드롭: 우측 영역 어디든 커서 높이로 삽입 위치 계산 + 표시선
+  function paletteIndexAt(clientY) {
+    const cards = [...stepsEl().querySelectorAll('.step')];
+    for (let i = 0; i < cards.length; i++) {
+      const r = cards[i].getBoundingClientRect();
+      if (clientY < r.top + r.height * 0.8) return i;
+    }
+    return cards.length;
+  }
+  function showDropLine(idx) {
+    const wrap = stepsEl();
+    if (!dropLine) { dropLine = document.createElement('div'); dropLine.className = 'drop-line'; }
+    if (dropLine.parentElement !== wrap) wrap.appendChild(dropLine);
+    const cards = [...wrap.querySelectorAll('.step')];
+    let y;
+    if (!cards.length) y = 18;
+    else if (idx >= cards.length) { const last = cards[cards.length - 1]; y = last.offsetTop + last.offsetHeight + 4; }
+    else y = cards[idx].offsetTop - 5;
+    dropLine.style.top = y + 'px';
+  }
+  function removeDropLine() { if (dropLine) { dropLine.remove(); dropLine = null; } }
 
   function startMarquee(e) {
     const add = e.ctrlKey || e.metaKey || e.shiftKey;
@@ -695,14 +696,17 @@ export function createEditor({ log, onSaved, getStatus }) {
     const type = el.dataset.type;
     el.onclick = () => (type === 'loop' ? insertLoop() : insert(type));
     el.addEventListener('dragstart', (e) => { dragType = type; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', 'add:' + type); el.classList.add('dragging'); });
-    el.addEventListener('dragend', () => { dragType = null; el.classList.remove('dragging'); });
+    el.addEventListener('dragend', () => { dragType = null; el.classList.remove('dragging'); removeDropLine(); });
   });
-  // 빈 영역에 팔레트 드롭 → 맨 뒤에 추가
-  stepsEl().addEventListener('dragover', (e) => { if (dragType) e.preventDefault(); });
+  // 팔레트 드롭: 리스트 우측 영역 전체에서 커서 높이 위치에 삽입(드롭선 표시)
+  stepsEl().addEventListener('dragover', (e) => { if (!dragType) return; e.preventDefault(); showDropLine(paletteIndexAt(e.clientY)); });
   stepsEl().addEventListener('drop', (e) => {
-    if (!dragType || e.target.closest('.step')) return;
-    e.preventDefault(); insertTypeAt(dragType, editing.steps.length); dragType = null;
+    if (!dragType) return;
+    e.preventDefault();
+    const idx = paletteIndexAt(e.clientY); removeDropLine();
+    insertTypeAt(dragType, idx); dragType = null;
   });
+  stepsEl().addEventListener('dragleave', (e) => { if (e.target === stepsEl()) removeDropLine(); });
   // 포인터 드래그/마퀴 — 행 어디를 잡아도(입력칸 제외) 이동, 빈 곳은 박스 선택
   stepsEl().addEventListener('pointerdown', onPointerDown);
 
@@ -711,8 +715,8 @@ export function createEditor({ log, onSaved, getStatus }) {
   $('btn-del').onclick = deleteSel;
   $('btn-up').onclick = () => moveSel(-1);
   $('btn-down').onclick = () => moveSel(+1);
-  $('btn-bulk-set').onclick = bulkSet;
-  $('btn-bulk-scale').onclick = bulkScale;
+  $('btn-delay-before').onclick = () => addDelay(false);
+  $('btn-delay-after').onclick = () => addDelay(true);
   $('btn-selclear').onclick = () => { selected = new Set(); applySel(); };
 
   // 클립보드(Ctrl+C/X/V) + 언두/리두(Ctrl+Z / Ctrl+Shift+Z·Ctrl+Y) — 입력칸 포커스 시 네이티브 양보

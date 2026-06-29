@@ -40,7 +40,6 @@
         <div class="card-head">
           <h2>매크로</h2>
           <div class="row">
-            <button id="btn-record" class="btn rec sm">● 녹화</button>
             <button id="btn-new" class="btn ghost sm">+ 새로</button>
           </div>
         </div>
@@ -147,25 +146,20 @@
           </div>
         </div>
 
-        <!-- 스텝 툴바 -->
+        <!-- 스텝 툴바: 선택 시 액션바(좌) + 전체 선택(우, 항상) -->
         <div class="steps-toolbar">
-          <span class="muted thint">← 왼쪽 “동작”을 끌어다 놓거나 클릭해 추가</span>
+          <div id="sel-bar" class="sel-bar" hidden>
+            <span class="sel-count"><b id="sel-count">0</b>개 선택</span>
+            <button id="btn-dup" class="btn ghost sm">⎘ 복제</button>
+            <button id="btn-up" class="btn ghost sm">↑ 위로</button>
+            <button id="btn-down" class="btn ghost sm">↓ 아래로</button>
+            <button id="btn-delay-before" class="btn ghost sm">＋이전 지연</button>
+            <button id="btn-delay-after" class="btn ghost sm">＋이후 지연</button>
+            <button id="btn-del" class="btn ghost sm danger">✕ 삭제</button>
+            <button id="btn-selclear" class="btn ghost sm">선택 해제</button>
+          </div>
           <div class="spacer"></div>
           <button id="btn-selall" class="btn ghost sm">전체 선택</button>
-        </div>
-
-        <!-- 선택 액션바 -->
-        <div id="sel-bar" class="sel-bar" hidden>
-          <span class="sel-count"><b id="sel-count">0</b>개 선택</span>
-          <span class="sep"></span>
-          <button id="btn-dup" class="btn ghost sm">⎘ 복제</button>
-          <button id="btn-up" class="btn ghost sm">↑ 위로</button>
-          <button id="btn-down" class="btn ghost sm">↓ 아래로</button>
-          <button id="btn-bulk-set" class="btn ghost sm">지연 설정</button>
-          <button id="btn-bulk-scale" class="btn ghost sm">지연 배율</button>
-          <span class="spacer"></span>
-          <button id="btn-del" class="btn ghost sm danger">✕ 삭제</button>
-          <button id="btn-selclear" class="btn ghost sm">선택 해제</button>
         </div>
 
         <!-- 동작 팔레트(좌) + 스텝 리스트(우) -->

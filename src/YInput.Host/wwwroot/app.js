@@ -50,8 +50,6 @@ function renderStatus(s) {
   $('btn-pad-connect').disabled = !b.gamepadAvailable || b.gamepadConnected;
   $('btn-pad-disconnect').disabled = !b.gamepadConnected;
   $('btn-pad-test').disabled = !b.gamepadConnected;
-  $('btn-record').classList.toggle('active', s.state === 'recording');
-  $('btn-record').textContent = s.state === 'recording' ? '■ 정지' : '● 녹화';
   $('btn-monitor').classList.toggle('active', !!s.monitoring);
   $('btn-monitor').textContent = s.monitoring ? '■ 모니터 끄기' : '입력 모니터';
 
@@ -162,11 +160,6 @@ function showProgress(p) {
 // ---------- 사이드바 와이어링 ----------
 function wire() {
   $('btn-new').onclick = () => editor.open(null);
-  $('btn-record').onclick = () => {
-    if (state.status?.state === 'recording') { recorder.stop(); return; }
-    editor.open(null);
-    recorder.start();
-  };
   $('btn-clear-log').onclick = () => { $('log').innerHTML = ''; };
   $('btn-monitor').onclick = async () => {
     try { if (state.status?.monitoring) await api.monitorOff(); else await api.monitorOn(); }

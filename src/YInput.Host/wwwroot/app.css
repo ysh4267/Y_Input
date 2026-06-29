@@ -111,7 +111,7 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 /* 헤더 */
 .editor-head { display: flex; align-items: flex-start; gap: 12px; }
 .editor-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-.ed-name { background: var(--bg); border: 1px solid var(--border); border-radius: 9px; color: var(--text); padding: 10px 14px; font-size: 18px; font-weight: 700; }
+.ed-name { background: var(--bg); border: 1px solid var(--border); border-radius: 9px; color: var(--text); padding: 15px 16px; font-size: 19px; font-weight: 700; }
 .ed-name:focus { outline: none; border-color: var(--accent); }
 .editor-sub { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); padding-left: 2px; }
 .editor-sub b { color: var(--text); font-weight: 600; }
@@ -154,11 +154,10 @@ input[type=range] { accent-color: var(--accent); }
 .steps-toolbar .spacer { flex: 1; }
 
 /* 선택 액션바 */
-.sel-bar { display: flex; align-items: center; gap: 8px; background: rgba(79,140,255,.10); border: 1px solid var(--accent); border-radius: 10px; padding: 7px 12px; flex-wrap: wrap; }
-.sel-bar .sel-count { font-size: 13px; }
+.sel-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sel-bar[hidden] { display: none; }
+.sel-bar .sel-count { font-size: 12.5px; color: var(--muted); margin-right: 2px; }
 .sel-bar .sel-count b { color: var(--accent); }
-.sel-bar .sep { width: 1px; height: 18px; background: var(--border2); }
-.sel-bar .spacer { flex: 1; }
 
 /* 동작 팔레트(좌) + 리스트(우) */
 .editor-body { display: grid; grid-template-columns: 264px 1fr; gap: 20px; align-items: start; }
@@ -177,8 +176,9 @@ input[type=range] { accent-color: var(--accent); }
 .steps-head { display: none; } /* 카드 레이아웃에서는 열 헤더 숨김 */
 .step { display: grid; grid-template-columns: 40px 84px 300px 56px; align-items: center; gap: 8px; padding: 8px 12px; width: fit-content; }
 .steps { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 10px 24px; max-height: 52vh; overflow-y: auto; min-height: 72px; position: relative; }
-.steps-empty { padding: 30px 16px; text-align: center; color: var(--muted); font-size: 13px; }
+.steps-empty { margin: 2px 0; padding: 44px 16px; text-align: center; color: var(--muted); font-size: 13px; border: 2px dashed var(--border2); border-radius: 12px; }
 .marquee { position: absolute; border: 1px solid var(--accent); background: rgba(79,140,255,.12); pointer-events: none; z-index: 5; border-radius: 3px; }
+.drop-line { position: absolute; left: 12px; right: 12px; height: 2px; background: var(--accent); border-radius: 1px; box-shadow: 0 0 6px var(--accent); pointer-events: none; z-index: 6; }
 
 /* 키 Down↔Up 한 세트 — 카드 밖 우측 ']'(뒤집어진 ㄷ) 브래킷 */
 .pair-h { position: absolute; height: 2px; border-radius: 1px; pointer-events: none; }
