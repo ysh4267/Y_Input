@@ -161,35 +161,33 @@ input[type=range] { accent-color: var(--accent); }
 .sel-bar .spacer { flex: 1; }
 
 /* 동작 팔레트(좌) + 리스트(우) */
-.editor-body { display: grid; grid-template-columns: 178px 1fr; gap: 12px; align-items: start; }
+.editor-body { display: grid; grid-template-columns: 210px 1fr; gap: 18px; align-items: start; }
 @media (max-width: 760px) { .editor-body { grid-template-columns: 1fr; } }
-.palette { display: flex; flex-direction: column; gap: 6px; background: var(--card2); border: 1px solid var(--border); border-radius: 11px; padding: 10px; }
+.palette { display: flex; flex-direction: column; gap: 8px; background: var(--card2); border: 1px solid var(--border); border-radius: 11px; padding: 14px; }
 .palette-title { font-size: 11.5px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .4px; margin: 2px 2px 4px; }
-.pal-item { display: flex; align-items: center; gap: 8px; text-align: left; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 7px 9px; font-size: 13px; font-weight: 600; cursor: grab; }
+.pal-item { display: flex; align-items: center; gap: 8px; text-align: left; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 9px 13px; font-size: 13px; font-weight: 600; cursor: grab; }
 .pal-item:hover { border-color: var(--accent); background: var(--card3); }
 .pal-item:active { cursor: grabbing; }
 .pal-item.dragging { opacity: .5; }
 .pal-ico { width: 24px; height: 24px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0; }
 .pal-sub { margin-left: auto; font-size: 10px; color: var(--muted); font-weight: 600; }
 
-/* 스텝 리스트(타임라인) */
-.steps-wrap { border: 1px solid var(--border); border-radius: 11px; overflow: hidden; }
-.steps-head, .step { display: grid; grid-template-columns: 58px 40px 84px minmax(180px, 360px) minmax(90px, 1fr); align-items: center; gap: 8px; padding: 7px 12px; }
-.sh-pair { padding-left: 4px; }
-.steps-head { background: var(--card2); border-bottom: 1px solid var(--border); font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
-.steps { max-height: 48vh; overflow-y: auto; min-height: 72px; position: relative; }
+/* 스텝 리스트 — 좌측 정렬 카드 + 우측 세트 브래킷 */
+.steps-wrap { min-width: 0; }
+.steps-head { display: none; } /* 카드 레이아웃에서는 열 헤더 숨김 */
+.step { display: grid; grid-template-columns: 58px 40px 84px 300px; align-items: center; gap: 8px; padding: 8px 12px; width: fit-content; }
+.steps { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; max-height: 52vh; overflow-y: auto; min-height: 72px; position: relative; }
 .steps-empty { padding: 30px 16px; text-align: center; color: var(--muted); font-size: 13px; }
 .marquee { position: absolute; border: 1px solid var(--accent); background: rgba(79,140,255,.12); pointer-events: none; z-index: 5; border-radius: 3px; }
 
-/* 키 누름↔뗌 한 세트 연결선(좌측 거터) */
-.step-pair { align-self: stretch; position: relative; }
-.pair-seg { position: absolute; width: 2px; border-radius: 1px; }
-.pair-node { position: absolute; top: 50%; width: 7px; height: 7px; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 2px var(--card); }
-.step { border-bottom: 1px solid var(--border); background: var(--card); transition: background .1s; cursor: grab; }
+/* 키 Down↔Up 한 세트 — 카드 밖 우측 ']'(뒤집어진 ㄷ) 브래킷 */
+.pair-h { position: absolute; height: 2px; border-radius: 1px; pointer-events: none; }
+.pair-v { position: absolute; width: 2px; border-radius: 1px; pointer-events: none; }
+.pair-node { position: absolute; width: 7px; height: 7px; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 2px var(--bg); pointer-events: none; }
+.step { border: 1px solid var(--border2); border-radius: 10px; background: var(--card); transition: background .1s; cursor: grab; }
 .step:active { cursor: grabbing; }
 .step input, .step textarea { cursor: text; }
 .step select, .step button, .step .keycap, .step .dir-badge, .step label { cursor: pointer; }
-.step:last-child { border-bottom: none; }
 .step:hover { background: var(--card2); }
 .step.sel { background: rgba(79,140,255,.12); }
 .step.sel:hover { background: rgba(79,140,255,.16); }

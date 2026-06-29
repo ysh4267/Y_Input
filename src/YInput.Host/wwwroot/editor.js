@@ -135,9 +135,11 @@ export function createEditor({ log, onSaved, getStatus }) {
     });
   }
 
-  // 키 Down↔Up 같은 키끼리 스택 매칭 → 우측 트랙 한 세트 연결선
+  // 키 Down↔Up 같은 키끼리 스택 매칭 → 카드 밖 우측 ']'(뒤집어진 ㄷ) 브래킷
   function renderPairLines() {
-    const gutters = [...stepsEl().querySelectorAll('.step .step-pair')];
+    if (draggingUids.size) return; // 드래그 중엔 생략(드롭 후 재렌더로 다시 그림)
+    const wrap = stepsEl();
+    const rows = [...wrap.querySelectorAll('.step')];
     const stack = [], pairs = [];
     editing.steps.forEach((s, i) => {
       const ev = s.event;
@@ -156,23 +158,21 @@ export function createEditor({ log, onSaved, getStatus }) {
       p.lane = Math.min(lane, 7);
     });
     const COLORS = ['#6b8cff', '#34d399', '#c084fc', '#f0a93b', '#f472b6'];
+    const hline = (x, y, w, color) => { const d = document.createElement('div'); d.className = 'pair-h'; d.style.left = x + 'px'; d.style.top = (y - 1) + 'px'; d.style.width = w + 'px'; d.style.background = color; wrap.appendChild(d); };
+    const vline = (x, y, h, color) => { const d = document.createElement('div'); d.className = 'pair-v'; d.style.left = x + 'px'; d.style.top = y + 'px'; d.style.height = h + 'px'; d.style.background = color; wrap.appendChild(d); };
+    const node = (x, y, color) => { const d = document.createElement('div'); d.className = 'pair-node'; d.style.left = x + 'px'; d.style.top = y + 'px'; d.style.background = color; wrap.appendChild(d); };
     pairs.forEach((p, pi) => {
+      const cd = rows[p.down], cu = rows[p.up];
+      if (!cd || !cu) return;
       const color = COLORS[pi % COLORS.length];
-      const x = 10 + p.lane * 16;
-      for (let i = p.down; i <= p.up; i++) {
-        const g = gutters[i]; if (!g) continue;
-        const seg = document.createElement('div');
-        seg.className = 'pair-seg'; seg.style.left = x + 'px'; seg.style.background = color;
-        if (i === p.down) { seg.style.top = '50%'; seg.style.bottom = '-8px'; }
-        else if (i === p.up) { seg.style.top = '-8px'; seg.style.bottom = '50%'; }
-        else { seg.style.top = '-8px'; seg.style.bottom = '-8px'; }
-        g.appendChild(seg);
-        if (i === p.down || i === p.up) {
-          const node = document.createElement('div');
-          node.className = 'pair-node'; node.style.left = (x + 1) + 'px'; node.style.background = color;
-          g.appendChild(node);
-        }
-      }
+      const cardRight = cd.offsetLeft + cd.offsetWidth;
+      const bx = cardRight + 8 + p.lane * 14;        // 브래킷 세로선 x
+      const dY = cd.offsetTop + cd.offsetHeight / 2;
+      const uY = cu.offsetTop + cu.offsetHeight / 2;
+      vline(bx, Math.min(dY, uY), Math.abs(uY - dY), color);    // 세로
+      hline(cardRight, dY, bx - cardRight + 2, color);          // down 가로 스텁
+      hline(cardRight, uY, bx - cardRight + 2, color);          // up 가로 스텁
+      node(cardRight, dY, color); node(cardRight, uY, color);   // 카드 우변 노드
     });
   }
 
@@ -202,9 +202,6 @@ export function createEditor({ log, onSaved, getStatus }) {
     // 동작(인라인 편집)
     const detail = document.createElement('div'); detail.className = 'step-detail';
     buildDetail(detail, step); row.appendChild(detail);
-
-    // 한 세트(키 Down↔Up) 연결선 트랙 — 우측
-    const pairCell = document.createElement('span'); pairCell.className = 'step-pair'; row.appendChild(pairCell);
 
     // 팔레트 드롭(HTML5) — 이 행 위치에 삽입
     row.addEventListener('dragover', (e) => { if (dragType) { e.preventDefault(); row.classList.add('dragover'); } });
