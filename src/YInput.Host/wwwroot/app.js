@@ -20,8 +20,6 @@ const ICON = {
   del: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.3H13.4"/><path d="M6.4 4.3V3.2A1.1 1.1 0 0 1 7.5 2.1H8.5A1.1 1.1 0 0 1 9.6 3.2V4.3"/><path d="M3.9 4.3 4.6 13A1.3 1.3 0 0 0 5.9 14.2H10.1A1.3 1.3 0 0 0 11.4 13L12.1 4.3"/><path d="M6.6 6.9V11.3M9.4 6.9V11.3"/></svg>',
   edit: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M11.4 2.3 13.7 4.6"/><path d="M10.6 3.1 3.4 10.3 2.4 13.6 5.7 12.6 12.9 5.4Z"/></svg>',
   trigger: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="4" width="13" height="8" rx="1.6"/><path d="M4 6.6h0M6.5 6.6h0M9 6.6h0M11.5 6.6h0M4.7 9.3h6.6"/></svg>',
-  export: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.3V10M5.2 7.2 8 10 10.8 7.2"/><path d="M2.6 11.4v1.3A1.3 1.3 0 0 0 3.9 14H12.1A1.3 1.3 0 0 0 13.4 12.7V11.4"/></svg>',
-  import: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10.2V2.5M5.2 5.3 8 2.5 10.8 5.3"/><path d="M2.6 11.4v1.3A1.3 1.3 0 0 0 3.9 14H12.1A1.3 1.3 0 0 0 13.4 12.7V11.4"/></svg>',
 };
 
 // ---------- 탭 ----------
@@ -138,7 +136,6 @@ function renderMacroList(listEl, emptyEl, mode) {
         <div class="macro-meta"><span class="name">${esc(m.name)}</span><span class="macro-sub">${sub}</span></div>
         <div class="macro-actions">
           <button class="mbtn act-dup" title="복제">${ICON.dup}</button>
-          <button class="mbtn act-export" title="JSON 내보내기">${ICON.export}</button>
           <button class="mbtn act-del" title="삭제">${ICON.del}</button>
         </div>`;
     }
@@ -148,7 +145,6 @@ function renderMacroList(listEl, emptyEl, mode) {
     };
     li.querySelector('.act-del').onclick = () => confirmDeleteInline(li, m.id);
     const dupBtn = li.querySelector('.act-dup'); if (dupBtn) dupBtn.onclick = () => duplicateMacro(m.id);
-    const expBtn = li.querySelector('.act-export'); if (expBtn) expBtn.onclick = () => exportMacro(m.id);
     if (mode === 'run') {
       const tg = li.querySelector('.act-toggle');
       tg.onchange = async () => {
@@ -347,32 +343,91 @@ async function duplicateMacro(id) {
   } catch (e) { log('error', e.message); }
 }
 
-// ---------- JSON 임포트/익스포트 ----------
-async function exportMacro(id) {
+// ---------- JSON 임포트/익스포트(좌측 메뉴) ----------
+const safeName = (name) => ((name || 'macro').replace(/[\\/:*?"<>|]/g, '_').trim()) || 'macro';
+function downloadJson(text, filename) {
+  const blob = new Blob([text], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+// 내보내기 팝업 — 매크로 여러 개 선택 후 한 번에 내보내기
+function openExportModal() {
+  const macros = state.macros || [];
+  if (!macros.length) { log('info', '내보낼 매크로가 없습니다.'); return; }
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-title">매크로 내보내기</div>
+      <div class="export-tools">
+        <label class="export-all"><input type="checkbox" id="exp-all"> 전체 선택</label>
+        <span class="export-count" id="exp-count">0개 선택</span>
+      </div>
+      <div class="export-list" id="exp-list"></div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="exp-cancel" type="button">취소</button>
+        <button class="btn primary" id="exp-ok" type="button" disabled>내보내기</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const list = overlay.querySelector('#exp-list');
+  for (const m of macros) {
+    const row = document.createElement('label');
+    row.className = 'export-row';
+    row.innerHTML = `<input type="checkbox" value="${esc(m.id)}"><span class="ex-name"></span><span class="ex-sub"></span>`;
+    row.querySelector('.ex-name').textContent = m.name;
+    row.querySelector('.ex-sub').textContent = `${m.stepCount}스텝`;
+    list.appendChild(row);
+  }
+  const boxes = () => [...list.querySelectorAll('input[type=checkbox]')];
+  const upd = () => {
+    const all = boxes(); const n = all.filter((b) => b.checked).length;
+    overlay.querySelector('#exp-count').textContent = `${n}개 선택`;
+    overlay.querySelector('#exp-ok').disabled = n === 0;
+    const allBox = overlay.querySelector('#exp-all');
+    allBox.checked = n > 0 && n === all.length;
+    allBox.indeterminate = n > 0 && n < all.length;
+  };
+  list.addEventListener('change', upd);
+  overlay.querySelector('#exp-all').onchange = (e) => { boxes().forEach((b) => b.checked = e.target.checked); upd(); };
+  const close = () => overlay.remove();
+  overlay.querySelector('#exp-cancel').onclick = close;
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector('#exp-ok').onclick = async () => {
+    const ids = boxes().filter((b) => b.checked).map((b) => b.value);
+    close();
+    await exportMacros(ids);
+  };
+  upd();
+}
+async function exportMacros(ids) {
+  if (!ids.length) return;
   try {
-    const m = await api.getMacro(id);
-    const json = JSON.stringify(m, null, 2);
-    const safe = ((m.name || 'macro').replace(/[\\/:*?"<>|]/g, '_').trim()) || 'macro';
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `${safe}.json`;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    log('info', `내보냄: ${safe}.json`);
+    const macros = [];
+    for (const id of ids) macros.push(await api.getMacro(id));
+    if (macros.length === 1) downloadJson(JSON.stringify(macros[0], null, 2), safeName(macros[0].name) + '.json');
+    else downloadJson(JSON.stringify(macros, null, 2), `Y-Input-매크로-${macros.length}개.json`);
+    log('info', `${macros.length}개 매크로를 내보냈습니다.`);
   } catch (e) { log('error', e.message); }
 }
+// 가져오기 — 파일 여러 개 + 각 파일이 단일 매크로 또는 배열(번들) 모두 지원
 async function importMacros(fileList) {
   const files = [...(fileList || [])];
   if (!files.length) return;
   let ok = 0;
   for (const f of files) {
     try {
-      const m = JSON.parse(await f.text());
-      if (!m || !Array.isArray(m.steps)) throw new Error('매크로 형식이 아닙니다(steps 없음)');
-      const name = (m.name && String(m.name).trim()) || f.name.replace(/\.json$/i, '');
-      await api.createMacro({ ...m, id: '', name });
-      ok++;
+      const parsed = JSON.parse(await f.text());
+      const arr = Array.isArray(parsed) ? parsed : [parsed];
+      for (const m of arr) {
+        if (!m || !Array.isArray(m.steps)) { log('error', `가져오기 건너뜀(${f.name}): 매크로 형식 아님`); continue; }
+        const name = (m.name && String(m.name).trim()) || f.name.replace(/\.json$/i, '');
+        await api.createMacro({ ...m, id: '', name });
+        ok++;
+      }
     } catch (e) { log('error', `가져오기 실패(${f.name}): ${e.message}`); }
   }
   if (ok) { await loadMacros(); log('info', `${ok}개 매크로를 가져왔습니다.`); }
@@ -457,6 +512,7 @@ function wire() {
   $('btn-new-run').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-import').onclick = () => $('file-import').click();
   $('file-import').onchange = (e) => { importMacros(e.target.files); e.target.value = ''; };
+  $('btn-export').onclick = openExportModal;
   $('btn-clear-log').onclick = () => { $('log').innerHTML = ''; };
   $('btn-monitor').onclick = async () => {
     try { if (state.status?.monitoring) await api.monitorOff(); else await api.monitorOn(); }

@@ -56,11 +56,9 @@
             <div class="card-head">
               <h2>매크로</h2>
               <div class="row">
-                <button id="btn-import" class="btn ghost sm" title="JSON 파일에서 매크로 가져오기">가져오기</button>
                 <button id="btn-new" class="btn sm btn-new-macro">＋ 새 매크로 생성</button>
               </div>
             </div>
-            <input id="file-import" type="file" accept=".json,application/json" multiple hidden />
             <ul id="macro-list-edit" class="macro-list"></ul>
             <p id="macro-empty-edit" class="hint">저장된 매크로가 없습니다.</p>
           </div>
@@ -173,6 +171,15 @@
           <button id="btn-update-check" class="btn ghost sm">업데이트 확인</button>
           <button id="btn-update-apply" class="btn sm" disabled>업데이트 적용</button>
         </div>
+      </section>
+      <section class="drawer-sec">
+        <h3>매크로 가져오기 / 내보내기</h3>
+        <p class="hint">매크로를 JSON 파일로 저장하거나 불러옵니다(여러 개 한 번에 가능).</p>
+        <div class="row">
+          <button id="btn-import" class="btn ghost sm">가져오기</button>
+          <button id="btn-export" class="btn ghost sm">내보내기…</button>
+        </div>
+        <input id="file-import" type="file" accept=".json,application/json" multiple hidden />
       </section>
       <div class="drawer-foot">로컬 전용 · <code id="foot-url"></code></div>
     </aside>
