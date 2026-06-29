@@ -29,3 +29,6 @@ app.noadmin.manifest
 *.log
 Thumbs.db
 desktop.ini
+
+# 외부 매크로 원본(XML) — 로컬 보관만, 원격/히스토리에서 제외
+/macros/
