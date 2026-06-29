@@ -284,16 +284,18 @@ input[type=range] { accent-color: var(--accent); }
 .step input[type=range] { cursor: pointer; } /* 슬라이더는 텍스트 커서 아닌 손가락(포인터) */
 .step select, .step button, .step .keycap, .step .dir-badge, .step label { cursor: pointer; }
 .step:hover { background: var(--card2); }
-/* 틴트는 불투명 카드 색 위에 합성(see-through 방지) */
-.step.sel { background: linear-gradient(rgba(79,140,255,.18), rgba(79,140,255,.18)), var(--card); box-shadow: 0 0 0 2px #6ea8ff; } /* 선택: 카드 바깥 링(외곽에 그려 내부 레이아웃·크기 변동 0) */
-.step.sel:hover { background: linear-gradient(rgba(79,140,255,.24), rgba(79,140,255,.24)), var(--card2); }
+/* 틴트를 불투명 '단색(고정 hex)'으로 — linear-gradient(이미지)는 Windows Chromium에서
+   그 위 텍스트의 ClearType(서브픽셀 AA)을 꺼 글자가 가늘어/작아 보임. 단색 배경이면
+   선택/비선택 글자 렌더링이 완전히 동일. (값 = 각 틴트를 var(--card/2) 위에 미리 합성한 hex) */
+.step.sel { background: #222f4a; box-shadow: 0 0 0 2px #6ea8ff; } /* 선택: 단색 배경 + 카드 바깥 링(내부 레이아웃·글자 변동 0) */
+.step.sel:hover { background: #2b3c5f; }
 .step.dragover { box-shadow: inset 0 2px 0 var(--accent); }
 .step.dragging { background: var(--card3); }
-/* 반복(루프) 블록 — 연결은 카드 우측 ']' 브래킷(JS), 본문 카드 옅은 틴트(불투명) */
-.step.in-loop { background: linear-gradient(rgba(251,146,60,.07), rgba(251,146,60,.07)), var(--card); }
-.step.loop-marker { background: linear-gradient(rgba(251,146,60,.15), rgba(251,146,60,.15)), var(--card); }
-.step.loop-marker:hover { background: linear-gradient(rgba(251,146,60,.2), rgba(251,146,60,.2)), var(--card2); }
-.step.loop-marker.sel, .step.in-loop.sel { background: linear-gradient(rgba(79,140,255,.16), rgba(79,140,255,.16)), var(--card); }
+/* 반복(루프) 블록 — 연결은 카드 우측 ']' 브래킷(JS), 본문 카드 옅은 틴트(단색 고정) */
+.step.in-loop { background: #282324; }
+.step.loop-marker { background: #3a2d26; }
+.step.loop-marker:hover { background: #4b392f; }
+.step.loop-marker.sel, .step.in-loop.sel { background: #212d45; }
 
 /* 드래그 고스트(포인터에 붙음) + 빈 자리 placeholder */
 .step-ghost { position: fixed; z-index: 1000; pointer-events: none; opacity: 1; background: var(--card); border-color: var(--accent) !important; box-shadow: 0 10px 28px rgba(0,0,0,.45); }
@@ -348,9 +350,9 @@ input[type=range] { accent-color: var(--accent); }
 /* 녹화하기 카드(3줄 패널) */
 .type-record { background: rgba(255,84,112,.16); color: var(--rec); }
 .pal-record .pal-ico { font-size: 20px; line-height: 1; }
-.step.record-card { display: flex; flex-direction: column; align-items: stretch; gap: 9px; width: auto; align-self: stretch; max-width: 760px; cursor: default; padding: 12px 14px; border-color: rgba(255,84,112,.5); background: linear-gradient(rgba(255,84,112,.07), rgba(255,84,112,.07)), var(--card); }
-.step.record-card:hover { background: linear-gradient(rgba(255,84,112,.11), rgba(255,84,112,.11)), var(--card2); }
-.step.record-card.sel { background: linear-gradient(rgba(79,140,255,.16), rgba(79,140,255,.16)), var(--card); }
+.step.record-card { display: flex; flex-direction: column; align-items: stretch; gap: 9px; width: auto; align-self: stretch; max-width: 760px; cursor: default; padding: 12px 14px; border-color: rgba(255,84,112,.5); background: #281f27; }
+.step.record-card:hover { background: #382833; }
+.step.record-card.sel { background: #212d45; }
 .record-card .rec-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .record-card .rec-spacer { flex: 1; min-width: 8px; }
 .record-card .rec-go { min-width: 108px; }
