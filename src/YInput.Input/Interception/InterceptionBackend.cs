@@ -13,9 +13,14 @@ namespace YInput.Input.Interception;
 /// </summary>
 public sealed class InterceptionBackend : IDisposable
 {
+    /// <summary>우리가 주입한 스트로크 표식('YINP'). 트리거 감지는 이 표식이 없는 외부 입력만 받아
+    /// 매크로 자기 출력으로 트리거가 다시 발동(피드백/연쇄)되는 것을 막는다. LL 훅의 dwExtraInfo로 전달됨.</summary>
+    public const uint InjectMark = 0x59494E50;
+
     private KeyboardHook? _kbHook;
     private MouseHook? _mouseHook;
     private IntPtr _sendContext;   // 전송 전용 컨텍스트(캡처 수신 루프와 분리 → Send 데드락 방지)
+    private readonly object _sendGate = new(); // 동시 재생: 여러 매크로가 같은 컨텍스트로 전송 시 직렬화
     private volatile bool _capturing;
 
     /// <summary>드라이버가 설치되어 초기화에 성공했는지.</summary>
@@ -82,10 +87,10 @@ public sealed class InterceptionBackend : IDisposable
         EnsureKeyboard();
         var stroke = new Stroke
         {
-            Key = new KeyStroke { Code = (KeyCode)ke.Code, State = (KeyState)ke.State },
+            Key = new KeyStroke { Code = (KeyCode)ke.Code, State = (KeyState)ke.State, Information = InjectMark },
         };
         var ctx = _sendContext != IntPtr.Zero ? _sendContext : _kbHook!.Context;
-        InputInterceptor.Send(ctx, _kbHook!.Device, ref stroke, 1);
+        lock (_sendGate) InputInterceptor.Send(ctx, _kbHook!.Device, ref stroke, 1);
     }
 
     public void SendMouse(MouseEvent me)
@@ -100,10 +105,11 @@ public sealed class InterceptionBackend : IDisposable
                 Rolling = me.Rolling,
                 X = me.X,
                 Y = me.Y,
+                Information = InjectMark,
             },
         };
         var ctx = _sendContext != IntPtr.Zero ? _sendContext : _mouseHook!.Context;
-        InputInterceptor.Send(ctx, _mouseHook!.Device, ref stroke, 1);
+        lock (_sendGate) InputInterceptor.Send(ctx, _mouseHook!.Device, ref stroke, 1);
     }
 
     public void SendText(TextEvent te)

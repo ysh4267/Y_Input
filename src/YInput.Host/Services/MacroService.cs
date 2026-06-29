@@ -25,8 +25,10 @@ public sealed class MacroService
     private readonly Dictionary<int, string> _hotkeyToMacro = new();
     private readonly List<(string macroId, GamepadControl control)> _gamepadTriggers = new();
 
-    private AppState _state = AppState.Idle;
-    private string? _currentMacroId;
+    // 동시 재생: macroId → 그 매크로의 재생 Player. 여러 매크로가 동시에 재생될 수 있다.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Player> _running = new();
+    private volatile bool _recording;
+    private bool AnyPlaying => !_running.IsEmpty;
     private volatile bool _listenActive;
     private volatile bool _monitorActive;
 
@@ -57,17 +59,7 @@ public sealed class MacroService
         _backend.GamepadInput += OnGamepadInput;
         _rawInput.Detected += OnRawDetected;
 
-        _player.Stopped += (_, _) =>
-        {
-            lock (_gate)
-            {
-                if (_state == AppState.Playing) { _state = AppState.Idle; _currentMacroId = null; }
-            }
-            BroadcastStatus();
-        };
-        _player.Progress += (_, p) =>
-            _hub.Broadcast("progress", new { loop = p.Loop, stepIndex = p.StepIndex, stepCount = p.StepCount });
-        _player.Failed += (_, ex) => Log("error", "재생 오류: " + ex.Message);
+        // 재생 Player는 매크로별로 Play()에서 생성·배선한다(동시 재생). 주입 _player 는 미사용.
         _recorder.StepRecorded += (_, step) =>
             // 실시간 카드 렌더용으로 전체 이벤트(@event)도 함께 보냄($type 포함 직렬화).
             _hub.Broadcast("recordedStep", new { summary = step.Event.Summary, delayBeforeMs = step.DelayBeforeMs, @event = step.Event });
@@ -86,17 +78,14 @@ public sealed class MacroService
     public object GetStatusData()
     {
         var ds = DriverProvisioner.QueryStatus();
-        string state = _state switch
-        {
-            AppState.Recording => "recording",
-            AppState.Playing => "playing",
-            _ => "idle",
-        };
+        string state = _recording ? "recording" : (AnyPlaying ? "playing" : "idle");
+        var playing = _running.Keys.ToArray();
         return new
         {
             url = Url,
             state,
-            currentMacroId = _currentMacroId,
+            currentMacroId = playing.FirstOrDefault(), // 호환(단일 표시)
+            playingIds = playing,                       // 동시 재생 중인 모든 매크로
             listening = _listenActive,
             monitoring = _monitorActive,
             driver = new { interception = ds.InterceptionInstalled, vigem = ds.ViGEmInstalled, admin = ds.IsAdministrator },
@@ -132,12 +121,12 @@ public sealed class MacroService
     {
         lock (_gate)
         {
-            if (_state != AppState.Idle)
+            if (_recording || AnyPlaying)
                 throw new InvalidOperationException("이미 녹화/재생 중입니다.");
             if (!_backend.InterceptionAvailable)
                 throw new InvalidOperationException("Interception 드라이버가 준비되지 않았습니다(설치/재부팅 확인).");
             _recorder.Start(options);
-            _state = AppState.Recording;
+            _recording = true;
         }
         Log("info", "녹화를 시작했습니다. 입력을 기록합니다…");
         BroadcastStatus();
@@ -149,12 +138,12 @@ public sealed class MacroService
         Macro macro;
         lock (_gate)
         {
-            if (_state != AppState.Recording)
+            if (!_recording)
                 throw new InvalidOperationException("녹화 중이 아닙니다.");
             var finalName = string.IsNullOrWhiteSpace(name) ? $"매크로 {DateTime.Now:MMdd-HHmmss}" : name!.Trim();
             macro = _recorder.Stop(finalName);
             if (persist) _library.Save(macro);
-            _state = AppState.Idle;
+            _recording = false;
         }
         ReloadHotkeys();
         Log("info", persist ? $"녹화 저장: {macro.Name} ({macro.Steps.Count} 스텝)" : $"녹화 종료 ({macro.Steps.Count} 스텝)");
@@ -165,21 +154,27 @@ public sealed class MacroService
     // ---------- 재생 ----------
     public void Play(string id)
     {
-        Macro macro;
-        lock (_gate)
-        {
-            if (_state != AppState.Idle)
-                throw new InvalidOperationException("이미 녹화/재생 중입니다.");
-            macro = _library.Load(id) ?? throw new FileNotFoundException("매크로를 찾을 수 없습니다: " + id);
-            _state = AppState.Playing;
-            _currentMacroId = id;
-        }
+        if (_recording) throw new InvalidOperationException("녹화 중에는 재생할 수 없습니다.");
+        // 이미 이 매크로가 재생 중이면 정지(재트리거 = 토글). 다른 매크로는 계속 재생됨(동시 재생).
+        if (_running.TryRemove(id, out var existing)) { existing.Stop(); BroadcastStatus(); return; }
+
+        var macro = _library.Load(id) ?? throw new FileNotFoundException("매크로를 찾을 수 없습니다: " + id);
+        var player = new Player(_backend); // 매크로마다 독립 Player → 서로 비동기·동시 재생
+        player.Progress += (_, p) =>
+            _hub.Broadcast("progress", new { macroId = id, loop = p.Loop, stepIndex = p.StepIndex, stepCount = p.StepCount });
+        player.Failed += (_, ex) => Log("error", $"재생 오류({macro.Name}): {ex.Message}");
+        player.Stopped += (_, _) => { _running.TryRemove(id, out _); BroadcastStatus(); };
+        _running[id] = player;
         Log("info", $"재생 시작: {macro.Name}");
         BroadcastStatus();
-        _ = _player.PlayAsync(ExpandMacro(macro)); // 매크로 참조를 평탄화한 뒤 재생. 완료 시 Stopped에서 Idle 복귀
+        _ = player.PlayAsync(ExpandMacro(macro)); // 완료 시 Stopped 핸들러가 _running에서 제거
     }
 
-    public void StopPlayback() => _player.Stop();
+    /// <summary>모든 재생 중 매크로를 정지(킬 스위치).</summary>
+    public void StopPlayback()
+    {
+        foreach (var p in _running.Values.ToArray()) p.Stop();
+    }
 
     /// <summary>매크로 참조(MacroRefEvent)를 대상 매크로의 스텝으로 재귀 인라인 전개한다(순환/누락은 건너뜀).
     /// 반환 매크로는 최상위의 LoopCount/Speed를 유지하고 스텝만 평탄화된다(대상 매크로는 1사이클 실행).</summary>
@@ -274,11 +269,8 @@ public sealed class MacroService
         var macro = _library.Load(id) ?? throw new FileNotFoundException("매크로를 찾을 수 없습니다: " + id);
         macro.Enabled = enabled;
         _library.Save(macro);
-        // 끄면(비활성) 그 매크로가 재생 중일 때 즉시 정지(킬 스위치)
-        if (!enabled)
-        {
-            lock (_gate) { if (_state == AppState.Playing && _currentMacroId == id) _player.Stop(); }
-        }
+        // 끄면(비활성) 그 매크로가 재생 중일 때 즉시 정지(킬)
+        if (!enabled && _running.TryGetValue(id, out var rp)) rp.Stop();
         ReloadHotkeys();
         Log("info", $"매크로 '{macro.Name}' 적용 {(enabled ? "켬" : "끔")}.");
         BroadcastStatus();
@@ -409,20 +401,12 @@ public sealed class MacroService
 
     private void OnHotkey(string macroId)
     {
-        bool startPlay = false;
-        lock (_gate)
+        // 저수준 훅 콜백을 막지 않도록 백그라운드에서. Play()가 토글 처리:
+        // 그 매크로가 재생 중이면 정지, 아니면 시작(다른 매크로와 동시 재생).
+        _ = Task.Run(() =>
         {
-            if (_state == AppState.Playing && _currentMacroId == macroId) { _player.Stop(); return; }
-            if (_state == AppState.Idle) startPlay = true;
-        }
-        if (startPlay)
-        {
-            // 저수준 훅 콜백을 막지 않도록 로드/전개/재생은 백그라운드에서(훅 타임아웃에 의한 트리거 누락 방지)
-            _ = Task.Run(() =>
-            {
-                try { Play(macroId); }
-                catch (Exception ex) { Log("error", ex.Message); }
-            });
-        }
+            try { Play(macroId); }
+            catch (Exception ex) { Log("error", ex.Message); }
+        });
     }
 }

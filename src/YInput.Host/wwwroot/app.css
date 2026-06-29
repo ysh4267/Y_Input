@@ -185,6 +185,13 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 .toggle input:checked + .track { background: rgba(79,140,255,.28); border-color: var(--accent); }
 .toggle input:checked ~ .knob { transform: translateX(16px); background: var(--accent); }
 
+/* 로그 플로팅 패널 + 좌하단 동그라미 토글 */
+.log-fab { position: fixed; left: 18px; bottom: 18px; width: 50px; height: 50px; border-radius: 50%; background: var(--accent); color: #fff; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,.45); z-index: 850; transition: filter .12s, transform .12s; }
+.log-fab:hover { filter: brightness(1.1); transform: translateY(-1px); }
+.log-float { position: fixed; left: 18px; bottom: 80px; width: 440px; max-width: calc(100vw - 36px); max-height: 52vh; background: var(--card); border: 1px solid var(--border2); border-radius: 14px; box-shadow: var(--shadow); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; z-index: 850; }
+.log-float[hidden] { display: none; }
+.log-float .log { flex: 1; height: auto; min-height: 140px; }
+
 /* 로그 */
 .log { height: 180px; overflow-y: auto; font-family: Consolas, monospace; font-size: 12px; }
 .log .line { padding: 1px 0; display: flex; gap: 8px; }

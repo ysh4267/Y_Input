@@ -24,6 +24,11 @@ const ICON = {
 
 // ---------- 탭 ----------
 function switchTab(name) {
+  // 재생 중 편집 탭을 열면 모든 매크로 즉시 정지(안전).
+  if (name === 'edit' && state.status && state.status.playingIds && state.status.playingIds.length) {
+    api.stop().catch(() => {});
+    log('info', '편집 탭 진입 — 실행 중인 매크로를 모두 정지했습니다.');
+  }
   document.querySelectorAll('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('.page').forEach((p) => p.classList.toggle('active', p.id === 'page-' + name));
 }
@@ -85,7 +90,12 @@ function renderStatus(s) {
 
   $('foot-url').textContent = s.url || '';
   editor.onStatus(s);
-  if (s.state !== 'playing') { lastStepIndex = -1; highlightRunStep(-1); clearMacroProg(); }
+  // 동시 재생: 재생 중이 아닌 매크로의 진행 점은 비우고, 표시 중인 매크로가 재생 아니면 하이라이트 해제
+  const playingSet = new Set(s.playingIds || []);
+  document.querySelectorAll('.macro-prog').forEach((el) => {
+    if (!playingSet.has(el.dataset.id)) el.querySelectorAll('.pdot.on').forEach((d) => d.classList.remove('on'));
+  });
+  if (!runShownId || !playingSet.has(runShownId)) { lastStepIndex = -1; highlightRunStep(-1); }
   renderMacroActive();
 }
 
@@ -174,10 +184,9 @@ function renderMacroList(listEl, emptyEl, mode) {
 }
 
 function renderMacroActive() {
-  const st = state.status;
+  const playing = new Set((state.status && state.status.playingIds) || []);
   document.querySelectorAll('.macro-item').forEach((el) => {
-    const playing = st && st.state === 'playing' && st.currentMacroId === el.dataset.id;
-    el.classList.toggle('active', playing);
+    el.classList.toggle('active', playing.has(el.dataset.id));
   });
 }
 
@@ -298,7 +307,7 @@ function renderRunSteps(macro) {
     wrap.appendChild(row);
   });
   const st = state.status;
-  const playingThis = st && st.state === 'playing' && st.currentMacroId === macro.id;
+  const playingThis = st && st.playingIds && st.playingIds.includes(macro.id);
   highlightRunStep(playingThis ? lastStepIndex : -1);
 }
 function highlightRunStep(idx) {
@@ -489,18 +498,12 @@ function handleShutdown() {
   }, 150);
 }
 function showProgress(p) {
-  const box = $('progress'); box.hidden = false;
-  const pct = p.stepCount ? Math.round(((p.stepIndex + 1) / p.stepCount) * 100) : 0;
-  $('progress-bar').style.width = pct + '%';
-  $('progress-text').textContent = `루프 ${p.loop + 1} · 스텝 ${p.stepIndex + 1}/${p.stepCount}`;
-  clearTimeout(showProgress._t);
-  showProgress._t = setTimeout(() => { box.hidden = true; }, 1500);
-  // 실행 페이지: 현재 재생 중인 매크로 스텝을 자동 표시 + 현재 스텝 하이라이트
-  lastStepIndex = p.stepIndex;
-  const cur = state.status && state.status.currentMacroId;
-  if (cur) updateMacroProg(cur, pct / 100);            // 실행 목록 점 채우기(비율)
-  if (cur && runShownId !== cur) selectRunMacro(cur);  // 최초 1회 로드(이후 progress는 바로 하이라이트)
-  else if (cur && runShownId === cur) highlightRunStep(p.stepIndex);
+  const frac = p.stepCount ? (p.stepIndex + 1) / p.stepCount : 0;
+  // 동시 재생: 진행 이벤트의 macroId 매크로 점만 채운다.
+  updateMacroProg(p.macroId, frac);
+  // run-steps 패널: 표시 중인 매크로의 진행만 하이라이트. 아무것도 안 보고 있으면 진행 중인 걸 표시.
+  if (runShownId && runShownId === p.macroId) { lastStepIndex = p.stepIndex; highlightRunStep(p.stepIndex); }
+  else if (!runShownId) selectRunMacro(p.macroId);
 }
 
 // ---------- 업데이트(Git 동기화) ----------
@@ -535,6 +538,8 @@ function wire() {
   $('btn-import').onclick = () => $('file-import').click();
   $('file-import').onchange = (e) => { importMacros(e.target.files); e.target.value = ''; };
   $('btn-export').onclick = openExportModal;
+  $('log-fab').onclick = () => { $('log-float').hidden = !$('log-float').hidden; };
+  $('log-float-close').onclick = () => { $('log-float').hidden = true; };
   $('btn-clear-log').onclick = () => { $('log').innerHTML = ''; };
   $('btn-monitor').onclick = async () => {
     try { if (state.status?.monitoring) await api.monitorOff(); else await api.monitorOn(); }

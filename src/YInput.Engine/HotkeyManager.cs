@@ -29,6 +29,7 @@ public sealed class HotkeyManager : IDisposable
     private const int WH_KEYBOARD_LL = 13;
     private const uint WM_KEYDOWN = 0x0100, WM_KEYUP = 0x0101, WM_SYSKEYDOWN = 0x0104, WM_SYSKEYUP = 0x0105;
     private const uint LLKHF_INJECTED = 0x00000010;
+    private const uint INJECT_MARK = 0x59494E50; // = InterceptionBackend.InjectMark — 우리 매크로 출력 표식(트리거 제외)
 
     private readonly Dictionary<int, Action> _callbacks = new();
     private readonly Dictionary<int, (MouseTriggerButton button, Hotkey hk, Action cb)> _mouseTriggers = new();
@@ -256,7 +257,8 @@ public sealed class HotkeyManager : IDisposable
         {
             uint msg = (uint)wParam.ToInt32();
             var data = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
-            if ((data.flags & LLMHF_INJECTED) == 0) // 주입된 입력(매크로 재생 등)은 무시
+            // soft 단계: 외부(물리·소프트) 입력은 트리거로 인식하되, 우리가 주입한 매크로 출력(표식)은 제외.
+            if (data.dwExtraInfo.ToUInt64() != INJECT_MARK)
             {
                 MouseTriggerButton? btn = msg switch
                 {
@@ -286,7 +288,8 @@ public sealed class HotkeyManager : IDisposable
         if (nCode >= 0 && _keyChords.Count > 0)
         {
             var data = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
-            if ((data.flags & LLKHF_INJECTED) == 0) // 주입된 입력(매크로 재생 등)은 무시
+            // soft 단계: 외부(물리·소프트) 입력은 트리거로 인식하되, 우리가 주입한 매크로 출력(표식)은 제외.
+            if (data.dwExtraInfo.ToUInt64() != INJECT_MARK)
             {
                 uint msg = (uint)wParam.ToInt32();
                 bool isDown = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
