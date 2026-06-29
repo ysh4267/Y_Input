@@ -253,9 +253,12 @@ public sealed class MacroService
                     }
                     else
                     {
+                        // 키보드 2개 이상 동시(chord)는 저수준 훅, 단일 키는 RegisterHotKey(네이티브), 마우스는 마우스 훅
                         int id = hk.IsMouse
                             ? _hotkeys.RegisterMouse(hk, () => OnHotkey(macroId))
-                            : _hotkeys.Register(hk, () => OnHotkey(macroId));
+                            : hk.IsKeyChord
+                                ? _hotkeys.RegisterKeyChord(hk, () => OnHotkey(macroId))
+                                : _hotkeys.Register(hk, () => OnHotkey(macroId));
                         _hotkeyToMacro[id] = macroId;
                     }
                 }

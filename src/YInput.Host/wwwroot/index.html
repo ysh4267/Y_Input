@@ -3,16 +3,16 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Y_Input</title>
+  <title>Y Input</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="app.css" />
 </head>
 <body>
   <header class="topbar">
     <div class="topbar-left">
-      <button id="btn-settings" class="icon-btn" title="설정 (드라이버·업데이트)" aria-label="설정 메뉴">
+      <button id="btn-settings" class="icon-btn" title="메뉴 (드라이버·업데이트)" aria-label="메뉴 열기">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3.5 6.5h17M3.5 12h17M3.5 17.5h17"/></svg>
       </button>
-      <div class="brand">Y_Input</div>
     </div>
     <nav class="tabs" id="tabs">
       <button class="tab-btn" data-tab="run">매크로 실행</button>
@@ -56,9 +56,11 @@
             <div class="card-head">
               <h2>매크로</h2>
               <div class="row">
+                <button id="btn-import" class="btn ghost sm" title="JSON 파일에서 매크로 가져오기">가져오기</button>
                 <button id="btn-new" class="btn sm btn-new-macro">＋ 새 매크로 생성</button>
               </div>
             </div>
+            <input id="file-import" type="file" accept=".json,application/json" multiple hidden />
             <ul id="macro-list-edit" class="macro-list"></ul>
             <p id="macro-empty-edit" class="hint">저장된 매크로가 없습니다.</p>
           </div>
@@ -143,7 +145,7 @@
   <div id="settings-overlay" class="drawer-overlay" hidden>
     <aside id="settings-drawer" class="drawer">
       <div class="drawer-head">
-        <h2>설정</h2>
+        <div class="brand"><span class="brand-mark">Y</span>Y Input</div>
         <button id="settings-close" class="icon-btn" title="닫기" aria-label="닫기">✕</button>
       </div>
       <section class="drawer-sec">

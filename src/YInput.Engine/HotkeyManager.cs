@@ -25,10 +25,28 @@ public sealed class HotkeyManager : IDisposable
     private const uint LLMHF_INJECTED = 0x00000001;
     private const int VK_SHIFT = 0x10, VK_CONTROL = 0x11, VK_MENU = 0x12, VK_LWIN = 0x5B, VK_RWIN = 0x5C;
 
+    // 저수준 키보드 훅(WH_KEYBOARD_LL) — RegisterHotKey가 못 하는 "2개 이상 일반 키 동시(chord)" 트리거용
+    private const int WH_KEYBOARD_LL = 13;
+    private const uint WM_KEYDOWN = 0x0100, WM_KEYUP = 0x0101, WM_SYSKEYDOWN = 0x0104, WM_SYSKEYUP = 0x0105;
+    private const uint LLKHF_INJECTED = 0x00000010;
+
     private readonly Dictionary<int, Action> _callbacks = new();
     private readonly Dictionary<int, (MouseTriggerButton button, Hotkey hk, Action cb)> _mouseTriggers = new();
+    private readonly Dictionary<int, KeyChord> _keyChords = new();
+    private readonly HashSet<uint> _heldKeys = new(); // 키보드 훅으로 추적하는 현재 눌린 키(주입 입력 제외)
     private LowLevelMouseProc? _mouseProc; // GC 방지
     private IntPtr _mouseHook;
+    private LowLevelKeyboardProc? _keyboardProc; // GC 방지
+    private IntPtr _keyboardHook;
+
+    /// <summary>키보드 조합(chord) 트리거 1건. 모든 키가 동시에 눌린 순간 1회 발동(라이징 엣지).</summary>
+    private sealed class KeyChord
+    {
+        public uint[] Keys = Array.Empty<uint>();
+        public Hotkey Hk = null!;
+        public Action Cb = static () => { };
+        public bool Active; // 직전에 조합이 완성돼 있었는지(연타·반복 방지)
+    }
     private readonly ConcurrentQueue<Action> _queue = new();
     private readonly ManualResetEventSlim _ready = new(false);
     private readonly string _className = "YInputHotkeyWnd_" + Guid.NewGuid().ToString("N");
@@ -105,6 +123,41 @@ public sealed class HotkeyManager : IDisposable
         }
     }
 
+    /// <summary>키보드 조합(2개 이상 키 동시) 트리거를 등록한다(WH_KEYBOARD_LL). 첫 등록 시 훅을 설치한다.</summary>
+    public int RegisterKeyChord(Hotkey hk, Action callback)
+    {
+        var keys = hk.EffectiveKeys.ToArray();
+        if (keys.Length == 0) throw new ArgumentException("키 조합이 비어 있습니다.");
+        return InvokeOnLoop(() =>
+        {
+            EnsureKeyboardHook();
+            int id = _nextId++;
+            _keyChords[id] = new KeyChord { Keys = keys, Hk = hk, Cb = callback };
+            return id;
+        });
+    }
+
+    private void EnsureKeyboardHook()
+    {
+        if (_keyboardHook != IntPtr.Zero) return;
+        _heldKeys.Clear();
+        _keyboardProc = KeyboardHookProc;
+        _keyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, _keyboardProc, GetModuleHandle(null), 0);
+        if (_keyboardHook == IntPtr.Zero)
+            throw new InvalidOperationException($"키보드 훅 설치 실패 (Win32 0x{Marshal.GetLastWin32Error():X}).");
+    }
+
+    private void RemoveKeyboardHookIfIdle()
+    {
+        if (_keyChords.Count == 0 && _keyboardHook != IntPtr.Zero)
+        {
+            UnhookWindowsHookEx(_keyboardHook);
+            _keyboardHook = IntPtr.Zero;
+            _keyboardProc = null;
+            _heldKeys.Clear();
+        }
+    }
+
     public void Unregister(int id)
     {
         InvokeOnLoop<object?>(() =>
@@ -113,6 +166,8 @@ public sealed class HotkeyManager : IDisposable
                 UnregisterHotKey(_hwnd, id);
             if (_mouseTriggers.Remove(id))
                 RemoveMouseHookIfIdle();
+            if (_keyChords.Remove(id))
+                RemoveKeyboardHookIfIdle();
             return null;
         });
     }
@@ -126,6 +181,8 @@ public sealed class HotkeyManager : IDisposable
             _callbacks.Clear();
             _mouseTriggers.Clear();
             RemoveMouseHookIfIdle();
+            _keyChords.Clear();
+            RemoveKeyboardHookIfIdle();
             return null;
         });
     }
@@ -224,6 +281,37 @@ public sealed class HotkeyManager : IDisposable
         return CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam); // 통과(차단 안 함)
     }
 
+    private IntPtr KeyboardHookProc(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0 && _keyChords.Count > 0)
+        {
+            var data = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+            if ((data.flags & LLKHF_INJECTED) == 0) // 주입된 입력(매크로 재생 등)은 무시
+            {
+                uint msg = (uint)wParam.ToInt32();
+                bool isDown = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
+                bool isUp = msg == WM_KEYUP || msg == WM_SYSKEYUP;
+                if (isDown) _heldKeys.Add(data.vkCode);
+                else if (isUp) _heldKeys.Remove(data.vkCode);
+
+                if (isDown || isUp)
+                {
+                    // 조합의 모든 키가 눌려있고 모디파이어가 충족되면, "막 완성된 순간"에 1회 발동.
+                    foreach (var chord in _keyChords.Values.ToList())
+                    {
+                        bool now = ModifiersHeld(chord.Hk) && Array.TrueForAll(chord.Keys, _heldKeys.Contains);
+                        if (now && !chord.Active)
+                        {
+                            try { chord.Cb(); } catch { /* 콜백 예외 무시 */ }
+                        }
+                        chord.Active = now;
+                    }
+                }
+            }
+        }
+        return CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam); // 통과(차단 안 함)
+    }
+
     private static bool ModifiersHeld(Hotkey hk)
     {
         static bool Down(int vk) => (GetAsyncKeyState(vk) & 0x8000) != 0;
@@ -249,6 +337,7 @@ public sealed class HotkeyManager : IDisposable
     // ---- Win32 ----
     private delegate IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT { public int x; public int y; }
@@ -263,8 +352,20 @@ public sealed class HotkeyManager : IDisposable
         public UIntPtr dwExtraInfo;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KBDLLHOOKSTRUCT
+    {
+        public uint vkCode;
+        public uint scanCode;
+        public uint flags;
+        public uint time;
+        public UIntPtr dwExtraInfo;
+    }
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool UnhookWindowsHookEx(IntPtr hhk);
     [DllImport("user32.dll")]

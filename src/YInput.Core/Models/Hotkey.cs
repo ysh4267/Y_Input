@@ -21,8 +21,14 @@ public sealed class Hotkey
     public bool Shift { get; set; }
     public bool Win { get; set; }
 
-    /// <summary>Win32 Virtual-Key 코드(VK_*). 예: F8 = 0x77. 마우스 트리거면 무시.</summary>
+    /// <summary>Win32 Virtual-Key 코드(VK_*). 예: F8 = 0x77. 마우스 트리거면 무시. 단일 키 트리거에 사용.</summary>
     public uint VirtualKey { get; set; }
+
+    /// <summary>
+    /// 키보드 조합(chord) 트리거: 동시에 눌러야 발동하는 가상 키 집합(보통 2개 이상).
+    /// 비어 있으면 단일 <see cref="VirtualKey"/>를 사용한다(하위 호환).
+    /// </summary>
+    public List<uint> Keys { get; set; } = new();
 
     /// <summary>설정 시 마우스 버튼 트리거. null이면 키보드 트리거.</summary>
     public MouseTriggerButton? Mouse { get; set; }
@@ -32,7 +38,14 @@ public sealed class Hotkey
 
     public bool IsGamepad => Gamepad is not null;
     public bool IsMouse => !IsGamepad && Mouse is not null;
-    public bool IsEmpty => Gamepad is null && Mouse is null && VirtualKey == 0;
+    public bool IsEmpty => Gamepad is null && Mouse is null && VirtualKey == 0 && (Keys is null || Keys.Count == 0);
+
+    /// <summary>키보드 조합(2개 이상 키 동시) 트리거인지.</summary>
+    public bool IsKeyChord => !IsGamepad && !IsMouse && Keys is { Count: >= 2 };
+
+    /// <summary>키보드 트리거가 실제로 사용할 키 목록(조합이면 Keys, 아니면 VirtualKey 단일).</summary>
+    public IReadOnlyList<uint> EffectiveKeys =>
+        Keys is { Count: > 0 } ? Keys : (VirtualKey != 0 ? new List<uint> { VirtualKey } : new List<uint>());
 
     /// <summary>"Ctrl+Alt+F8" / "Mouse X1" / "Pad A" 형태의 표시 문자열.</summary>
     public override string ToString()
@@ -43,7 +56,10 @@ public sealed class Hotkey
         if (Alt) parts.Add("Alt");
         if (Shift) parts.Add("Shift");
         if (Win) parts.Add("Win");
-        parts.Add(IsGamepad ? $"Pad {Gamepad}" : IsMouse ? MouseName(Mouse!.Value) : KeyName.FromVirtualKey(VirtualKey));
+        if (IsGamepad) parts.Add($"Pad {Gamepad}");
+        else if (IsMouse) parts.Add(MouseName(Mouse!.Value));
+        else if (Keys is { Count: > 0 }) parts.AddRange(Keys.Select(KeyName.FromVirtualKey));
+        else parts.Add(KeyName.FromVirtualKey(VirtualKey));
         return string.Join("+", parts);
     }
 

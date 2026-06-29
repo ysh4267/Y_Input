@@ -20,6 +20,8 @@ const ICON = {
   del: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.3H13.4"/><path d="M6.4 4.3V3.2A1.1 1.1 0 0 1 7.5 2.1H8.5A1.1 1.1 0 0 1 9.6 3.2V4.3"/><path d="M3.9 4.3 4.6 13A1.3 1.3 0 0 0 5.9 14.2H10.1A1.3 1.3 0 0 0 11.4 13L12.1 4.3"/><path d="M6.6 6.9V11.3M9.4 6.9V11.3"/></svg>',
   edit: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M11.4 2.3 13.7 4.6"/><path d="M10.6 3.1 3.4 10.3 2.4 13.6 5.7 12.6 12.9 5.4Z"/></svg>',
   trigger: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="4" width="13" height="8" rx="1.6"/><path d="M4 6.6h0M6.5 6.6h0M9 6.6h0M11.5 6.6h0M4.7 9.3h6.6"/></svg>',
+  export: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.3V10M5.2 7.2 8 10 10.8 7.2"/><path d="M2.6 11.4v1.3A1.3 1.3 0 0 0 3.9 14H12.1A1.3 1.3 0 0 0 13.4 12.7V11.4"/></svg>',
+  import: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10.2V2.5M5.2 5.3 8 2.5 10.8 5.3"/><path d="M2.6 11.4v1.3A1.3 1.3 0 0 0 3.9 14H12.1A1.3 1.3 0 0 0 13.4 12.7V11.4"/></svg>',
 };
 
 // ---------- 탭 ----------
@@ -114,7 +116,7 @@ function renderMacroList(listEl, emptyEl, mode) {
       li.innerHTML = `
         <div class="mi-main">
           <label class="toggle" title="적용(트리거 활성)"><input type="checkbox" class="act-toggle" ${m.enabled ? 'checked' : ''}><span class="track"></span><span class="knob"></span></label>
-          <div class="macro-meta"><span class="name">${esc(m.name)}</span><span class="macro-sub">${m.stepCount}스텝</span></div>
+          <div class="macro-meta"><span class="name">${esc(m.name)}</span><span class="macro-sub">${m.stepCount}스텝 · 총 ${fmtMs(m.durationMs || 0)}</span></div>
           <div class="macro-actions">
             <button class="mbtn act-edit" title="편집">${ICON.edit}</button>
             <button class="mbtn act-del" title="삭제">${ICON.del}</button>
@@ -136,6 +138,7 @@ function renderMacroList(listEl, emptyEl, mode) {
         <div class="macro-meta"><span class="name">${esc(m.name)}</span><span class="macro-sub">${sub}</span></div>
         <div class="macro-actions">
           <button class="mbtn act-dup" title="복제">${ICON.dup}</button>
+          <button class="mbtn act-export" title="JSON 내보내기">${ICON.export}</button>
           <button class="mbtn act-del" title="삭제">${ICON.del}</button>
         </div>`;
     }
@@ -145,6 +148,7 @@ function renderMacroList(listEl, emptyEl, mode) {
     };
     li.querySelector('.act-del').onclick = () => confirmDeleteInline(li, m.id);
     const dupBtn = li.querySelector('.act-dup'); if (dupBtn) dupBtn.onclick = () => duplicateMacro(m.id);
+    const expBtn = li.querySelector('.act-export'); if (expBtn) expBtn.onclick = () => exportMacro(m.id);
     if (mode === 'run') {
       const tg = li.querySelector('.act-toggle');
       tg.onchange = async () => {
@@ -192,28 +196,56 @@ function beginTriggerCapture(id, name, btn) {
   const valEl = btn.querySelector('.trig-val');
   const prevVal = valEl ? valEl.textContent : '';
   if (valEl) valEl.textContent = '대기…';
+
+  // 키보드 조합(chord): 여러 키를 함께 누른 채로 모두 떼면 확정. 1개만 누르면 단일 키.
+  const held = new Set();      // 현재 물리적으로 눌려있는 키(vk)
+  const captured = new Map();  // vk -> 라벨 (이번 캡처에서 함께 눌린 최대 집합)
+  let mods = { ctrl: false, alt: false, shift: false, win: false };
+  const liveLabel = () => {
+    const mp = [];
+    if (mods.ctrl) mp.push('Ctrl'); if (mods.alt) mp.push('Alt');
+    if (mods.shift) mp.push('Shift'); if (mods.win) mp.push('Win');
+    const all = [...mp, ...captured.values()];
+    return all.length ? all.join('+') : '대기…';
+  };
   const onKey = (e) => {
     if (e.key === 'Escape') { e.preventDefault(); endTriggerCapture(); return; }
-    const vk = km.eventToVk(e); if (vk == null) return; // 모디파이어 단독 등은 무시
+    mods = { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey };
+    const vk = km.eventToVk(e);
+    if (vk == null) { if (valEl) valEl.textContent = liveLabel(); return; } // 순수 모디파이어: 플래그만
     e.preventDefault();
-    finishTrigger({ ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: vk, mouse: null, gamepad: null });
+    held.add(vk); captured.set(vk, km.vkLabel(vk));
+    if (valEl) valEl.textContent = liveLabel();
+  };
+  const onKeyUp = (e) => {
+    const vk = km.eventToVk(e);
+    if (vk != null) held.delete(vk);
+    if (held.size === 0 && captured.size > 0) {  // 모든 키를 뗀 순간 확정
+      const keys = [...captured.keys()];
+      if (keys.length === 1)
+        finishTrigger({ ...mods, virtualKey: keys[0], keys: [], mouse: null, gamepad: null });
+      else
+        finishTrigger({ ...mods, virtualKey: 0, keys, mouse: null, gamepad: null });
+    }
   };
   const onMouse = (e) => {
     const mb = MOUSE_TRIG[e.button]; if (!mb) return;
     e.preventDefault(); e.stopPropagation();
-    finishTrigger({ ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: 0, mouse: mb, gamepad: null });
+    finishTrigger({ ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: 0, keys: [], mouse: mb, gamepad: null });
   };
   const onCtx = (e) => e.preventDefault();
-  log('info', `'${name}' 트리거 입력 대기… 키·마우스·패드 누름(Esc 취소)`);
+  log('info', `'${name}' 트리거 입력 대기… 키(여러 개 동시 가능)·마우스·패드를 누르고 떼면 확정 (Esc 취소)`);
   setTimeout(() => {
     if (capTrigId !== id) return;
     window.addEventListener('keydown', onKey, true);
+    window.addEventListener('keyup', onKeyUp, true);
     window.addEventListener('mousedown', onMouse, true);
     document.addEventListener('contextmenu', onCtx, true);
     api.listenStart().catch(() => {});
   }, 0);
   capCleanup = () => {
     window.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('keyup', onKeyUp, true);
     window.removeEventListener('mousedown', onMouse, true);
     document.removeEventListener('contextmenu', onCtx, true);
     api.listenStop().catch(() => {});
@@ -223,7 +255,7 @@ function beginTriggerCapture(id, name, btn) {
 }
 function onTriggerGamepad(data) {
   if (!capTrigId || !data || !data.trigger || !data.trigger.gamepad) return;
-  finishTrigger({ ctrl: false, alt: false, shift: false, win: false, virtualKey: 0, mouse: null, gamepad: data.trigger.gamepad });
+  finishTrigger({ ctrl: false, alt: false, shift: false, win: false, virtualKey: 0, keys: [], mouse: null, gamepad: data.trigger.gamepad });
 }
 async function finishTrigger(trigger) {
   const id = capTrigId; endTriggerCapture();
@@ -306,6 +338,37 @@ async function duplicateMacro(id) {
   } catch (e) { log('error', e.message); }
 }
 
+// ---------- JSON 임포트/익스포트 ----------
+async function exportMacro(id) {
+  try {
+    const m = await api.getMacro(id);
+    const json = JSON.stringify(m, null, 2);
+    const safe = ((m.name || 'macro').replace(/[\\/:*?"<>|]/g, '_').trim()) || 'macro';
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${safe}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    log('info', `내보냄: ${safe}.json`);
+  } catch (e) { log('error', e.message); }
+}
+async function importMacros(fileList) {
+  const files = [...(fileList || [])];
+  if (!files.length) return;
+  let ok = 0;
+  for (const f of files) {
+    try {
+      const m = JSON.parse(await f.text());
+      if (!m || !Array.isArray(m.steps)) throw new Error('매크로 형식이 아닙니다(steps 없음)');
+      const name = (m.name && String(m.name).trim()) || f.name.replace(/\.json$/i, '');
+      await api.createMacro({ ...m, id: '', name });
+      ok++;
+    } catch (e) { log('error', `가져오기 실패(${f.name}): ${e.message}`); }
+  }
+  if (ok) { await loadMacros(); log('info', `${ok}개 매크로를 가져왔습니다.`); }
+}
+
 // ---------- WebSocket ----------
 let shuttingDown = false;
 function connectWs() {
@@ -331,12 +394,12 @@ function connectWs() {
 function handleShutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
-  document.title = 'Y_Input — 종료됨';
+  document.title = 'Y Input — 종료됨';
   try { window.close(); } catch (e) { /* 일반 탭은 막힐 수 있음 */ }
   setTimeout(() => {
     const o = document.createElement('div');
     o.className = 'closed-screen';
-    o.innerHTML = '<div><h1>Y_Input 종료됨</h1><p>프로그램이 종료되었습니다. 이 창을 닫아 주세요.</p></div>';
+    o.innerHTML = '<div><h1>Y Input 종료됨</h1><p>프로그램이 종료되었습니다. 이 창을 닫아 주세요.</p></div>';
     document.body.appendChild(o);
   }, 150);
 }
@@ -383,6 +446,8 @@ function wire() {
   $('btn-update-apply').onclick = onUpdateApply;
   $('btn-new').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-new-run').onclick = () => { editor.open(null); switchTab('edit'); };
+  $('btn-import').onclick = () => $('file-import').click();
+  $('file-import').onchange = (e) => { importMacros(e.target.files); e.target.value = ''; };
   $('btn-clear-log').onclick = () => { $('log').innerHTML = ''; };
   $('btn-monitor').onclick = async () => {
     try { if (state.status?.monitoring) await api.monitorOff(); else await api.monitorOn(); }
@@ -409,7 +474,7 @@ async function init() {
   try { renderStatus(await api.status()); } catch (e) { log('error', e.message); }
   await loadMacros();
   editor.open(null); // 기본: 새 매크로 추가 모드로 시작
-  log('info', 'Y_Input UI 준비됨.');
+  log('info', 'Y Input UI 준비됨.');
 }
 
 init();

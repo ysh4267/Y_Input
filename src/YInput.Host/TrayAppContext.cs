@@ -31,12 +31,28 @@ internal sealed class TrayAppContext : ApplicationContext
 
         _icon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = LoadAppIcon(),
             Visible = true,
-            Text = "Y_Input",
+            Text = "Y Input",
             ContextMenuStrip = menu,
         };
         _icon.DoubleClick += (_, _) => OpenUi();
+    }
+
+    /// <summary>exe에 내장된 아이콘(ApplicationIcon)을 트레이 아이콘으로 사용. 실패 시 기본 아이콘.</summary>
+    private static Icon LoadAppIcon()
+    {
+        try
+        {
+            var path = Environment.ProcessPath;
+            if (!string.IsNullOrEmpty(path))
+            {
+                var ico = Icon.ExtractAssociatedIcon(path);
+                if (ico is not null) return ico;
+            }
+        }
+        catch { /* 폴백 */ }
+        return SystemIcons.Application;
     }
 
     public void OpenUi()
