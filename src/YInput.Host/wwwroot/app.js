@@ -102,7 +102,11 @@ function renderMacroList(listEl, emptyEl, mode) {
   if (!listEl) return;
   listEl.innerHTML = '';
   if (emptyEl) emptyEl.hidden = state.macros.length > 0;
-  for (const m of state.macros) {
+  // 실행 탭: 활성(적용 ON) 매크로를 위로(그 안에서는 기존 이름순 유지 — JS sort는 안정 정렬)
+  const ordered = mode === 'run'
+    ? [...state.macros].sort((a, b) => (b.enabled ? 1 : 0) - (a.enabled ? 1 : 0))
+    : state.macros;
+  for (const m of ordered) {
     const li = document.createElement('li');
     li.className = 'macro-item' + (mode === 'run' ? ' run' : '');
     li.dataset.id = m.id;
@@ -148,7 +152,7 @@ function renderMacroList(listEl, emptyEl, mode) {
     if (mode === 'run') {
       const tg = li.querySelector('.act-toggle');
       tg.onchange = async () => {
-        try { await api.setEnabled(m.id, tg.checked); li.classList.toggle('enabled', tg.checked); }
+        try { await api.setEnabled(m.id, tg.checked); await loadMacros(); } // 재정렬(활성 위로) 위해 다시 그림
         catch (e) { log('error', e.message); tg.checked = !tg.checked; }
       };
       li.querySelector('.act-edit').onclick = () => { openMacro(m.id); switchTab('edit'); };
