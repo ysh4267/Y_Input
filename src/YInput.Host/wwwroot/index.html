@@ -16,6 +16,9 @@
     <div class="status-pills">
       <span id="state-badge" class="badge idle">대기</span>
       <span id="ws-dot" class="ws-dot off" title="실시간 연결"></span>
+      <button id="btn-settings" class="icon-btn" title="설정 (드라이버·업데이트)" aria-label="설정">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.6v3.1M12 18.3v3.1M21.4 12h-3.1M5.7 12H2.6M18.6 5.4l-2.2 2.2M7.6 16.4l-2.2 2.2M18.6 18.6l-2.2-2.2M7.6 7.6 5.4 5.4"/></svg>
+      </button>
     </div>
   </header>
 
@@ -23,37 +26,7 @@
     <!-- ============ 매크로 실행 페이지 ============ -->
     <section id="page-run" class="page">
       <div class="run-layout">
-        <!-- 좌: 드라이버 + 업데이트 -->
-        <div class="run-aside">
-          <div class="card compact" id="driver-card">
-            <h2>드라이버 / 장치</h2>
-            <ul class="kv">
-              <li><span>Interception</span><b id="d-interception">—</b></li>
-              <li><span>ViGEmBus</span><b id="d-vigem">—</b></li>
-              <li><span>관리자</span><b id="d-admin">—</b></li>
-            </ul>
-            <p id="device-hint" class="hint"></p>
-            <div class="row">
-              <button id="btn-install" class="btn ghost sm">드라이버 설치/점검</button>
-            </div>
-            <div class="row">
-              <button id="btn-pad-connect" class="btn ghost sm">패드 연결</button>
-              <button id="btn-pad-disconnect" class="btn ghost sm">해제</button>
-              <button id="btn-pad-test" class="btn ghost sm">A 테스트</button>
-            </div>
-          </div>
-
-          <div class="card compact" id="update-card">
-            <h2>업데이트</h2>
-            <p id="update-status" class="hint">Git 저장소에서 최신 빌드로 동기화합니다.</p>
-            <div class="row">
-              <button id="btn-update-check" class="btn ghost sm">업데이트 확인</button>
-              <button id="btn-update-apply" class="btn sm" disabled>업데이트 적용</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- 가운데: 매크로 목록(재생) -->
+        <!-- 매크로 목록(재생) — 드라이버/업데이트는 설정 드로어로 이동 -->
         <div class="card compact run-list-card">
           <div class="card-head">
             <h2>매크로 목록</h2>
@@ -167,6 +140,41 @@
   <footer class="footer">
     <span>로컬 전용 · <code id="foot-url"></code></span>
   </footer>
+
+  <!-- 설정 사이드 드로어(드라이버·업데이트) — 톱니바퀴로 열기, 나머지는 블러 -->
+  <div id="settings-overlay" class="drawer-overlay" hidden>
+    <aside id="settings-drawer" class="drawer">
+      <div class="drawer-head">
+        <h2>설정</h2>
+        <button id="settings-close" class="icon-btn" title="닫기" aria-label="닫기">✕</button>
+      </div>
+      <section class="drawer-sec">
+        <h3>드라이버 / 장치</h3>
+        <ul class="kv">
+          <li><span>Interception</span><b id="d-interception">—</b></li>
+          <li><span>ViGEmBus</span><b id="d-vigem">—</b></li>
+          <li><span>관리자</span><b id="d-admin">—</b></li>
+        </ul>
+        <p id="device-hint" class="hint"></p>
+        <div class="row">
+          <button id="btn-install" class="btn ghost sm">드라이버 설치/점검</button>
+        </div>
+        <div class="row">
+          <button id="btn-pad-connect" class="btn ghost sm">패드 연결</button>
+          <button id="btn-pad-disconnect" class="btn ghost sm">해제</button>
+          <button id="btn-pad-test" class="btn ghost sm">A 테스트</button>
+        </div>
+      </section>
+      <section class="drawer-sec">
+        <h3>업데이트</h3>
+        <p id="update-status" class="hint">Git 저장소에서 최신 빌드로 동기화합니다.</p>
+        <div class="row">
+          <button id="btn-update-check" class="btn ghost sm">업데이트 확인</button>
+          <button id="btn-update-apply" class="btn sm" disabled>업데이트 적용</button>
+        </div>
+      </section>
+    </aside>
+  </div>
 
   <script type="module" src="app.js"></script>
 </body>

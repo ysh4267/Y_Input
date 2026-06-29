@@ -27,6 +27,18 @@ function switchTab(name) {
   document.querySelectorAll('.page').forEach((p) => p.classList.toggle('active', p.id === 'page-' + name));
 }
 
+// ---------- 설정 드로어(드라이버·업데이트) ----------
+function openSettings() {
+  const ov = $('settings-overlay');
+  ov.hidden = false;
+  requestAnimationFrame(() => ov.classList.add('open'));
+}
+function closeSettings() {
+  const ov = $('settings-overlay');
+  ov.classList.remove('open');
+  setTimeout(() => { ov.hidden = true; }, 200);
+}
+
 // ---------- 로그 ----------
 function log(level, message, time) {
   const el = $('log');
@@ -363,6 +375,9 @@ async function onUpdateApply() {
 // ---------- 와이어링 ----------
 function wire() {
   document.querySelectorAll('.tab-btn').forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
+  $('btn-settings').onclick = openSettings;
+  $('settings-close').onclick = closeSettings;
+  $('settings-overlay').onclick = (e) => { if (e.target === $('settings-overlay')) closeSettings(); };
   $('btn-update-check').onclick = onUpdateCheck;
   $('btn-update-apply').onclick = onUpdateApply;
   $('btn-new').onclick = () => { editor.open(null); switchTab('edit'); };
