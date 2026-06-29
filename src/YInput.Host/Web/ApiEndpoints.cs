@@ -76,6 +76,14 @@ public static class ApiEndpoints
             return Task.FromResult(Results.Ok(new { ok = true }));
         }));
 
+        // ---- 매크로 트리거 핫키 설정/해제(실행 페이지에서 직접) ----
+        app.MapPost("/api/macros/{id}/trigger", (string id, HttpRequest req) => Guard(async () =>
+        {
+            var hk = await ReadHotkey(req);
+            service.SetTrigger(id, hk);
+            return Results.Ok(new { ok = true });
+        }));
+
         // ---- 녹화 ----
         app.MapPost("/api/record/start", (HttpRequest req) => Guard(async () =>
         {
@@ -211,6 +219,14 @@ public static class ApiEndpoints
         using var reader = new StreamReader(req.Body);
         var json = await reader.ReadToEndAsync();
         return MacroStore.Deserialize(json);
+    }
+
+    private static async Task<Hotkey?> ReadHotkey(HttpRequest req)
+    {
+        using var reader = new StreamReader(req.Body);
+        var json = await reader.ReadToEndAsync();
+        if (string.IsNullOrWhiteSpace(json) || json.Trim() == "null") return null;
+        return JsonSerializer.Deserialize<Hotkey>(json, MacroStore.Options);
     }
 
     private static async Task<RecordOptions> ReadRecordOptions(HttpRequest req)

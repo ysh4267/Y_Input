@@ -28,6 +28,7 @@ export const api = {
   updateMacro: (id, macro) => request('PUT', `/api/macros/${id}`, macro),
   deleteMacro: (id) => request('DELETE', `/api/macros/${id}`),
   setEnabled: (id, enabled) => request('POST', `/api/macros/${id}/enabled`, { enabled }),
+  setTrigger: (id, trigger) => request('POST', `/api/macros/${id}/trigger`, trigger ?? null),
 
   recordStart: (options) => request('POST', '/api/record/start', options || {}),
   recordStop: (name, persist = true) => request('POST', '/api/record/stop', { name, persist }),

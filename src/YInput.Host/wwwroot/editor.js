@@ -869,23 +869,9 @@ export function createEditor({ log, onSaved, getStatus }) {
       return saved;
     } catch (e) { log('error', e.message); return null; }
   }
-  async function play() {
-    const st = getStatus();
-    if (st && st.state === 'playing' && st.currentMacroId === editing.id) {
-      try { await api.stop(); } catch (e) { log('error', e.message); }
-      return;
-    }
-    const saved = await save();
-    if (!saved) return;
-    try { await api.play(saved.id); } catch (e) { log('error', e.message); }
-  }
-
+  // 재생은 트리거 핫키로만 — 편집기 재생 버튼 없음.
   function onStatus(st) {
     if (!editing) return;
-    const playing = st && st.state === 'playing' && st.currentMacroId === editing.id;
-    const playBtn = $('btn-play');
-    playBtn.textContent = playing ? '■ 정지' : '▶ 재생';
-    playBtn.disabled = st && st.state === 'recording';
     syncRecordButtons(st);
   }
 
@@ -896,7 +882,6 @@ export function createEditor({ log, onSaved, getStatus }) {
   $('ed-speed').oninput = () => { $('ed-speed-val').textContent = parseFloat($('ed-speed').value).toFixed(1) + 'x'; };
   $('btn-save').onclick = save;
   $('btn-cancel').onclick = close;
-  $('btn-play').onclick = play;
   // 동작 팔레트: 클릭=추가, 드래그=원하는 위치(행/끝)에 드롭(HTML5)
   document.querySelectorAll('#palette .pal-item').forEach((el) => {
     const type = el.dataset.type;

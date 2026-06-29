@@ -215,6 +215,17 @@ public sealed class MacroService
         BroadcastStatus();
     }
 
+    /// <summary>매크로의 트리거 핫키를 설정/해제한다(실행 페이지 목록에서 직접 지정).</summary>
+    public void SetTrigger(string id, Hotkey? trigger)
+    {
+        var macro = _library.Load(id) ?? throw new FileNotFoundException("매크로를 찾을 수 없습니다: " + id);
+        macro.Trigger = trigger;
+        _library.Save(macro);
+        ReloadHotkeys();
+        Log("info", $"매크로 '{macro.Name}' 트리거: {trigger?.ToString() ?? "없음"}");
+        BroadcastStatus();
+    }
+
     // ---------- 핫키 ----------
     public void ReloadHotkeys()
     {

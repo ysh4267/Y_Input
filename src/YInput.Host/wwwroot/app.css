@@ -107,13 +107,19 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 
 /* 매크로 목록 — 이름 한 줄 + 상세 아랫줄 */
 .macro-list { list-style: none; margin: 0; padding: 0; max-height: 40vh; overflow-y: auto; }
-.macro-item { display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card2); margin-bottom: 6px; cursor: pointer; }
+.macro-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card2); margin-bottom: 6px; cursor: pointer; }
 .macro-item.active { border-color: var(--accent); }
 .macro-item:hover { border-color: var(--border2); }
-.macro-top { display: flex; align-items: center; gap: 8px; }
-.macro-top .name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.macro-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.macro-meta .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .macro-sub { font-size: 11.5px; color: var(--muted); white-space: normal; word-break: keep-all; }
-.macro-actions { display: flex; gap: 4px; flex-shrink: 0; align-items: center; }
+/* 액션: 상하 중앙, 아이콘 버튼(조금 큼) */
+.macro-actions { display: flex; gap: 5px; flex-shrink: 0; align-items: center; }
+.mbtn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; background: var(--card3); border: 1px solid var(--border2); border-radius: 8px; color: var(--muted); cursor: pointer; transition: filter .12s, color .12s, border-color .12s; }
+.mbtn svg { display: block; }
+.mbtn:hover { color: var(--text); border-color: var(--accent); }
+.mbtn.act-del:hover { color: var(--rec); border-color: var(--rec); }
+.mbtn.capturing { color: var(--accent); border-color: var(--accent); animation: pulse 1s infinite; }
 
 /* on/off 토글 스위치(적용 여부) */
 .toggle { position: relative; display: inline-block; width: 34px; height: 18px; flex-shrink: 0; cursor: pointer; }

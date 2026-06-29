@@ -10,6 +10,16 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
 const state = { status: null, macros: [] };
 let runShownId = null;    // 실행 페이지에 스텝 표시 중인 매크로 id
 let lastStepIndex = -1;   // 재생 진행 중 현재 스텝(하이라이트용)
+let capTrigId = null;     // 실행 목록에서 트리거 캡처 중인 매크로 id
+let capCleanup = null;    // 트리거 캡처 정리 콜백
+
+// 매크로 목록 아이콘(라인 SVG): 복제·삭제·편집·트리거
+const ICON = {
+  dup: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="5.6" y="5.6" width="8.1" height="8.1" rx="1.6"/><path d="M10.4 5.4V3.1A1.6 1.6 0 0 0 8.8 1.5H3.1A1.6 1.6 0 0 0 1.5 3.1V8.8A1.6 1.6 0 0 0 3.1 10.4H5.4"/></svg>',
+  del: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.3H13.4"/><path d="M6.4 4.3V3.2A1.1 1.1 0 0 1 7.5 2.1H8.5A1.1 1.1 0 0 1 9.6 3.2V4.3"/><path d="M3.9 4.3 4.6 13A1.3 1.3 0 0 0 5.9 14.2H10.1A1.3 1.3 0 0 0 11.4 13L12.1 4.3"/><path d="M6.6 6.9V11.3M9.4 6.9V11.3"/></svg>',
+  edit: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M11.4 2.3 13.7 4.6"/><path d="M10.6 3.1 3.4 10.3 2.4 13.6 5.7 12.6 12.9 5.4Z"/></svg>',
+  trigger: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="4" width="13" height="8" rx="1.6"/><path d="M4 6.6h0M6.5 6.6h0M9 6.6h0M11.5 6.6h0M4.7 9.3h6.6"/></svg>',
+};
 
 // ---------- 탭 ----------
 function switchTab(name) {
@@ -84,32 +94,35 @@ function renderMacroList(listEl, emptyEl, mode) {
     li.className = 'macro-item';
     li.dataset.id = m.id;
     const sub = `${m.stepCount}스텝 · ${m.loopCount === 0 ? '∞' : m.loopCount}회 · ${m.speedMultiplier}x · 🔑${esc(m.trigger || '없음')}`;
+    // 재생 버튼 없음(재생은 트리거 핫키로만). 실행 목록: 적용 토글·트리거·편집·복제·삭제 / 편집 목록: 복제·삭제
     const actions = mode === 'run'
       ? `<label class="toggle" title="적용(트리거 활성)"><input type="checkbox" class="act-toggle" ${m.enabled ? 'checked' : ''}><span class="track"></span><span class="knob"></span></label>
-         <button class="btn sm act-play" title="재생/정지">▶</button>
-         <button class="btn ghost sm act-del" title="삭제">🗑</button>`
-      : `<button class="btn ghost sm act-dup" title="복제">⎘</button>
-         <button class="btn ghost sm act-del" title="삭제">🗑</button>`;
+         <button class="mbtn act-trigger" title="트리거 설정">${ICON.trigger}</button>
+         <button class="mbtn act-edit" title="편집">${ICON.edit}</button>
+         <button class="mbtn act-dup" title="복제">${ICON.dup}</button>
+         <button class="mbtn act-del" title="삭제">${ICON.del}</button>`
+      : `<button class="mbtn act-dup" title="복제">${ICON.dup}</button>
+         <button class="mbtn act-del" title="삭제">${ICON.del}</button>`;
     li.innerHTML = `
-      <div class="macro-top">
+      <div class="macro-meta">
         <span class="name">${esc(m.name)}</span>
-        <div class="macro-actions">${actions}</div>
+        <span class="macro-sub">${sub}</span>
       </div>
-      <div class="macro-sub">${sub}</div>`;
+      <div class="macro-actions">${actions}</div>`;
     li.onclick = (e) => {
       if (e.target.closest('button, label, input')) return;
       if (mode === 'run') selectRunMacro(m.id); else openMacro(m.id);
     };
     li.querySelector('.act-del').onclick = () => removeMacro(m.id, m.name);
+    li.querySelector('.act-dup').onclick = () => duplicateMacro(m.id);
     if (mode === 'run') {
-      li.querySelector('.act-play').onclick = () => togglePlay(m.id);
       const tg = li.querySelector('.act-toggle');
       tg.onchange = async () => {
         try { await api.setEnabled(m.id, tg.checked); }
         catch (e) { log('error', e.message); tg.checked = !tg.checked; }
       };
-    } else {
-      li.querySelector('.act-dup').onclick = () => duplicateMacro(m.id);
+      li.querySelector('.act-edit').onclick = () => { openMacro(m.id); switchTab('edit'); };
+      li.querySelector('.act-trigger').onclick = (e) => beginTriggerCapture(m.id, m.name, e.currentTarget);
     }
     listEl.appendChild(li);
   }
@@ -120,9 +133,56 @@ function renderMacroActive() {
   document.querySelectorAll('.macro-item').forEach((el) => {
     const playing = st && st.state === 'playing' && st.currentMacroId === el.dataset.id;
     el.classList.toggle('active', playing);
-    const pb = el.querySelector('.act-play');
-    if (pb) pb.textContent = playing ? '■' : '▶';
   });
+}
+
+// ---------- 실행 목록: 트리거 핫키 직접 설정(키/마우스/패드 캡처) ----------
+const MOUSE_TRIG = { 0: 'Left', 1: 'Middle', 2: 'Right', 3: 'X1', 4: 'X2' };
+function beginTriggerCapture(id, name, btn) {
+  endTriggerCapture();
+  capTrigId = id;
+  btn.classList.add('capturing');
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); endTriggerCapture(); return; }
+    const vk = km.eventToVk(e); if (vk == null) return; // 모디파이어 단독 등은 무시
+    e.preventDefault();
+    finishTrigger({ ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: vk, mouse: null, gamepad: null });
+  };
+  const onMouse = (e) => {
+    const mb = MOUSE_TRIG[e.button]; if (!mb) return;
+    e.preventDefault(); e.stopPropagation();
+    finishTrigger({ ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: 0, mouse: mb, gamepad: null });
+  };
+  const onCtx = (e) => e.preventDefault();
+  log('info', `'${name}' 트리거 입력 대기… 키·마우스·패드 누름(Esc 취소)`);
+  setTimeout(() => {
+    if (capTrigId !== id) return;
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('mousedown', onMouse, true);
+    document.addEventListener('contextmenu', onCtx, true);
+    api.listenStart().catch(() => {});
+  }, 0);
+  capCleanup = () => {
+    window.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('mousedown', onMouse, true);
+    document.removeEventListener('contextmenu', onCtx, true);
+    api.listenStop().catch(() => {});
+    btn.classList.remove('capturing');
+  };
+}
+function onTriggerGamepad(data) {
+  if (!capTrigId || !data || !data.trigger || !data.trigger.gamepad) return;
+  finishTrigger({ ctrl: false, alt: false, shift: false, win: false, virtualKey: 0, mouse: null, gamepad: data.trigger.gamepad });
+}
+async function finishTrigger(trigger) {
+  const id = capTrigId; endTriggerCapture();
+  if (!id) return;
+  try { await api.setTrigger(id, trigger); await loadMacros(); log('info', '트리거 설정됨.'); }
+  catch (e) { log('error', e.message); }
+}
+function endTriggerCapture() {
+  if (capCleanup) { capCleanup(); capCleanup = null; }
+  capTrigId = null;
 }
 
 // ---------- 실행 페이지: 현재 매크로 동작 순서(읽기전용) + 재생 하이라이트 ----------
@@ -169,13 +229,6 @@ async function openMacro(id) {
   try { editor.open(await api.getMacro(id)); }
   catch (e) { log('error', e.message); }
 }
-async function togglePlay(id) {
-  try {
-    const st = state.status;
-    if (st && st.state === 'playing' && st.currentMacroId === id) await api.stop();
-    else await api.play(id);
-  } catch (e) { log('error', e.message); }
-}
 async function removeMacro(id, name) {
   const ok = await confirmDialog(`'${name}' 매크로를 휴지통으로 보낼까요?`, { title: '매크로 삭제', ok: '휴지통으로', cancel: '취소' });
   if (!ok) return;
@@ -205,7 +258,7 @@ function connectWs() {
       case 'log': log(msg.data.level, msg.data.message, msg.data.time); break;
       case 'recordedStep': editor.onRecordedStep(msg.data); break;
       case 'progress': showProgress(msg.data); break;
-      case 'inputDetected': editor.onInputDetected(msg.data); break;
+      case 'inputDetected': if (capTrigId) onTriggerGamepad(msg.data); else editor.onInputDetected(msg.data); break;
       case 'inputMonitor': log('monitor', `[${msg.data.source}] ${msg.data.label}`, msg.data.time); break;
       case 'shutdown': handleShutdown(); break;
     }
