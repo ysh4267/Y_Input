@@ -6,6 +6,11 @@
 # Run: powershell -ExecutionPolicy Bypass -File tools\convert-macros.ps1
 $ErrorActionPreference = 'Stop'
 $inv = [Globalization.CultureInfo]::InvariantCulture
+# Some KeyEvents only have <Makecode> (Win32 VK) with no <ScanCode>; derive scancode from VK.
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public static class VkMap { [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint code, uint mapType); }
+"@
 $srcDir = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\macros'))
 $outDir = Join-Path $env:APPDATA 'YInput\macros'
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
@@ -38,7 +43,8 @@ foreach ($f in $files) {
                 $steps.Add("{`"delayBeforeMs`":$ms,`"event`":{`"`$type`":`"delay`",`"randomizePercent`":0}}")
             }
             '1' {
-                $code = [int]$e.ScanCode
+                if ($e.ScanCode -and [int]$e.ScanCode -ne 0) { $code = [int]$e.ScanCode }
+                else { $code = [int][VkMap]::MapVirtualKey([uint32][int]$e.KeyEvent.Makecode, 0) }  # VK -> scancode
                 $state = [int]$e.KeyEvent.State
                 $steps.Add("{`"delayBeforeMs`":0,`"event`":{`"`$type`":`"keyboard`",`"code`":$code,`"state`":$state}}")
             }
