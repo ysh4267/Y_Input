@@ -521,6 +521,7 @@ function scrollRowIntoPanel(wrap, row) {
 function buildTimeline(container, shape) {
   if (!container) return;
   container.innerHTML = '';
+  container.dataset.shape = JSON.stringify(shape || []); // 전체 진행도(반복 반영) 계산용
   if (!shape || !shape.length) return;
   const dot = (i, extra) => { const d = document.createElement('i'); d.className = 'tl-dot' + (extra || ''); d.dataset.i = i; return d; };
   let cur = container; const stack = [];
@@ -561,20 +562,61 @@ function resetMacroTimeline(el) {
   const bar = el.nextElementSibling; // 전체 진행도 선 비우기
   if (bar && bar.firstElementChild) bar.firstElementChild.style.width = '0%';
 }
-// 전체 진행도 선 — 타임라인이 길어 한눈에 안 보일 때만(가로 오버플로) 활성 노드의 전체 위치를 녹색선으로
-function updateProgBar(el, idx) {
+// 전체 진행도 선 — 타임라인이 길어 한눈에 안 보일 때만(가로 오버플로) 표시. 채움=반복까지 반영한 단조 진행률(뒤로 안 감).
+function progBarShow(el) {
+  const bar = el && el.nextElementSibling;
+  if (bar && bar.classList.contains('macro-prog-bar')) bar.classList.toggle('show', el.scrollWidth > el.clientWidth + 2);
+}
+function setProgBar(el, frac) {
   const bar = el && el.nextElementSibling;
   if (!bar || !bar.classList.contains('macro-prog-bar')) return;
   bar.classList.toggle('show', el.scrollWidth > el.clientWidth + 2);
   const fill = bar.firstElementChild;
-  const node = idx >= 0 ? el.querySelector(`.tl-dot[data-i="${idx}"], .tl-line[data-i="${idx}"]`) : null;
-  if (fill && node && el.scrollWidth) {
-    const c = el.getBoundingClientRect(), n = node.getBoundingClientRect();
-    const frac = ((n.left + n.width / 2 - c.left) + el.scrollLeft) / el.scrollWidth; // 전체 타임라인 중 활성 노드 위치
-    fill.style.width = (Math.max(0, Math.min(1, frac)) * 100).toFixed(1) + '%';
-  }
+  if (fill) fill.style.width = (Math.max(0, Math.min(1, frac)) * 100).toFixed(1) + '%';
 }
-function updateProgBars() { document.querySelectorAll('.macro-prog').forEach((el) => updateProgBar(el, -1)); } // 표시 여부(오버플로) 갱신
+// 반복까지 반영한 단조(monotone) 진행률 0..1 — 펼친(반복 풀린) 전체 스텝 수 대비 완료 스텝 수.
+// idx=현재 스텝(재생 stepIndex, 항상 a/d 리프), loops=활성 반복 프레임[{startIndex,total,remaining}].
+function loopAwareFraction(shape, idx, loops) {
+  const n = shape.length;
+  if (!n) return 0;
+  const endOf = new Array(n).fill(-1), st = []; // 's'→짝 'e' 인덱스
+  for (let i = 0; i < n; i++) {
+    const t = shape[i][0];
+    if (t === 's') st.push(i);
+    else if (t === 'e') { const s = st.pop(); if (s != null) endOf[s] = i; }
+  }
+  const lm = new Map(); (loops || []).forEach((f) => lm.set(f.startIndex, f));
+  const total = (a, b) => { // [a,b) 1회 실행의 펼친 리프 수
+    let c = 0;
+    for (let i = a; i < b;) {
+      const t = shape[i][0];
+      if (t === 's') { const e = endOf[i] < 0 ? b : endOf[i]; c += Math.max(1, +shape[i][1] || 1) * total(i + 1, e); i = e + 1; }
+      else if (t === 'e') i++;
+      else { c += 1; i++; }
+    }
+    return c;
+  };
+  const done = (a, b) => { // [a,b) 중 현재까지 완료한 리프 수
+    let c = 0;
+    for (let i = a; i < b;) {
+      const t = shape[i][0];
+      if (t === 's') {
+        const e = endOf[i] < 0 ? b : endOf[i], N = Math.max(1, +shape[i][1] || 1), bw = total(i + 1, e);
+        if (idx > e) c += N * bw;                 // 루프 완전히 통과 → 전부 완료
+        else if (idx > i && idx < e) {            // 현재 이 루프 안
+          const f = lm.get(i), iterDone = f ? Math.max(0, f.total - f.remaining) : 0;
+          c += iterDone * bw + done(i + 1, e);    // 끝난 회차 + 이번 회차 진행분
+        }
+        i = e + 1;
+      } else if (t === 'e') i++;
+      else { if (i <= idx) c += 1; i++; }         // 현재 스텝 포함(끝에서 100% 도달)
+    }
+    return c;
+  };
+  const W = total(0, n);
+  return W > 0 ? Math.max(0, Math.min(1, done(0, n) / W)) : 0;
+}
+function updateProgBars() { document.querySelectorAll('.macro-prog').forEach(progBarShow); } // 표시 여부(오버플로) 갱신
 function updateMacroTimeline(macroId, p) {
   const el = document.querySelector(`.macro-prog[data-id="${macroId}"]`);
   if (!el) return;
@@ -600,7 +642,8 @@ function updateMacroTimeline(macroId, p) {
     lp.classList.add('active'); lp.classList.remove('done'); // 되돌아온(재진입) 루프는 다시 진행 중
     const total = f.total || 1; setLoopFill(lp, (total - f.remaining + 1) / total); // 색 채움 = 현재/전체 (숫자 없음)
   });
-  updateProgBar(el, idx); // 전체 진행도 녹색선
+  let shape = []; try { shape = JSON.parse(el.dataset.shape || '[]'); } catch { /* 손상 시 빈 */ }
+  setProgBar(el, loopAwareFraction(shape, idx, p.loops)); // 전체 진행도 녹색선 — 반복까지 반영, 뒤로 안 감
   scrollTimelineToActive(el, idx);
 }
 // 인디케이터가 항목 폭을 넘으면 활성 노드가 중앙~우측(60%)에 오도록 가로 스크롤 추적
