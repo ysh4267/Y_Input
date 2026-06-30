@@ -23,14 +23,20 @@ public sealed class InterceptionBackend : IDisposable
     private readonly object _sendGate = new(); // 동시 재생: 여러 매크로가 같은 컨텍스트로 전송 시 직렬화
     private volatile bool _capturing;
 
+    // 연결된 키보드/마우스 디바이스 id 목록(GetDeviceList). 후크의 Device는 "실제 입력이 한 번
+    // 들어와야" 학습되지만(그 전엔 0 → 전송 실패), 이 목록은 학습 없이도 유효한 디바이스를 주므로
+    // 트리거 직후/켠 직후에도 바로 전송할 수 있다.
+    private int[] _kbDevices = Array.Empty<int>();
+    private int[] _mouseDevices = Array.Empty<int>();
+
     /// <summary>드라이버가 설치되어 초기화에 성공했는지.</summary>
     public bool Available { get; }
 
-    /// <summary>키보드 디바이스가 학습되어 송출 가능한지.</summary>
-    public bool KeyboardReady => Available && _kbHook is { CanSimulateInput: true };
+    /// <summary>키보드로 송출 가능한지(학습됐거나 연결된 키보드 디바이스가 있으면).</summary>
+    public bool KeyboardReady => Available && (_kbHook is { CanSimulateInput: true } || _kbDevices.Length > 0);
 
-    /// <summary>마우스 디바이스가 학습되어 송출 가능한지.</summary>
-    public bool MouseReady => Available && _mouseHook is { CanSimulateInput: true };
+    /// <summary>마우스로 송출 가능한지.</summary>
+    public bool MouseReady => Available && (_mouseHook is { CanSimulateInput: true } || _mouseDevices.Length > 0);
 
     public bool IsCapturing => _capturing;
 
@@ -51,12 +57,35 @@ public sealed class InterceptionBackend : IDisposable
             // 전송 전용 컨텍스트: 후크의 컨텍스트는 수신 루프가 interception_wait로 점유하므로,
             // 같은 컨텍스트로 보내면 락 경합으로 행이 걸린다. 별도 컨텍스트로 보내면 경합이 없다.
             _sendContext = InputInterceptor.CreateContext();
+            RefreshDevices(); // 연결된 키보드/마우스 디바이스 목록 — 학습 없이도 전송 가능하게
             Available = true;
         }
         catch
         {
             Available = false;
         }
+    }
+
+    /// <summary>연결된 키보드/마우스 디바이스 id 목록을 갱신한다.</summary>
+    private void RefreshDevices()
+    {
+        try { _kbDevices = InputInterceptor.GetDeviceList(InputInterceptor.IsKeyboard).Select(d => d.Device).Where(d => d > 0).ToArray(); } catch { }
+        try { _mouseDevices = InputInterceptor.GetDeviceList(InputInterceptor.IsMouse).Select(d => d.Device).Where(d => d > 0).ToArray(); } catch { }
+    }
+
+    /// <summary>키보드 전송 대상 디바이스: 학습됐으면 그 디바이스, 아니면 연결된 첫 키보드.</summary>
+    private int KeyboardSendDevice()
+    {
+        if (_kbHook is { CanSimulateInput: true, Device: > 0 }) return _kbHook.Device;
+        if (_kbDevices.Length == 0) RefreshDevices();
+        return _kbDevices.Length > 0 ? _kbDevices[0] : (_kbHook?.Device ?? 0);
+    }
+
+    private int MouseSendDevice()
+    {
+        if (_mouseHook is { CanSimulateInput: true, Device: > 0 }) return _mouseHook.Device;
+        if (_mouseDevices.Length == 0) RefreshDevices();
+        return _mouseDevices.Length > 0 ? _mouseDevices[0] : (_mouseHook?.Device ?? 0);
     }
 
     public void StartCapture() => _capturing = true;
@@ -84,18 +113,21 @@ public sealed class InterceptionBackend : IDisposable
 
     public void SendKeyboard(KeyboardEvent ke)
     {
-        EnsureKeyboard();
+        if (!Available || _kbHook is null)
+            throw new InputNotReadyException("Interception 드라이버를 사용할 수 없습니다. 설치 후 재부팅했는지 확인하세요.");
         var stroke = new Stroke
         {
             Key = new KeyStroke { Code = (KeyCode)ke.Code, State = (KeyState)ke.State, Information = InjectMark },
         };
-        var ctx = _sendContext != IntPtr.Zero ? _sendContext : _kbHook!.Context;
-        lock (_sendGate) InputInterceptor.Send(ctx, _kbHook!.Device, ref stroke, 1);
+        var ctx = _sendContext != IntPtr.Zero ? _sendContext : _kbHook.Context;
+        var dev = KeyboardSendDevice(); // 학습된 디바이스 우선, 없으면 연결된 첫 키보드(학습 불필요)
+        lock (_sendGate) InputInterceptor.Send(ctx, dev, ref stroke, 1);
     }
 
     public void SendMouse(MouseEvent me)
     {
-        EnsureMouse();
+        if (!Available || _mouseHook is null)
+            throw new InputNotReadyException("Interception 드라이버를 사용할 수 없습니다. 설치 후 재부팅했는지 확인하세요.");
         var stroke = new Stroke
         {
             Mouse = new MouseStroke
@@ -108,8 +140,9 @@ public sealed class InterceptionBackend : IDisposable
                 Information = InjectMark,
             },
         };
-        var ctx = _sendContext != IntPtr.Zero ? _sendContext : _mouseHook!.Context;
-        lock (_sendGate) InputInterceptor.Send(ctx, _mouseHook!.Device, ref stroke, 1);
+        var ctx = _sendContext != IntPtr.Zero ? _sendContext : _mouseHook.Context;
+        var dev = MouseSendDevice();
+        lock (_sendGate) InputInterceptor.Send(ctx, dev, ref stroke, 1);
     }
 
     public void SendText(TextEvent te)
