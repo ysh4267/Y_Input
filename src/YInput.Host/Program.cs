@@ -42,7 +42,8 @@ internal static class Program
         using var hotkeys = new HotkeyManager();
         using var rawInput = new RawInputMonitor();
         var hub = new SocketHub();
-        var service = new MacroService(backend, library, player, recorder, hotkeys, rawInput, hub);
+        using var progress = new ProgressBroadcaster(hub); // 진행 보고 ~60Hz 코얼레싱(종료 시 타이머 정리)
+        var service = new MacroService(backend, library, player, recorder, hotkeys, rawInput, hub, progress);
 
         // 로컬 웹서버 (127.0.0.1 전용)
         int port = FindFreePort(PreferredPort);

@@ -20,6 +20,7 @@ public sealed class MacroService
     private readonly HotkeyManager _hotkeys;
     private readonly RawInputMonitor _rawInput;
     private readonly SocketHub _hub;
+    private readonly ProgressBroadcaster _progress;
 
     private readonly object _gate = new();
     private readonly Dictionary<int, string> _hotkeyToMacro = new();
@@ -46,7 +47,8 @@ public sealed class MacroService
     }
 
     public MacroService(InputBackend backend, MacroLibrary library, Player player,
-                        Recorder recorder, HotkeyManager hotkeys, RawInputMonitor rawInput, SocketHub hub)
+                        Recorder recorder, HotkeyManager hotkeys, RawInputMonitor rawInput, SocketHub hub,
+                        ProgressBroadcaster progress)
     {
         _backend = backend;
         _library = library;
@@ -55,6 +57,7 @@ public sealed class MacroService
         _hotkeys = hotkeys;
         _rawInput = rawInput;
         _hub = hub;
+        _progress = progress;
 
         _backend.GamepadInput += OnGamepadInput;
         _rawInput.Detected += OnRawDetected;
@@ -155,18 +158,11 @@ public sealed class MacroService
 
         var macro = _library.Load(id) ?? throw new FileNotFoundException("매크로를 찾을 수 없습니다: " + id);
         var player = new Player(_backend); // 매크로마다 독립 Player → 서로 비동기·동시 재생
-        player.Progress += (_, p) =>
-            _hub.Broadcast("progress", new
-            {
-                macroId = id,
-                loop = p.Loop,
-                stepIndex = p.StepIndex,
-                stepCount = p.StepCount,
-                delayMs = p.DelayMs,                // 현재 지연의 실제 대기(ms) — 채움 애니메이션 길이
-                loops = p.Loops,                    // [{ startIndex, total, remaining }] — 반복 진행
-            });
+        // 진행 보고는 스텝마다(최대 ~1000/s) 오므로, ProgressBroadcaster가 매크로별 최신값만 ~60Hz로 합쳐 전송한다.
+        player.Progress += (_, p) => _progress.Report(id, p);
         player.Failed += (_, ex) => Log("error", $"재생 오류({macro.Name}): {ex.Message}");
-        player.Stopped += (_, _) => { _running.TryRemove(id, out _); BroadcastStatus(); };
+        // 정지 시 최종 진행 프레임을 1회 강제 전송(코얼레싱으로 마지막 프레임이 누락되지 않게) 후 슬롯 제거.
+        player.Stopped += (_, _) => { _running.TryRemove(id, out _); _progress.Complete(id); BroadcastStatus(); };
         _running[id] = player;
         Log("info", $"재생 시작: {macro.Name}");
         BroadcastStatus();
