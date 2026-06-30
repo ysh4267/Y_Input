@@ -87,7 +87,12 @@ internal static class Program
         defaultFiles.DefaultFileNames.Clear();
         defaultFiles.DefaultFileNames.Add("index.html");
         app.UseDefaultFiles(defaultFiles);
-        app.UseStaticFiles(new StaticFileOptions { FileProvider = webUi });
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            FileProvider = webUi,
+            // 항상 ETag로 재검증 → 업데이트 후 브라우저가 옛 app.js/app.css를 캐시한 채 쓰지 않게(안 바뀌면 304, 바뀌면 새 파일)
+            OnPrepareResponse = ctx => ctx.Context.Response.Headers["Cache-Control"] = "no-cache, must-revalidate",
+        });
 
         app.MapApi(service, hub);
         return app;
