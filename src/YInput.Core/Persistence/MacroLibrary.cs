@@ -27,7 +27,7 @@ public sealed class MacroLibrary
             try { list.Add(MacroStore.Load(file)); }
             catch { /* 손상 파일은 건너뜀 */ }
         }
-        return list.OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        return list.OrderBy(m => m.Order).ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     public Macro? Load(string id)

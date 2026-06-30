@@ -79,7 +79,7 @@ export function installLockdown() {
 
   // 텍스트/요소 드래그 차단 — 지정된 드래그 핸들(팔레트·행 핸들)만 허용
   document.addEventListener('dragstart', (e) => {
-    if (e.target.closest && e.target.closest('.pal-item, .step-drag')) return;
+    if (e.target.closest && e.target.closest('.pal-item, .step-drag, .macro-grip')) return;
     e.preventDefault();
   }, true);
 

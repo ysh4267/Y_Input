@@ -58,9 +58,18 @@ public static class ApiEndpoints
         app.MapPost("/api/macros", (HttpRequest req) => Guard(async () =>
         {
             var macro = await ReadMacro(req);
-            if (string.IsNullOrWhiteSpace(macro.Id)) macro.Id = Guid.NewGuid().ToString("N");
+            if (string.IsNullOrWhiteSpace(macro.Id)) { macro.Id = Guid.NewGuid().ToString("N"); macro.Order = service.NextOrder(); }
             service.SaveMacro(macro);
             return Json(macro);
+        }));
+
+        // ---- 매크로 목록 순서 변경(드래그) — body: 정렬된 id 배열 ----
+        app.MapPost("/api/macros/reorder", (HttpRequest req) => Guard(async () =>
+        {
+            using var reader = new StreamReader(req.Body);
+            var ids = JsonSerializer.Deserialize<string[]>(await reader.ReadToEndAsync(), MacroStore.Options) ?? Array.Empty<string>();
+            service.Reorder(ids);
+            return Results.Ok(new { ok = true });
         }));
 
         app.MapPut("/api/macros/{id}", (string id, HttpRequest req) => Guard(async () =>
@@ -223,6 +232,7 @@ public static class ApiEndpoints
         name = m.Name,
         stepCount = m.Steps.Count,
         loopCount = m.LoopCount,
+        order = m.Order,
         durationMs = TotalDurationMs(m, byId, new HashSet<string>()),
         speedMultiplier = m.SpeedMultiplier,
         trigger = m.Trigger?.ToString() ?? "",

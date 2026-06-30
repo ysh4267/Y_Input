@@ -112,11 +112,8 @@ function renderMacroList(listEl, emptyEl, mode) {
   if (!listEl) return;
   listEl.innerHTML = '';
   if (emptyEl) emptyEl.hidden = state.macros.length > 0;
-  // 실행 탭: 활성(적용 ON) 매크로를 위로(그 안에서는 기존 이름순 유지 — JS sort는 안정 정렬)
-  const ordered = mode === 'run'
-    ? [...state.macros].sort((a, b) => (b.enabled ? 1 : 0) - (a.enabled ? 1 : 0))
-    : state.macros;
-  for (const m of ordered) {
+  // 사용자 지정 순서(서버 Order)대로 표시 — 드래그로 변경·저장됨.
+  for (const m of state.macros) {
     const li = document.createElement('li');
     li.className = 'macro-item' + (mode === 'run' ? ' run' : '');
     li.dataset.id = m.id;
@@ -127,6 +124,7 @@ function renderMacroList(listEl, emptyEl, mode) {
       const repCount = m.loopCount > 1 ? m.loopCount : 2;
       li.innerHTML = `
         <div class="mi-main">
+          <span class="macro-grip" draggable="true" title="드래그하여 순서 변경">⠿</span>
           <label class="toggle" title="적용(트리거 활성)"><input type="checkbox" class="act-toggle" ${m.enabled ? 'checked' : ''}><span class="track"></span><span class="knob"></span></label>
           <div class="macro-meta"><span class="name">${esc(m.name)}</span><span class="macro-sub">${m.stepCount}스텝 · 총 ${fmtMs(m.durationMs || 0)}</span></div>
           <div class="macro-actions">
@@ -148,6 +146,7 @@ function renderMacroList(listEl, emptyEl, mode) {
     } else {
       const sub = `${m.stepCount}스텝 · 총 ${fmtMs(m.durationMs || 0)}`;
       li.innerHTML = `
+        <span class="macro-grip" draggable="true" title="드래그하여 순서 변경">⠿</span>
         <div class="macro-meta"><span class="name">${esc(m.name)}</span><span class="macro-sub">${sub}</span></div>
         <div class="macro-actions">
           <button class="mbtn act-dup" title="복제">${ICON.dup}</button>
@@ -160,6 +159,7 @@ function renderMacroList(listEl, emptyEl, mode) {
     };
     li.querySelector('.act-del').onclick = () => confirmDeleteInline(li, m.id);
     const dupBtn = li.querySelector('.act-dup'); if (dupBtn) dupBtn.onclick = () => duplicateMacro(m.id);
+    wireMacroDrag(li, m.id);
     if (mode === 'run') {
       const tg = li.querySelector('.act-toggle');
       tg.onchange = async () => {
@@ -181,6 +181,52 @@ function renderMacroList(listEl, emptyEl, mode) {
     }
     listEl.appendChild(li);
   }
+}
+
+// ---------- 매크로 목록 드래그 순서 변경(그립 핸들) ----------
+let dragMacroId = null;
+function wireMacroDrag(li, id) {
+  const grip = li.querySelector('.macro-grip');
+  if (grip) {
+    grip.addEventListener('dragstart', (e) => {
+      dragMacroId = id; e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', id); } catch (_) {}
+      li.classList.add('dragging');
+    });
+    grip.addEventListener('dragend', () => {
+      dragMacroId = null;
+      document.querySelectorAll('.macro-item.dragging,.macro-item.drop-before,.macro-item.drop-after')
+        .forEach((x) => x.classList.remove('dragging', 'drop-before', 'drop-after'));
+    });
+  }
+  li.addEventListener('dragover', (e) => {
+    if (!dragMacroId || dragMacroId === id) return;
+    e.preventDefault();
+    const r = li.getBoundingClientRect();
+    const before = e.clientY < r.top + r.height / 2;
+    li.classList.toggle('drop-before', before);
+    li.classList.toggle('drop-after', !before);
+  });
+  li.addEventListener('dragleave', () => li.classList.remove('drop-before', 'drop-after'));
+  li.addEventListener('drop', (e) => {
+    if (!dragMacroId || dragMacroId === id) return;
+    e.preventDefault();
+    const r = li.getBoundingClientRect();
+    reorderMacros(dragMacroId, id, e.clientY < r.top + r.height / 2);
+  });
+}
+async function reorderMacros(srcId, targetId, before) {
+  const ids = state.macros.map((m) => m.id);
+  const from = ids.indexOf(srcId); if (from < 0) return;
+  ids.splice(from, 1);
+  let to = ids.indexOf(targetId);
+  if (!before) to += 1;
+  ids.splice(to, 0, srcId);
+  // 낙관적 반영 후 저장
+  state.macros = ids.map((id) => state.macros.find((m) => m.id === id)).filter(Boolean);
+  renderMacroList($('macro-list-run'), $('macro-empty-run'), 'run');
+  renderMacroList($('macro-list-edit'), $('macro-empty-edit'), 'edit');
+  try { await api.reorder(ids); } catch (e) { log('error', e.message); await loadMacros(); }
 }
 
 function renderMacroActive() {

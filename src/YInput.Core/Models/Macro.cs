@@ -27,6 +27,9 @@ public sealed class Macro
     /// <summary>적용(활성) 여부. 기본 false(꺼짐) — 실행 페이지에서 켠 것만 트리거 핫키가 무장된다.</summary>
     public bool Enabled { get; set; } = false;
 
+    /// <summary>매크로 목록에서의 사용자 지정 정렬 순서(작을수록 위). 드래그로 변경·저장된다.</summary>
+    public int Order { get; set; } = 0;
+
     /// <summary>마지막 수정 시각(UTC, ISO8601). 호스트가 저장 시 설정.</summary>
     public DateTimeOffset ModifiedUtc { get; set; }
 

@@ -28,6 +28,7 @@ export const api = {
   createMacro: (macro) => request('POST', '/api/macros', macro),
   updateMacro: (id, macro) => request('PUT', `/api/macros/${id}`, macro),
   deleteMacro: (id) => request('DELETE', `/api/macros/${id}`),
+  reorder: (ids) => request('POST', '/api/macros/reorder', ids),
   setEnabled: (id, enabled) => request('POST', `/api/macros/${id}/enabled`, { enabled }),
   setTrigger: (id, trigger) => request('POST', `/api/macros/${id}/trigger`, trigger ?? null),
   setPlayback: (id, loopCount) => request('POST', `/api/macros/${id}/playback`, { loopCount }),

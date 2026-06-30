@@ -64,13 +64,8 @@ public sealed class MacroService
             // 실시간 카드 렌더용으로 전체 이벤트(@event)도 함께 보냄($type 포함 직렬화).
             _hub.Broadcast("recordedStep", new { summary = step.Event.Summary, delayBeforeMs = step.DelayBeforeMs, @event = step.Event });
 
-        // 앱 시작 시 모든 매크로 비활성화 — 직전 세션에서 켜둔/멈춰 있던 매크로가
-        // 자동으로 트리거 무장/재개되지 않도록(안전). 사용자는 매 세션 다시 켠다.
-        foreach (var m in _library.LoadAll())
-        {
-            if (m.Enabled) { m.Enabled = false; _library.Save(m); }
-        }
-
+        // 시작 시 재생 상태는 어차피 보존되지 않으므로 자동 재생되는 매크로는 없다.
+        // 활성(enabled) 토글은 그대로 유지 → 다음 세션에도 트리거가 무장된 상태로 시작된다.
         ReloadHotkeys();
     }
 
@@ -282,6 +277,20 @@ public sealed class MacroService
         var macro = _library.Load(id) ?? throw new FileNotFoundException("매크로를 찾을 수 없습니다: " + id);
         macro.LoopCount = loopCount;
         _library.Save(macro);
+    }
+
+    /// <summary>새 매크로에 부여할 순서값(현재 최댓값+1 → 목록 맨 아래).</summary>
+    public int NextOrder() { var all = _library.LoadAll(); return all.Count == 0 ? 0 : all.Max(m => m.Order) + 1; }
+
+    /// <summary>매크로 목록 순서를 ids 순서대로 저장한다(드래그 재정렬). 트리거에 영향 없음.</summary>
+    public void Reorder(IReadOnlyList<string> ids)
+    {
+        for (int i = 0; i < ids.Count; i++)
+        {
+            var m = _library.Load(ids[i]);
+            if (m is not null && m.Order != i) { m.Order = i; _library.Save(m); }
+        }
+        BroadcastStatus();
     }
 
     /// <summary>매크로의 트리거 핫키를 설정/해제한다(실행 페이지 목록에서 직접 지정).</summary>
