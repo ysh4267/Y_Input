@@ -72,7 +72,7 @@ export function keyName(ev) {
 
 /** KeyboardEvent {code, state} → 표시 이름(방향 포함) */
 export function labelFromKbEvent(ev) {
-  const dir = (ev.state & 0x01) ? '↑떼기' : '↓누름';
+  const dir = (ev.state & 0x01) ? '떼기' : '누름'; // 앞 화살표(↑/↓) 제거 — 화살표키일 때 키 자체와 헷갈림 방지
   return `${keyName(ev)} ${dir}`;
 }
 
