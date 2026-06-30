@@ -12,6 +12,8 @@
     <AssemblyName>YInput</AssemblyName>
     <!-- 웹 UI를 exe에 내장하기 위한 매니페스트 생성 -->
     <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
+    <!-- 버전 문자열에 +커밋해시가 붙지 않도록(업데이트 비교를 태그와 정확히 일치시키기 위함) -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>

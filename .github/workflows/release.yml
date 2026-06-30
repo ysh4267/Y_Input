@@ -1,0 +1,78 @@
+name: release
+
+# main 에 푸시될 때마다 단일 exe 를 빌드해 GitHub Release 를 자동 생성한다.
+# 버전 규칙: VERSION 파일(MAJOR.MINOR.PATCH)을 기준선으로,
+#   - PATCH 는 기존 태그를 보고 자동 +1 (평소엔 VERSION 을 건드릴 필요 없음)
+#   - MINOR/MAJOR 점프는 VERSION 을 통째로(예: 0.3.0) 덮어쓰면 그 값부터 다시 시작
+# 커밋 메시지에 [skip ci] 가 있으면 빌드/릴리즈를 건너뛴다.
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release          # 동시에 두 릴리즈가 같은 패치 번호를 잡지 않도록 직렬화
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout (with tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # 기존 태그를 봐야 다음 PATCH 를 계산할 수 있음
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Compute next version
+        id: ver
+        shell: pwsh
+        run: |
+          $base = (Get-Content VERSION -Raw).Trim()
+          if ($base -notmatch '^(\d+)\.(\d+)\.(\d+)$') { throw "VERSION must be MAJOR.MINOR.PATCH, got '$base'" }
+          $maj = [int]$Matches[1]; $min = [int]$Matches[2]; $basePatch = [int]$Matches[3]
+
+          git fetch --tags --quiet
+          $prefix = "v$maj.$min."
+          $maxPatch = -1
+          foreach ($t in (git tag --list "$prefix*")) {
+            if ($t -match ("^v$maj\.$min\.(\d+)$")) {
+              $n = [int]$Matches[1]
+              if ($n -gt $maxPatch) { $maxPatch = $n }
+            }
+          }
+          # 기존 태그보다 항상 한 칸 위, 단 VERSION 의 PATCH 보다는 낮아지지 않도록(수동 점프 존중)
+          $patch = [Math]::Max($maxPatch + 1, $basePatch)
+          $version = "$maj.$min.$patch"
+          $tag = "v$version"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag"         >> $env:GITHUB_OUTPUT
+          Write-Host "Next release: $tag (VERSION=$base, latest patch=$maxPatch)"
+
+      - name: Publish single-file exe
+        shell: pwsh
+        run: |
+          dotnet publish src/YInput.Host/YInput.Host.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true `
+            -p:Version=${{ steps.ver.outputs.version }} `
+            -p:InformationalVersion=${{ steps.ver.outputs.tag }} `
+            -o publish --nologo -v minimal
+          if (-not (Test-Path publish/YInput.exe)) { throw "publish/YInput.exe not found" }
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create ${{ steps.ver.outputs.tag }} publish/YInput.exe `
+            --title "Y_Input ${{ steps.ver.outputs.tag }}" `
+            --target ${{ github.sha }} `
+            --notes "Auto release from ${{ github.sha }}"

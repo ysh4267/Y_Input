@@ -42,11 +42,11 @@ function openSettings() {
   loadVersion();
 }
 
-// 설정 패널 하단 버전 표시: 현재 빌드(HEAD)·깃 최신 릴리즈 태그·릴리즈 날짜
+// 설정 패널 하단 버전 표시: 현재 빌드·GitHub 최신 릴리즈 태그·릴리즈 날짜
 async function loadVersion() {
   try {
     const v = await api.appVersion();
-    $('ver-current').textContent = v.current ? `${v.current}${v.currentDate ? ` (${v.currentDate})` : ''}` : '—';
+    $('ver-current').textContent = v.current ? `${v.current}${v.currentDate ? ` (${v.currentDate})` : ''}` : '개발 빌드';
     $('ver-release').textContent = v.release || '—';
     $('ver-date').textContent = v.releaseDate || '—';
   } catch {
@@ -662,21 +662,22 @@ function showProgress(p) {
   else if (!runShownId) selectRunMacro(p.macroId);
 }
 
-// ---------- 업데이트(Git 동기화) ----------
+// ---------- 업데이트(GitHub Releases) ----------
 async function onUpdateCheck() {
   $('update-status').textContent = '확인 중…';
   $('btn-update-apply').disabled = true;
   try {
     const r = await api.updateCheck();
     if (!r.ok) { $('update-status').textContent = '확인 실패: ' + (r.message || ''); return; }
-    if (r.behind > 0) { $('update-status').textContent = `${r.behind}개 업데이트 가능 (현재 ${r.current})`; $('btn-update-apply').disabled = false; }
-    else $('update-status').textContent = `최신 상태 (현재 ${r.current})`;
+    const cur = r.current || '개발 빌드';
+    if (r.updateAvailable) { $('update-status').textContent = `새 버전 ${r.latest} 사용 가능 (현재 ${cur})`; $('btn-update-apply').disabled = false; }
+    else $('update-status').textContent = `최신 상태 (현재 ${cur})`;
   } catch (e) { $('update-status').textContent = '확인 실패: ' + e.message; }
 }
 async function onUpdateApply() {
-  const ok = await confirmDialog('최신 코드로 업데이트하고 앱을 재시작할까요?\n(git pull → 빌드 → 재실행)', { title: '업데이트 적용', ok: '업데이트', cancel: '취소' });
+  const ok = await confirmDialog('최신 릴리즈를 내려받아 교체하고 앱을 재시작할까요?', { title: '업데이트 적용', ok: '업데이트', cancel: '취소' });
   if (!ok) return;
-  $('update-status').textContent = '업데이트 중… 빌드 후 자동 재시작됩니다.';
+  $('update-status').textContent = '다운로드 중… 완료되면 교체 후 자동 재시작됩니다.';
   $('btn-update-apply').disabled = true; $('btn-update-check').disabled = true;
   try { await api.updateApply(); } catch (e) { /* 곧 종료되어 응답이 안 올 수 있음 */ }
 }

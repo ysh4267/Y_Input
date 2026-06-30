@@ -186,7 +186,7 @@ public static class ApiEndpoints
             return Results.Ok(new { quitting = true });
         });
 
-        // ---- Git 업데이트 동기화(개발 PC: 소스 트리 + dotnet SDK + git 필요) ----
+        // ---- GitHub Releases 업데이트(소스/SDK/git 불필요 — 어느 PC에서나 동작) ----
         app.MapGet("/api/app/version", () => Guard(async () =>
         {
             var v = await Task.Run(AppUpdater.Version);
@@ -195,13 +195,18 @@ public static class ApiEndpoints
         app.MapGet("/api/app/update/check", () => Guard(async () =>
         {
             var r = await Task.Run(AppUpdater.Check);
-            return Results.Json(new { ok = r.Ok, behind = r.Behind, current = r.Current, message = r.Message });
+            return Results.Json(new { ok = r.Ok, updateAvailable = r.UpdateAvailable, current = r.Current, latest = r.Latest, message = r.Message });
         }));
-        app.MapPost("/api/app/update", () => Guard(() =>
+        app.MapPost("/api/app/update", () => Guard(async () =>
         {
-            var r = AppUpdater.Start();
-            service.Log(r.Ok ? "info" : "error", r.Ok ? "업데이트 시작 — 곧 재빌드/재시작됩니다." : ("업데이트 실패: " + r.Message));
-            return Task.FromResult(Results.Json(new { started = r.Ok, message = r.Message }));
+            var r = await Task.Run(AppUpdater.Start);   // 다운로드(수십 MB)까지 마친 뒤 교체 스크립트를 분리 실행
+            service.Log(r.Ok ? "info" : "error", r.Ok ? "업데이트 시작 — 곧 교체/재시작됩니다." : ("업데이트 실패: " + r.Message));
+            if (r.Ok)
+            {
+                // 응답이 나간 뒤 그레이스풀 종료 → 교체 스크립트가 새 빌드로 재시작한다.
+                _ = Task.Run(async () => { await Task.Delay(700); service.RequestQuit(); });
+            }
+            return Results.Json(new { started = r.Ok, message = r.Message });
         }));
 
         // ---- WebSocket ----
