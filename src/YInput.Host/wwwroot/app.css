@@ -133,9 +133,9 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 /* 매크로 목록 — 이름 한 줄 + 상세 아랫줄 */
 .macro-list { list-style: none; margin: 0; padding: 0; max-height: 40vh; overflow-y: auto; }
 .macro-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card2); margin-bottom: 6px; cursor: pointer; position: relative; }
-.macro-item.active { border-color: var(--accent); }
 .macro-item:hover { border-color: var(--border2); }
-.macro-item.enabled { background: rgba(79,140,255,.12); border-color: rgba(79,140,255,.55); } /* 활성(적용 ON) 하이라이트 */
+.macro-item.enabled { background: rgba(79,140,255,.12); border-color: rgba(79,140,255,.55); } /* 적용(ON) 하이라이트(파랑) */
+.macro-item.active { background: rgba(52,211,153,.18); border-color: var(--accent2); box-shadow: 0 0 0 1px rgba(52,211,153,.45); } /* 재생 중(작동중) 하이라이트(녹색) — 적용보다 우선 */
 .macro-item.confirming { border-color: var(--rec); background: rgba(255,84,112,.12); }
 .macro-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .macro-meta .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
