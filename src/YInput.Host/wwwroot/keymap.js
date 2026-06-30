@@ -125,14 +125,35 @@ const MODIFIER_CODES = new Set([
   'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight',
 ]);
 
+// Win32 VK → 표시 이름. 서버 KeyName.FromVirtualKey와 1:1로 일치(저장 전 라이브 라벨 = 저장 후 표시).
 const VK_LABELS = {
-  0x20: 'Space', 0x0D: 'Enter', 0x1B: 'Esc', 0x09: 'Tab', 0x08: 'Backspace',
+  // 공백·편집·제어
+  0x08: 'Backspace', 0x09: 'Tab', 0x0C: 'Clear', 0x0D: 'Enter',
+  0x1B: 'Esc', 0x20: 'Space', 0x03: 'Break', 0x13: 'Pause', 0x14: 'Caps',
+  // 한글 IME
+  0x15: '한/영', 0x19: '한자',
+  // 이동·편집키
+  0x21: 'PgUp', 0x22: 'PgDn', 0x23: 'End', 0x24: 'Home',
   0x25: '←', 0x26: '↑', 0x27: '→', 0x28: '↓',
-  0x24: 'Home', 0x23: 'End', 0x21: 'PgUp', 0x22: 'PgDn', 0x2D: 'Ins', 0x2E: 'Del',
-  0x6A: 'Num*', 0x6B: 'Num+', 0x6D: 'Num-', 0x6E: 'Num.', 0x6F: 'Num/',
+  0x29: 'Select', 0x2C: 'PrtSc', 0x2D: 'Ins', 0x2E: 'Del', 0x2F: 'Help',
+  // Win·메뉴·전원
+  0x5B: 'LWin', 0x5C: 'RWin', 0x5D: 'Menu', 0x5F: 'Sleep',
+  // 넘패드 연산자
+  0x6A: 'Num*', 0x6B: 'Num+', 0x6C: 'Num,', 0x6D: 'Num-', 0x6E: 'Num.', 0x6F: 'Num/',
+  // 토글
+  0x90: 'NumLk', 0x91: 'ScrLk',
+  // 좌우 구분 모디파이어
+  0xA0: 'LShift', 0xA1: 'RShift', 0xA2: 'LCtrl', 0xA3: 'RCtrl', 0xA4: 'LAlt', 0xA5: 'RAlt',
+  // 브라우저
+  0xA6: '브라우저 뒤로', 0xA7: '브라우저 앞으로', 0xA8: '새로고침', 0xA9: '브라우저 정지',
+  0xAA: '브라우저 검색', 0xAB: '즐겨찾기', 0xAC: '브라우저 홈',
+  // 볼륨·미디어
+  0xAD: '음소거', 0xAE: '볼륨 -', 0xAF: '볼륨 +',
+  0xB0: '다음 트랙', 0xB1: '이전 트랙', 0xB2: '미디어 정지', 0xB3: '재생/일시정지',
+  0xB4: '메일', 0xB5: '미디어 선택', 0xB6: '앱1', 0xB7: '앱2',
+  // OEM 기호 (US 배열 기준)
   0xBA: ';', 0xBB: '=', 0xBC: ',', 0xBD: '-', 0xBE: '.', 0xBF: '/',
-  0xC0: '`', 0xDB: '[', 0xDC: '\\', 0xDD: ']', 0xDE: "'",
-  0x14: 'Caps', 0x90: 'NumLk', 0x91: 'ScrLk', 0x13: 'Pause', 0x2C: 'PrtSc',
+  0xC0: '`', 0xDB: '[', 0xDC: '\\', 0xDD: ']', 0xDE: "'", 0xDF: 'OEM8', 0xE2: '\\',
 };
 
 /** KeyboardEvent → Win32 VK. IME 무관(e.code 우선). 모디파이어 단독/미지원 키는 null. */
@@ -149,13 +170,13 @@ export function eventToVk(e) {
   return null;
 }
 
-/** Win32 VK → 표시 이름 */
+/** Win32 VK → 표시 이름 (서버 KeyName.FromVirtualKey와 일치) */
 export function vkLabel(vk) {
   if (VK_LABELS[vk]) return VK_LABELS[vk];
-  if (vk >= 0x70 && vk <= 0x7B) return 'F' + (vk - 0x6F);
-  if (vk >= 0x60 && vk <= 0x69) return 'Num' + (vk - 0x60);
+  if (vk >= 0x70 && vk <= 0x87) return 'F' + (vk - 0x6F);    // F1..F24
+  if (vk >= 0x60 && vk <= 0x69) return 'Num' + (vk - 0x60);  // 넘패드 0..9
   if ((vk >= 0x30 && vk <= 0x39) || (vk >= 0x41 && vk <= 0x5A)) return String.fromCharCode(vk);
-  return 'VK_0x' + vk.toString(16).toUpperCase();
+  return '키 0x' + vk.toString(16).toUpperCase();
 }
 
 // ---------- 마우스 ----------

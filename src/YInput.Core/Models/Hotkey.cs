@@ -74,17 +74,54 @@ public sealed class Hotkey
     };
 }
 
-/// <summary>가상 키 코드 → 표시 이름(요약용 최소 매핑).</summary>
+/// <summary>Win32 가상 키 코드(VK_*) → 사람이 읽는 표시 이름. 클라이언트 keymap.js vkLabel과 1:1로 일치시킨다.</summary>
 public static class KeyName
 {
     public static string FromVirtualKey(uint vk) => vk switch
     {
-        >= 0x70 and <= 0x87 => $"F{vk - 0x6F}",          // F1..F24
-        >= 0x30 and <= 0x39 => ((char)vk).ToString(),    // 0..9
+        // 글자·숫자·기능키·넘패드 숫자 (범위)
         >= 0x41 and <= 0x5A => ((char)vk).ToString(),    // A..Z
-        0x20 => "Space",
-        0x0D => "Enter",
-        0x1B => "Esc",
-        _ => $"VK_0x{vk:X2}",
+        >= 0x30 and <= 0x39 => ((char)vk).ToString(),    // 0..9
+        >= 0x70 and <= 0x87 => $"F{vk - 0x6F}",          // F1..F24
+        >= 0x60 and <= 0x69 => $"Num{vk - 0x60}",        // 넘패드 0..9
+
+        // 공백·편집·제어
+        0x08 => "Backspace", 0x09 => "Tab", 0x0C => "Clear", 0x0D => "Enter",
+        0x1B => "Esc", 0x20 => "Space", 0x03 => "Break", 0x13 => "Pause", 0x14 => "Caps",
+
+        // 한글 IME
+        0x15 => "한/영", 0x19 => "한자",
+
+        // 이동·편집키
+        0x21 => "PgUp", 0x22 => "PgDn", 0x23 => "End", 0x24 => "Home",
+        0x25 => "←", 0x26 => "↑", 0x27 => "→", 0x28 => "↓",
+        0x29 => "Select", 0x2C => "PrtSc", 0x2D => "Ins", 0x2E => "Del", 0x2F => "Help",
+
+        // Win·메뉴·전원
+        0x5B => "LWin", 0x5C => "RWin", 0x5D => "Menu", 0x5F => "Sleep",
+
+        // 넘패드 연산자
+        0x6A => "Num*", 0x6B => "Num+", 0x6C => "Num,", 0x6D => "Num-", 0x6E => "Num.", 0x6F => "Num/",
+
+        // 토글
+        0x90 => "NumLk", 0x91 => "ScrLk",
+
+        // 좌우 구분 모디파이어
+        0xA0 => "LShift", 0xA1 => "RShift", 0xA2 => "LCtrl", 0xA3 => "RCtrl", 0xA4 => "LAlt", 0xA5 => "RAlt",
+
+        // 브라우저
+        0xA6 => "브라우저 뒤로", 0xA7 => "브라우저 앞으로", 0xA8 => "새로고침", 0xA9 => "브라우저 정지",
+        0xAA => "브라우저 검색", 0xAB => "즐겨찾기", 0xAC => "브라우저 홈",
+
+        // 볼륨·미디어
+        0xAD => "음소거", 0xAE => "볼륨 -", 0xAF => "볼륨 +",
+        0xB0 => "다음 트랙", 0xB1 => "이전 트랙", 0xB2 => "미디어 정지", 0xB3 => "재생/일시정지",
+        0xB4 => "메일", 0xB5 => "미디어 선택", 0xB6 => "앱1", 0xB7 => "앱2",
+
+        // OEM 기호 (US 배열 기준)
+        0xBA => ";", 0xBB => "=", 0xBC => ",", 0xBD => "-", 0xBE => ".", 0xBF => "/",
+        0xC0 => "`", 0xDB => "[", 0xDC => "\\", 0xDD => "]", 0xDE => "'", 0xDF => "OEM8", 0xE2 => "\\",
+
+        _ => $"키 0x{vk:X2}",
     };
 }
