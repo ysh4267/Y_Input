@@ -684,7 +684,7 @@ function wire() {
 async function init() {
   installLockdown(); // 텍스트 드래그·브라우저 단축키·우클릭 차단
   wire();
-  switchTab('edit'); // 기본: 매크로 편집 탭
+  switchTab('run'); // 기본: 매크로 실행 탭
   connectWs();
   try { renderStatus(await api.status()); } catch (e) { log('error', e.message); }
   await loadMacros();

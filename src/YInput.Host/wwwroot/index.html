@@ -15,8 +15,8 @@
       </button>
     </div>
     <nav class="tabs" id="tabs">
-      <button class="tab-btn" data-tab="run">매크로 실행</button>
-      <button class="tab-btn active" data-tab="edit">매크로 편집</button>
+      <button class="tab-btn active" data-tab="run">매크로 실행</button>
+      <button class="tab-btn" data-tab="edit">매크로 편집</button>
     </nav>
     <div class="status-pills">
       <span id="state-badge" class="badge idle">대기</span>
@@ -26,7 +26,7 @@
 
   <main class="main">
     <!-- ============ 매크로 실행 페이지 ============ -->
-    <section id="page-run" class="page">
+    <section id="page-run" class="page active">
       <div class="run-layout">
         <!-- 매크로 목록(재생) — 드라이버/업데이트는 설정 드로어로 이동 -->
         <div class="card compact run-list-card">
@@ -48,7 +48,7 @@
     </section>
 
     <!-- ============ 매크로 편집 페이지 ============ -->
-    <section id="page-edit" class="page active">
+    <section id="page-edit" class="page">
       <div class="layout">
         <!-- 좌측 사이드바: 매크로 목록(위) + 로그(아래) -->
         <aside class="sidebar">
