@@ -253,6 +253,48 @@ public sealed class MacroService
         return m is null ? null : ExpandMacro(m);
     }
 
+    /// <summary>우측 현황 패널용 — 참조(MacroRef)를 펼치되 계층(트리)을 유지한다. 각 step의 <c>i</c>는
+    /// 재생 stepIndex와 동일(ExpandMacro와 같은 순서). ref 노드는 children(들여쓴 내용)과 그 노드가
+    /// 덮는 flat 범위(from..to)를 가진다. 없으면 null.</summary>
+    public object? StepTree(string id)
+    {
+        var top = _library.Load(id);
+        if (top is null) return null;
+        int flat = 0;
+        var path = new HashSet<string> { top.Id };
+        List<object> Walk(Macro m)
+        {
+            var nodes = new List<object>();
+            foreach (var s in m.Steps)
+            {
+                if (s.Event is MacroRefEvent r)
+                {
+                    var sub = string.IsNullOrEmpty(r.MacroId) ? null : _library.Load(r.MacroId);
+                    var name = string.IsNullOrWhiteSpace(r.Name) ? (sub?.Name ?? r.MacroId) : r.Name;
+                    if (string.IsNullOrEmpty(r.MacroId) || sub is null)
+                    { nodes.Add(new { kind = "ref", name, note = "대상 없음", children = new List<object>(), from = (int?)null, to = (int?)null }); continue; }
+                    if (path.Contains(r.MacroId))
+                    { nodes.Add(new { kind = "ref", name, note = "순환", children = new List<object>(), from = (int?)null, to = (int?)null }); continue; }
+                    int from = flat;
+                    var children = new List<object>();
+                    if (s.DelayBeforeMs > 0) // ExpandMacro: 참조 블록 선지연 보존(자식 첫 스텝)
+                    { children.Add(new { kind = "step", i = flat, delayBeforeMs = s.DelayBeforeMs, @event = (InputEvent)new DelayEvent() }); flat++; }
+                    path.Add(r.MacroId);
+                    children.AddRange(Walk(sub));
+                    path.Remove(r.MacroId);
+                    nodes.Add(new { kind = "ref", name, note = "", children, from = (int?)from, to = (int?)(flat - 1) });
+                }
+                else
+                {
+                    nodes.Add(new { kind = "step", i = flat, delayBeforeMs = s.DelayBeforeMs, @event = s.Event });
+                    flat++;
+                }
+            }
+            return nodes;
+        }
+        return new { id = top.Id, name = top.Name, nodes = Walk(top) };
+    }
+
     public void SaveMacro(Macro macro)
     {
         _library.Save(macro);

@@ -419,7 +419,7 @@ function endTriggerCapture() {
 // ---------- 실행 페이지: 현재 매크로 동작 순서(펼친 스텝, 읽기전용) + 재생 하이라이트 ----------
 async function selectRunMacro(id) {
   runShownId = id; // 낙관적 설정 — 로딩 중 중복 요청/이벤트 누락 방지
-  try { renderRunSteps(await api.getExpanded(id)); } // 펼친(전개) 스텝 = 재생 stepIndex와 정렬
+  try { renderRunSteps(await api.getTree(id)); } // 참조를 들여쓴 트리(step의 i = 재생 stepIndex)
   catch (e) { log('error', e.message); }
 }
 function clearRunSteps() {
@@ -428,40 +428,68 @@ function clearRunSteps() {
   if ($('run-steps-empty')) $('run-steps-empty').hidden = false;
   if ($('run-steps-title')) $('run-steps-title').textContent = '현재 매크로';
 }
-// 펼친 스텝을 노드+다리(bridge) 타임라인으로 렌더. data-i = 재생 stepIndex와 1:1.
-function renderRunSteps(macro) {
-  runShownId = macro.id;
+// 참조(매크로 실행)를 들여쓴 트리로 렌더. step의 data-i = 재생 stepIndex와 1:1, ref 헤더는 from~to 범위.
+function renderRunSteps(data) {
+  runShownId = data.id;
   const wrap = $('run-steps'); if (!wrap) return;
   wrap.innerHTML = '';
-  const steps = macro.steps || [];
-  $('run-steps-empty').hidden = steps.length > 0;
-  $('run-steps-title').textContent = macro.name || '현재 매크로';
-  steps.forEach((s, i) => {
-    const t = s.event['$type'];
+  const nodes = data.nodes || [];
+  $('run-steps-empty').hidden = nodes.length > 0;
+  $('run-steps-title').textContent = data.name || '현재 매크로';
+  renderRunNodes(wrap, nodes);
+  const st = state.status;
+  const playingThis = st && st.playingIds && st.playingIds.includes(data.id);
+  applyRunProgress(playingThis ? lastStepIndex : -1, playingThis ? lastLoops : []);
+}
+function renderRunNodes(parent, nodes) {
+  nodes.forEach((node) => {
+    if (node.kind === 'ref') {
+      const head = document.createElement('div');
+      head.className = 'run-steps-row rs-ref';
+      if (node.from != null) { head.dataset.from = node.from; head.dataset.to = node.to; }
+      head.innerHTML =
+        `<span class="rs-rail"><span class="rs-node type-macroRef">${km.TYPE_ICON.macroRef || '🧩'}</span></span>` +
+        `<span class="rs-body"><span class="rs-head">` +
+          `<span class="rs-label rs-ref-label">매크로 실행 — ${esc(node.name || '?')}` +
+          (node.note ? ` <span class="rs-ref-note">(${esc(node.note)})</span>` : '') +
+          `</span></span></span>`;
+      parent.appendChild(head);
+      if (node.children && node.children.length) { // 그 매크로 내용을 한 단계 들여쓰기로
+        const group = document.createElement('div'); group.className = 'rs-group';
+        renderRunNodes(group, node.children);
+        parent.appendChild(group);
+      }
+      return;
+    }
+    const t = node.event['$type'];
     const isDelay = t === 'delay';
-    const ms = isDelay ? Math.round(s.delayBeforeMs || 0) : 0;
+    const ms = isDelay ? Math.round(node.delayBeforeMs || 0) : 0;
     const row = document.createElement('div');
-    row.className = 'run-steps-row'; row.dataset.i = i; row.dataset.t = t;
+    row.className = 'run-steps-row'; row.dataset.i = node.i; row.dataset.t = t;
     row.innerHTML =
       `<span class="rs-rail"><span class="rs-node type-${t}">${km.TYPE_ICON[t] || '•'}</span></span>` +
       `<span class="rs-body"><span class="rs-head">` +
-        `<span class="rs-num">${i + 1}</span>` +
-        `<span class="rs-label">${esc(isDelay ? `지연 ${ms} ms` : km.summarizeEvent(s.event))}</span>` +
+        `<span class="rs-num">${node.i + 1}</span>` +
+        `<span class="rs-label">${esc(isDelay ? `지연 ${ms} ms` : km.summarizeEvent(node.event))}</span>` +
         (isDelay ? `<span class="rs-elapsed"></span>` : '') +
-        (t === 'loopStart' ? `<span class="rs-loop-iter" data-start="${i}"></span>` : '') +
+        (t === 'loopStart' ? `<span class="rs-loop-iter" data-start="${node.i}"></span>` : '') +
       `</span>` +
       (isDelay ? `<span class="rs-delaybar" data-ms="${ms}"><span class="rs-fill"></span></span>` : '') +
       `</span>`;
-    wrap.appendChild(row);
+    parent.appendChild(row);
   });
-  const st = state.status;
-  const playingThis = st && st.playingIds && st.playingIds.includes(macro.id);
-  applyRunProgress(playingThis ? lastStepIndex : -1, playingThis ? lastLoops : []);
 }
 // 우측 패널 진행 반영: 진행된 행 glow, 활성 행 강조, 지연 채움/경과ms(활성은 rAF), 반복 회차 k/N.
 function applyRunProgress(idx, loops) {
   const wrap = $('run-steps'); if (!wrap) return;
   wrap.querySelectorAll('.run-steps-row').forEach((r) => {
+    if (r.classList.contains('rs-ref')) { // 매크로 실행 헤더 — 그 매크로가 실행 중이면(범위 내) 강조
+      const from = r.dataset.from != null ? +r.dataset.from : -1;
+      const to = r.dataset.to != null ? +r.dataset.to : -1;
+      r.classList.toggle('active', from >= 0 && idx >= from && idx <= to);
+      r.classList.toggle('done', to >= 0 && idx > to);
+      return;
+    }
     const i = +r.dataset.i;
     r.classList.toggle('done', i < idx);
     r.classList.toggle('active', i === idx);

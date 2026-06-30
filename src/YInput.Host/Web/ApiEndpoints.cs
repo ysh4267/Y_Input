@@ -50,13 +50,22 @@ public static class ApiEndpoints
                 : Json(macro);
         });
 
-        // 참조(MacroRef) 인라인 전개본 — 재생되는 실제 스텝 시퀀스(우측 현황 패널·진행 하이라이트 기준)
+        // 참조(MacroRef) 인라인 전개본 — 재생되는 실제 스텝 시퀀스(진행 stepIndex 기준)
         app.MapGet("/api/macros/{id}/expanded", (string id) =>
         {
             var macro = service.Expanded(id);
             return macro is null
                 ? Results.NotFound(new { error = "매크로를 찾을 수 없습니다." })
                 : Json(macro);
+        });
+
+        // 참조를 펼치되 계층(트리)을 유지 — 우측 현황 패널이 '매크로 실행' 아래에 내용을 들여쓰기로 표시
+        app.MapGet("/api/macros/{id}/tree", (string id) =>
+        {
+            var tree = service.StepTree(id);
+            return tree is null
+                ? Results.NotFound(new { error = "매크로를 찾을 수 없습니다." })
+                : Results.Json(tree, MacroStore.Options);
         });
 
         // ---- 이 매크로를 참조(매크로 실행 블록)하는 다른 매크로들(삭제 경고용) ----

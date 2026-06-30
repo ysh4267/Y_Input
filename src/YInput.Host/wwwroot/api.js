@@ -25,6 +25,7 @@ export const api = {
   listMacros: () => request('GET', '/api/macros'),
   getMacro: (id) => request('GET', `/api/macros/${id}`),
   getExpanded: (id) => request('GET', `/api/macros/${id}/expanded`),
+  getTree: (id) => request('GET', `/api/macros/${id}/tree`),
   macroUsage: (id) => request('GET', `/api/macros/${id}/usage`),
   createMacro: (macro) => request('POST', '/api/macros', macro),
   updateMacro: (id, macro) => request('PUT', `/api/macros/${id}`, macro),
