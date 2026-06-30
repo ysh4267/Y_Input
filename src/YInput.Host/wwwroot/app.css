@@ -205,6 +205,7 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 .tl-loop-bar, .tl-loop-fill { position: absolute; left: 3px; right: 3px; top: 0; bottom: 3px; border: 2.5px solid; border-bottom: none; border-radius: 6px 6px 0 0; pointer-events: none; box-sizing: border-box; }
 .tl-loop-bar { border-color: rgba(251,146,60,.45); } /* 반복 브라켓 track — 쉬는 중에도 보이게(은은한 주황) */
 .tl-loop-fill { border-color: var(--t-loop); clip-path: inset(0 calc(100% - var(--loop-fill, 0%)) 0 0); filter: drop-shadow(0 0 3px rgba(251,146,60,.7)); transition: clip-path .15s linear; } /* 채움 = 현재/전체 만큼 좌→우로 차오름 */
+.tl-loop.done .tl-loop-fill { clip-path: none; filter: drop-shadow(0 0 2px rgba(251,146,60,.5)); } /* 반복 완료 — 색 유지(전체 채움, 차분한 빛) */
 .tl-dot.tl-loop-pt { background: #8c5a30; } /* 반복 시작/끝 점 — 불투명 무딘 주황(반투명 제거: 뒤 브라켓 안 비침) */
 .tl-dot.tl-loop-pt.done { background: var(--t-loop); box-shadow: 0 0 5px rgba(251,146,60,.65); }
 /* 액션: 상하 중앙, 아이콘 버튼(조금 큼) */

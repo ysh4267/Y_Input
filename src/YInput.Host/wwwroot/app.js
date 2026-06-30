@@ -543,7 +543,11 @@ function buildTimeline(container, shape) {
       inner.appendChild(dot(i, ' tl-loop-pt')); // 반복 시작 점
       cur.appendChild(lp); stack.push(cur); cur = inner;
     } else if (t === 'e') {
-      if (stack.length) { cur.appendChild(dot(i, ' tl-loop-pt')); cur = stack.pop(); } // 반복 끝 점 후 상위로
+      if (stack.length) {
+        cur.appendChild(dot(i, ' tl-loop-pt')); // 반복 끝 점
+        const lp = cur.parentElement; if (lp && lp.classList.contains('tl-loop')) lp.dataset.end = i; // 루프 끝 인덱스(완료 판정용)
+        cur = stack.pop(); // 상위로
+      }
     }
   }
 }
@@ -552,7 +556,7 @@ function resetMacroTimeline(el) {
   if (!el) return;
   el.querySelectorAll('.tl-dot, .tl-line').forEach((n) => n.classList.remove('done', 'active'));
   el.querySelectorAll('.tl-fill').forEach((f) => { f.style.transition = 'none'; f.style.width = '0%'; });
-  el.querySelectorAll('.tl-loop').forEach((lp) => { lp.classList.remove('active'); setLoopFill(lp, 0); });
+  el.querySelectorAll('.tl-loop').forEach((lp) => { lp.classList.remove('active', 'done'); setLoopFill(lp, 0); });
   el.scrollLeft = 0;
   const bar = el.nextElementSibling; // 전체 진행도 선 비우기
   if (bar && bar.firstElementChild) bar.firstElementChild.style.width = '0%';
@@ -583,11 +587,17 @@ function updateMacroTimeline(macroId, p) {
       const f = n.querySelector('.tl-fill'); if (f) { f.style.transition = 'none'; f.style.width = i < idx ? '100%' : '0%'; }
     }
   });
-  el.querySelectorAll('.tl-loop').forEach((lp) => { lp.classList.remove('active'); setLoopFill(lp, 0); });
+  el.querySelectorAll('.tl-loop').forEach((lp) => {
+    lp.classList.remove('active');
+    const end = +lp.dataset.end;
+    const fin = Number.isFinite(end) && idx > end; // 루프를 완전히 빠져나옴 → 완료(색 유지)
+    lp.classList.toggle('done', fin);
+    setLoopFill(lp, fin ? 1 : 0); // 완료=가득 / 미진입=빈 칸 (활성은 아래에서 덮어씀)
+  });
   (p.loops || []).forEach((f) => {
     const lp = el.querySelector(`.tl-loop[data-start="${f.startIndex}"]`);
     if (!lp) return;
-    lp.classList.add('active');
+    lp.classList.add('active'); lp.classList.remove('done'); // 되돌아온(재진입) 루프는 다시 진행 중
     const total = f.total || 1; setLoopFill(lp, (total - f.remaining + 1) / total); // 색 채움 = 현재/전체 (숫자 없음)
   });
   updateProgBar(el, idx); // 전체 진행도 녹색선
