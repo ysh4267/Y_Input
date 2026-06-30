@@ -84,7 +84,6 @@ function renderStatus(s) {
 
   $('btn-pad-connect').disabled = !b.gamepadAvailable || b.gamepadConnected;
   $('btn-pad-disconnect').disabled = !b.gamepadConnected;
-  $('btn-pad-test').disabled = !b.gamepadConnected;
   $('btn-monitor').classList.toggle('active', !!s.monitoring);
   $('btn-monitor').textContent = s.monitoring ? '■ 모니터 끄기' : '입력 모니터';
 
@@ -675,10 +674,6 @@ function wire() {
   };
   $('btn-pad-connect').onclick = async () => { try { await api.gamepadConnect(); } catch (e) { log('error', e.message); } };
   $('btn-pad-disconnect').onclick = async () => { try { await api.gamepadDisconnect(); } catch (e) { log('error', e.message); } };
-  $('btn-pad-test').onclick = async () => {
-    try { await api.gamepadSend('A', 1); setTimeout(() => api.gamepadSend('A', 0).catch(() => {}), 200); log('info', '게임패드 A 테스트.'); }
-    catch (e) { log('error', e.message); }
-  };
 }
 
 async function init() {

@@ -40,7 +40,6 @@ export const api = {
 
   gamepadConnect: () => request('POST', '/api/gamepad/connect'),
   gamepadDisconnect: () => request('POST', '/api/gamepad/disconnect'),
-  gamepadSend: (control, value) => request('POST', '/api/gamepad/send', { control, value }),
 
   reloadHotkeys: () => request('POST', '/api/hotkeys/reload'),
 

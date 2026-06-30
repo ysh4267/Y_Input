@@ -233,10 +233,6 @@ public sealed class MacroService
         BroadcastStatus();
     }
 
-    /// <summary>게임패드 컨트롤 1개를 즉시 송출(테스트/수동 조작용).</summary>
-    public void SendGamepad(GamepadControl control, int value) =>
-        _backend.Send(new GamepadEvent { Control = control, Value = value });
-
     // ---------- 매크로 CRUD ----------
     public IReadOnlyList<Macro> ListMacros() => _library.LoadAll();
 

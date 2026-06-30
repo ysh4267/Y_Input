@@ -148,14 +148,6 @@ public static class ApiEndpoints
             return Task.FromResult(Results.Ok(new { ok = true }));
         }));
 
-        app.MapPost("/api/gamepad/send", (GamepadSendBody body) => Guard(() =>
-        {
-            if (!Enum.TryParse<GamepadControl>(body.Control, ignoreCase: true, out var control))
-                throw new ArgumentException("알 수 없는 컨트롤: " + body.Control);
-            service.SendGamepad(control, body.Value);
-            return Task.FromResult(Results.Ok(new { ok = true }));
-        }));
-
         // ---- 핫키 재등록 ----
         app.MapPost("/api/hotkeys/reload", () => Guard(() =>
         {
@@ -314,7 +306,6 @@ public static class ApiEndpoints
     private sealed record EnabledBody(bool Enabled = true);
     private sealed record PlaybackBody(int LoopCount = 1);
     private sealed record StopRecordingBody(string? Name, bool Persist = true);
-    private sealed record GamepadSendBody(string Control, int Value);
     private sealed record RecordStartBody(
         bool Keyboard = true,
         bool MouseButtons = true,
