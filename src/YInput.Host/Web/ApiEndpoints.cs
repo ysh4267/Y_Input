@@ -187,6 +187,11 @@ public static class ApiEndpoints
         });
 
         // ---- Git 업데이트 동기화(개발 PC: 소스 트리 + dotnet SDK + git 필요) ----
+        app.MapGet("/api/app/version", () => Guard(async () =>
+        {
+            var v = await Task.Run(AppUpdater.Version);
+            return Results.Json(new { current = v.Current, currentDate = v.CurrentDate, release = v.Release, releaseDate = v.ReleaseDate });
+        }));
         app.MapGet("/api/app/update/check", () => Guard(async () =>
         {
             var r = await Task.Run(AppUpdater.Check);

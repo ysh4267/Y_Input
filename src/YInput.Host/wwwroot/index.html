@@ -185,7 +185,14 @@
         </div>
         <input id="file-import" type="file" accept=".json,application/json" multiple hidden />
       </section>
-      <div class="drawer-foot">로컬 전용 · <code id="foot-url"></code></div>
+      <div class="drawer-foot">
+        <ul class="ver-kv">
+          <li><span>현재 버전</span><b id="ver-current">—</b></li>
+          <li><span>깃 최신 릴리즈</span><b id="ver-release">—</b></li>
+          <li><span>업데이트 날짜</span><b id="ver-date">—</b></li>
+        </ul>
+        <div class="ver-url">로컬 전용 · <code id="foot-url"></code></div>
+      </div>
     </aside>
   </div>
 

@@ -2,6 +2,7 @@ import { api } from './api.js';
 import { createEditor } from './editor.js';
 import { confirmDialog, installLockdown } from './ui.js';
 import * as km from './keymap.js';
+import { zipBlob, unzip } from './zip.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
@@ -38,6 +39,19 @@ function openSettings() {
   const ov = $('settings-overlay');
   ov.hidden = false;
   requestAnimationFrame(() => ov.classList.add('open'));
+  loadVersion();
+}
+
+// 설정 패널 하단 버전 표시: 현재 빌드(HEAD)·깃 최신 릴리즈 태그·릴리즈 날짜
+async function loadVersion() {
+  try {
+    const v = await api.appVersion();
+    $('ver-current').textContent = v.current ? `${v.current}${v.currentDate ? ` (${v.currentDate})` : ''}` : '—';
+    $('ver-release').textContent = v.release || '—';
+    $('ver-date').textContent = v.releaseDate || '—';
+  } catch {
+    $('ver-current').textContent = $('ver-release').textContent = $('ver-date').textContent = '—';
+  }
 }
 function closeSettings() {
   const ov = $('settings-overlay');
@@ -497,8 +511,7 @@ async function duplicateMacro(id) {
 
 // ---------- JSON 임포트/익스포트(좌측 메뉴) ----------
 const safeName = (name) => ((name || 'macro').replace(/[\\/:*?"<>|]/g, '_').trim()) || 'macro';
-function downloadJson(text, filename) {
-  const blob = new Blob([text], { type: 'application/json' });
+function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename;
@@ -555,34 +568,55 @@ function openExportModal() {
   };
   upd();
 }
+// 내보내기 — 선택한 매크로를 각각 별도 .json 파일로 묶어 Y_Input Macrofiles.zip 으로 저장
 async function exportMacros(ids) {
   if (!ids.length) return;
   try {
     const macros = [];
     for (const id of ids) macros.push(await api.getMacro(id));
-    if (macros.length === 1) downloadJson(JSON.stringify(macros[0], null, 2), safeName(macros[0].name) + '.json');
-    else downloadJson(JSON.stringify(macros, null, 2), `Y-Input-매크로-${macros.length}개.json`);
-    log('info', `${macros.length}개 매크로를 내보냈습니다.`);
+    const used = new Set();
+    const entries = macros.map((m) => {
+      const base = safeName(m.name);
+      let name = base + '.json';
+      let i = 2;
+      while (used.has(name.toLowerCase())) name = `${base} (${i++}).json`; // 이름 중복 시 번호 부여
+      used.add(name.toLowerCase());
+      return { name, text: JSON.stringify(m, null, 2) };
+    });
+    downloadBlob(zipBlob(entries), 'Y_Input Macrofiles.zip');
+    log('info', `${macros.length}개 매크로를 Y_Input Macrofiles.zip 으로 내보냈습니다.`);
   } catch (e) { log('error', e.message); }
 }
-// 가져오기 — 파일 여러 개 + 각 파일이 단일 매크로 또는 배열(번들) 모두 지원
+// 가져오기 — .zip(여러 매크로 묶음) + .json(단일/배열 번들) 파일 여러 개 모두 지원
 async function importMacros(fileList) {
   const files = [...(fileList || [])];
   if (!files.length) return;
   let ok = 0;
   for (const f of files) {
     try {
-      const parsed = JSON.parse(await f.text());
-      const arr = Array.isArray(parsed) ? parsed : [parsed];
-      for (const m of arr) {
-        if (!m || !Array.isArray(m.steps)) { log('error', `가져오기 건너뜀(${f.name}): 매크로 형식 아님`); continue; }
-        const name = (m.name && String(m.name).trim()) || f.name.replace(/\.json$/i, '');
-        await api.createMacro({ ...m, id: '', name });
-        ok++;
+      if (/\.zip$/i.test(f.name) || f.type === 'application/zip') {
+        const items = (await unzip(await f.arrayBuffer())).filter((it) => /\.json$/i.test(it.name));
+        if (!items.length) { log('error', `가져오기 건너뜀(${f.name}): zip 안에 .json 매크로 없음`); continue; }
+        for (const it of items) ok += await importMacroJson(it.text, it.name, `${f.name}>${it.name}`);
+      } else {
+        ok += await importMacroJson(await f.text(), f.name, f.name);
       }
     } catch (e) { log('error', `가져오기 실패(${f.name}): ${e.message}`); }
   }
   if (ok) { await loadMacros(); log('info', `${ok}개 매크로를 가져왔습니다.`); }
+}
+// JSON 텍스트(단일 매크로 또는 배열 번들)에서 매크로 생성. 추가한 개수 반환.
+async function importMacroJson(text, fileName, label) {
+  let added = 0;
+  const parsed = JSON.parse(text);
+  const arr = Array.isArray(parsed) ? parsed : [parsed];
+  for (const m of arr) {
+    if (!m || !Array.isArray(m.steps)) { log('error', `가져오기 건너뜀(${label}): 매크로 형식 아님`); continue; }
+    const name = (m.name && String(m.name).trim()) || fileName.replace(/\.json$/i, '');
+    await api.createMacro({ ...m, id: '', name });
+    added++;
+  }
+  return added;
 }
 
 // ---------- WebSocket ----------

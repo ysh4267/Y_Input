@@ -13,6 +13,36 @@ public static class AppUpdater
 
     public readonly record struct CheckResult(bool Ok, int Behind, string Current, string Message);
     public readonly record struct StartResult(bool Ok, string Message);
+    public readonly record struct VersionInfo(string Current, string CurrentDate, string Release, string ReleaseDate);
+
+    /// <summary>
+    /// 표시용 버전 정보. 현재 빌드(HEAD 커밋·날짜)와 최신 릴리즈 태그(태그·커밋 날짜)를 git 에서 읽는다.
+    /// git 이 없거나 실패하면 빈 문자열을 돌려준다(개발 PC 외 환경 안전).
+    /// </summary>
+    public static VersionInfo Version()
+    {
+        if (!Directory.Exists(Path.Combine(RepoDir, ".git")))
+            return new VersionInfo("", "", "", "");
+        try
+        {
+            Run("git", new[] { "-C", RepoDir, "rev-parse", "--short", "HEAD" }, out var head, out _, 15000);
+            Run("git", new[] { "-C", RepoDir, "log", "-1", "--format=%cs", "HEAD" }, out var headDate, out _, 15000);
+
+            var tag = "";
+            var tagDate = "";
+            if (Run("git", new[] { "-C", RepoDir, "describe", "--tags", "--abbrev=0" }, out var t, out _, 15000))
+            {
+                tag = t.Trim();
+                if (!string.IsNullOrEmpty(tag))
+                    Run("git", new[] { "-C", RepoDir, "log", "-1", "--format=%cs", tag }, out tagDate, out _, 15000);
+            }
+            return new VersionInfo(head.Trim(), headDate.Trim(), tag, tagDate.Trim());
+        }
+        catch
+        {
+            return new VersionInfo("", "", "", "");
+        }
+    }
 
     public static CheckResult Check()
     {

@@ -406,6 +406,11 @@ input[type=range] { accent-color: var(--accent); }
 /* 설정 드로어 하단 URL 라벨(기존 페이지 푸터 이동) */
 .drawer-foot { margin-top: auto; border-top: 1px solid var(--border); padding-top: 14px; color: var(--muted); font-size: 12px; }
 .drawer-foot code { color: var(--text); }
+.ver-kv { list-style: none; margin: 0 0 10px; padding: 0; font-size: 12px; }
+.ver-kv li { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; }
+.ver-kv li span { color: var(--muted); }
+.ver-kv li b { color: var(--text); font-weight: 600; }
+.ver-url { color: var(--muted); }
 
 /* CSS 모달(시스템 alert/confirm/prompt 대체) */
 .modal-overlay { position: fixed; inset: 0; background: rgba(6,8,12,.62); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; z-index: 1000; animation: modal-fade .12s ease-out; }
