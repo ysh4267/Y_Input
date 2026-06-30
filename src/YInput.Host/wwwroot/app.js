@@ -492,24 +492,28 @@ function buildTimeline(container, shape) {
   if (!container) return;
   container.innerHTML = '';
   if (!shape || !shape.length) return;
+  const dot = (i, extra) => { const d = document.createElement('i'); d.className = 'tl-dot' + (extra || ''); d.dataset.i = i; return d; };
   let cur = container; const stack = [];
   for (let i = 0; i < shape.length; i++) {
     const t = shape[i][0];
     if (t === 'a') {
-      const d = document.createElement('i'); d.className = 'tl-dot'; d.dataset.i = i; cur.appendChild(d);
+      cur.appendChild(dot(i));
     } else if (t === 'd') {
       const ln = document.createElement('i'); ln.className = 'tl-line'; ln.dataset.i = i;
       const ms = +shape[i][1] || 0;
       ln.style.width = Math.round(Math.max(12, Math.min(40, 12 + ms * 0.035))) + 'px';
       const f = document.createElement('i'); f.className = 'tl-fill'; ln.appendChild(f); cur.appendChild(ln);
     } else if (t === 's') {
+      // 반복: 시작 점 + 본문 + 끝 점, 그 위에 차오르는 각진 브라켓(track/채움) 오버레이
       const lp = document.createElement('span'); lp.className = 'tl-loop'; lp.dataset.start = i;
-      const br = document.createElement('i'); br.className = 'tl-loop-bracket';
-      const bf = document.createElement('i'); bf.className = 'tl-loop-bracket-fill';
-      const body = document.createElement('span'); body.className = 'tl-loop-body';
-      lp.append(br, bf, body); cur.appendChild(lp); stack.push(cur); cur = body;
+      const inner = document.createElement('span'); inner.className = 'tl-loop-inner';
+      const bar = document.createElement('i'); bar.className = 'tl-loop-bar';
+      const fill = document.createElement('i'); fill.className = 'tl-loop-fill';
+      lp.append(dot(i, ' tl-loop-pt'), inner, bar, fill);
+      cur.appendChild(lp); stack.push({ cur, lp }); cur = inner;
     } else if (t === 'e') {
-      if (stack.length) cur = stack.pop();
+      const top = stack.pop();
+      if (top) { top.lp.insertBefore(dot(i, ' tl-loop-pt'), top.lp.querySelector('.tl-loop-bar')); cur = top.cur; }
     }
   }
 }

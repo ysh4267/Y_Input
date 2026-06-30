@@ -105,13 +105,13 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 .run-steps { flex: 1; min-height: 0; max-height: none; overflow-y: auto; display: flex; flex-direction: column; gap: 0; padding-right: 10px; } /* 우측 여백 = 스크롤바 간격 */
 /* 노드 + 다리(bridge) 세로 타임라인 */
 .run-steps-row { display: flex; align-items: stretch; gap: 10px; padding: 3px 6px; border-radius: 8px; font-size: 12.5px; position: relative; }
-.run-steps-row .rs-rail { position: relative; flex: 0 0 22px; display: flex; align-items: center; justify-content: center; }
+.run-steps-row .rs-rail { position: relative; flex: 0 0 28px; display: flex; align-items: center; justify-content: center; }
 .run-steps-row .rs-rail::before { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; transform: translateX(-50%); background: var(--border2); } /* 다리 */
 .run-steps-row:first-child .rs-rail::before { top: 50%; }
 .run-steps-row:last-child .rs-rail::before { bottom: 50%; }
-.run-steps-row .rs-node { position: relative; z-index: 1; width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; border: 1.5px solid var(--border2); flex-shrink: 0; transition: box-shadow .12s, border-color .12s; }
-.run-steps-row[data-t="delay"] .rs-node { width: 24px; height: 11px; border-radius: 6px; } /* 지연 = 막대형 노드 */
-.run-steps-row[data-t="loopStart"] .rs-node, .run-steps-row[data-t="loopEnd"] .rs-node { border-radius: 5px; } /* 반복 = 각진 노드 */
+.run-steps-row .rs-node { position: relative; z-index: 1; width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 15px; line-height: 1; background: var(--card2); border: 1.6px solid currentColor; flex-shrink: 0; transition: box-shadow .12s, border-color .12s; } /* 불투명 배경 + 타입색 테두리/아이콘 */
+.run-steps-row[data-t="delay"] .rs-node { border-radius: 8px; } /* 지연 = 둥근 사각(원형과 구분) */
+.run-steps-row[data-t="loopStart"] .rs-node, .run-steps-row[data-t="loopEnd"] .rs-node { border-radius: 4px; } /* 반복 = 각진 노드 */
 /* 진행됨 = 항상 빛남 / 미진행 = 안 빛남 / 활성 = 더 강하게 */
 .run-steps-row.done .rs-node { border-color: var(--accent); box-shadow: 0 0 7px rgba(79,140,255,.5); }
 .run-steps-row.done .rs-rail::before { background: var(--accent); box-shadow: 0 0 4px rgba(79,140,255,.55); }
@@ -186,11 +186,13 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 .tl-line.done .tl-fill { width: 100% !important; background: var(--accent); }
 .tl-line.active .tl-fill { background: linear-gradient(90deg, var(--accent), #cfe0ff); box-shadow: 0 0 6px rgba(79,140,255,.85); }
 /* 반복 브라켓: 루프 구간 위를 끝→시작으로 잇는 ⊓, 색이 차오름(채움 = 반복 진행) */
-.tl-loop { position: relative; display: inline-flex; align-items: flex-end; gap: 4px; }
-.tl-loop-bracket, .tl-loop-bracket-fill { position: absolute; left: -2px; right: -2px; bottom: 0; top: -8px; border: 1.5px solid; border-bottom: none; border-radius: 6px 6px 0 0; pointer-events: none; }
-.tl-loop-bracket { border-color: var(--t-loop); opacity: .3; }
-.tl-loop-bracket-fill { border-color: var(--accent2); opacity: .95; clip-path: inset(0 calc(100% - var(--loop-fill, 0%)) 0 0); filter: drop-shadow(0 0 3px rgba(52,211,153,.7)); transition: clip-path .15s linear; }
-.tl-loop-body { display: inline-flex; align-items: flex-end; gap: 4px; }
+.tl-loop { position: relative; display: inline-flex; align-items: flex-end; gap: 4px; padding-top: 10px; margin: 0 1px; }
+.tl-loop-inner { display: inline-flex; align-items: flex-end; gap: 4px; }
+/* 반복 시작·끝 점을 잇는 상단 각진 브라켓(⊓) — 지연 선과 같은 track + 채움(점점 차오름) */
+.tl-loop-bar, .tl-loop-fill { position: absolute; left: 3px; right: 3px; top: 0; bottom: 3px; border: 2.5px solid; border-bottom: none; border-radius: 6px 6px 0 0; pointer-events: none; box-sizing: border-box; }
+.tl-loop-bar { border-color: var(--card3); } /* track(지연 선 track과 동일 톤) */
+.tl-loop-fill { border-color: var(--t-loop); clip-path: inset(0 calc(100% - var(--loop-fill, 0%)) 0 0); filter: drop-shadow(0 0 3px rgba(251,146,60,.6)); transition: clip-path .15s linear; } /* 채움 = 현재/전체 만큼 좌→우로 차오름 */
+.tl-dot.tl-loop-pt.done { background: var(--t-loop); box-shadow: 0 0 5px rgba(251,146,60,.65); } /* 반복 시작/끝 점 */
 /* 액션: 상하 중앙, 아이콘 버튼(조금 큼) */
 .macro-actions { display: flex; gap: 5px; flex-shrink: 0; align-items: center; }
 .mbtn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; background: var(--card3); border: 1px solid var(--border2); border-radius: 8px; color: var(--muted); cursor: pointer; transition: filter .12s, color .12s, border-color .12s; }
