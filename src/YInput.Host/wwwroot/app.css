@@ -138,9 +138,10 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 .macro-item.active { background: rgba(52,211,153,.18); border-color: var(--accent2); box-shadow: 0 0 0 1px rgba(52,211,153,.45); } /* 재생 중(작동중) 하이라이트(녹색) — 적용보다 우선 */
 .macro-item.confirming { border-color: var(--rec); background: rgba(255,84,112,.12); }
 /* 드래그 순서 변경 핸들 + 드롭 위치 표시 */
-.macro-grip { cursor: grab; color: var(--muted); font-size: 13px; line-height: 1; user-select: none; flex-shrink: 0; padding: 2px 1px; touch-action: none; }
-.macro-grip:hover { color: var(--text); }
-.macro-grip:active { cursor: grabbing; }
+.macro-num { min-width: 18px; text-align: center; color: var(--muted); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; user-select: none; flex-shrink: 0; }
+.macro-item { cursor: grab; } /* 빈 곳을 잡고 드래그하여 순서 변경 */
+.macro-item:active { cursor: grabbing; }
+.macro-item button, .macro-item .toggle, .macro-item input, .macro-item label { cursor: pointer; } /* 상호작용 요소는 일반 커서 */
 .macro-ghost { position: fixed; z-index: 1100; pointer-events: none; margin: 0 !important; box-shadow: 0 14px 34px rgba(0,0,0,.5); opacity: .97; }
 .macro-placeholder { list-style: none; border: 2px dashed var(--border2); border-radius: 10px; background: rgba(79,140,255,.07); margin-bottom: 6px; box-sizing: border-box; }
 .macro-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }

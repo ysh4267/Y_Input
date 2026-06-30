@@ -112,8 +112,9 @@ function renderMacroList(listEl, emptyEl, mode) {
   if (!listEl) return;
   listEl.innerHTML = '';
   if (emptyEl) emptyEl.hidden = state.macros.length > 0;
-  // 사용자 지정 순서(서버 Order)대로 표시 — 드래그로 변경·저장됨.
-  for (const m of state.macros) {
+  // 사용자 지정 순서(서버 Order)대로 표시 — 항목 빈 곳을 잡고 드래그하면 순서 변경·저장됨.
+  for (let idx = 0; idx < state.macros.length; idx++) {
+    const m = state.macros[idx];
     const li = document.createElement('li');
     li.className = 'macro-item' + (mode === 'run' ? ' run' : '');
     li.dataset.id = m.id;
@@ -124,7 +125,7 @@ function renderMacroList(listEl, emptyEl, mode) {
       const repCount = m.loopCount > 1 ? m.loopCount : 2;
       li.innerHTML = `
         <div class="mi-main">
-          <span class="macro-grip" title="드래그하여 순서 변경">⠿</span>
+          <span class="macro-num" title="순서 — 항목을 잡고 드래그하면 변경">${idx + 1}</span>
           <label class="toggle" title="적용(트리거 활성)"><input type="checkbox" class="act-toggle" ${m.enabled ? 'checked' : ''}><span class="track"></span><span class="knob"></span></label>
           <div class="macro-meta"><span class="name">${esc(m.name)}</span><span class="macro-sub">${m.stepCount}스텝 · 총 ${fmtMs(m.durationMs || 0)}</span></div>
           <div class="macro-actions">
@@ -146,20 +147,16 @@ function renderMacroList(listEl, emptyEl, mode) {
     } else {
       const sub = `${m.stepCount}스텝 · 총 ${fmtMs(m.durationMs || 0)}`;
       li.innerHTML = `
-        <span class="macro-grip" title="드래그하여 순서 변경">⠿</span>
+        <span class="macro-num" title="순서 — 항목을 잡고 드래그하면 변경">${idx + 1}</span>
         <div class="macro-meta"><span class="name">${esc(m.name)}</span><span class="macro-sub">${sub}</span></div>
         <div class="macro-actions">
           <button class="mbtn act-dup" title="복제">${ICON.dup}</button>
           <button class="mbtn act-del" title="삭제">${ICON.del}</button>
         </div>`;
     }
-    li.onclick = (e) => {
-      if (e.target.closest('button, label, input, .macro-grip')) return;
-      if (mode === 'run') selectRunMacro(m.id); else openMacro(m.id);
-    };
     li.querySelector('.act-del').onclick = () => confirmDeleteInline(li, m.id);
     const dupBtn = li.querySelector('.act-dup'); if (dupBtn) dupBtn.onclick = () => duplicateMacro(m.id);
-    wireMacroDrag(li, m.id);
+    wireMacroDrag(li, m.id, mode);
     if (mode === 'run') {
       const tg = li.querySelector('.act-toggle');
       tg.onchange = async () => {
@@ -212,14 +209,13 @@ function playMacroFlip(before) {
     requestAnimationFrame(() => { el.style.transition = 'transform .16s ease'; el.style.transform = ''; setTimeout(() => { el.style.transition = ''; el.style.transform = ''; }, 180); });
   });
 }
-function wireMacroDrag(li, id) {
-  const grip = li.querySelector('.macro-grip');
-  if (!grip) return;
-  grip.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
+function wireMacroDrag(li, id, mode) {
+  // 항목의 빈 곳(번호·이름·여백) 아무 데나 눌러 드래그. 버튼·토글·입력 등 상호작용 요소는 제외.
+  li.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || mdrag) return;
+    if (e.target.closest('button, input, label, select, textarea')) return;
     const r = li.getBoundingClientRect();
-    mdrag = { id, li, listEl: li.closest('.macro-list'), scroller: scrollParent(li.closest('.macro-list')),
+    mdrag = { id, mode, li, listEl: li.closest('.macro-list'), scroller: scrollParent(li.closest('.macro-list')),
       startX: e.clientX, startY: e.clientY, offX: e.clientX - r.left, offY: e.clientY - r.top, moving: false, lastY: e.clientY, autoTimer: 0 };
     window.addEventListener('pointermove', macroPointerMove);
     window.addEventListener('pointerup', macroPointerUp, { once: true });
@@ -291,7 +287,10 @@ function macroPointerUp() {
   const d = mdrag; mdrag = null;
   if (!d) return;
   if (d.autoTimer) cancelAnimationFrame(d.autoTimer);
-  if (!d.moving) return;
+  if (!d.moving) { // 이동 없이 뗌 = 클릭: 선택/열기
+    if (d.mode === 'run') selectRunMacro(d.id); else openMacro(d.id);
+    return;
+  }
   d.ghost.remove();
   const listEl = d.listEl;
   const ids = [];
