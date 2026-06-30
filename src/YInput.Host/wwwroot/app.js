@@ -425,7 +425,7 @@ async function selectRunMacro(id) {
 }
 function clearRunSteps() {
   runShownId = null;
-  if ($('run-steps')) $('run-steps').innerHTML = '';
+  if ($('run-steps')) { $('run-steps')._pi = -1; $('run-steps').innerHTML = ''; }
   if ($('run-steps-empty')) $('run-steps-empty').hidden = false;
   if ($('run-steps-title')) $('run-steps-title').textContent = '현재 매크로';
 }
@@ -433,6 +433,7 @@ function clearRunSteps() {
 function renderRunSteps(data) {
   runShownId = data.id;
   const wrap = $('run-steps'); if (!wrap) return;
+  wrap._pi = -1; // 증분 진행 갱신용 인덱스 초기화(패널을 새로 그리므로)
   wrap.innerHTML = '';
   const nodes = data.nodes || [];
   $('run-steps-empty').hidden = nodes.length > 0;
@@ -483,22 +484,19 @@ function renderRunNodes(parent, nodes) {
 // 우측 패널 진행 반영: 진행된 행 glow, 활성 행 강조, 지연 채움/경과ms(활성은 rAF), 반복 회차 k/N.
 function applyRunProgress(idx, loops) {
   const wrap = $('run-steps'); if (!wrap) return;
-  wrap.querySelectorAll('.run-steps-row').forEach((r) => {
-    if (r.classList.contains('rs-ref')) { // 매크로 실행 헤더 — 그 매크로가 실행 중이면(범위 내) 강조
-      const from = r.dataset.from != null ? +r.dataset.from : -1;
-      const to = r.dataset.to != null ? +r.dataset.to : -1;
-      r.classList.toggle('active', from >= 0 && idx >= from && idx <= to);
-      r.classList.toggle('done', to >= 0 && idx > to);
-      return;
-    }
-    const i = +r.dataset.i;
-    r.classList.toggle('done', i < idx);
-    r.classList.toggle('active', i === idx);
-    if (r.dataset.t === 'delay' && i !== idx) {
-      const f = r.querySelector('.rs-fill'); if (f) { f.style.transition = 'none'; f.style.width = i < idx ? '100%' : '0%'; }
-      const e = r.querySelector('.rs-elapsed');
-      if (e) { const ms = +r.querySelector('.rs-delaybar').dataset.ms || 0; e.textContent = i < idx ? `${ms} / ${ms} ms` : ''; }
-    }
+  // 스텝 행(다수)은 바뀐 행만 갱신(전체 순회 제거). rs-ref 행은 data-i가 없어 resolve에 안 잡힘 → 아래 별도 패스.
+  applyIndexDelta(wrap._pi ?? -1, idx,
+    (i) => wrap.querySelector(`.run-steps-row[data-i="${i}"]`),
+    (r) => { r.classList.add('done'); r.classList.remove('active'); if (r.dataset.t === 'delay') { const f = r.querySelector('.rs-fill'); if (f) { f.style.transition = 'none'; f.style.width = '100%'; } const e = r.querySelector('.rs-elapsed'); if (e) { const ms = +r.querySelector('.rs-delaybar').dataset.ms || 0; e.textContent = `${ms} / ${ms} ms`; } } },
+    (r) => { r.classList.add('active'); r.classList.remove('done'); },
+    (r) => { r.classList.remove('done', 'active'); if (r.dataset.t === 'delay') { const f = r.querySelector('.rs-fill'); if (f) { f.style.transition = 'none'; f.style.width = '0%'; } const e = r.querySelector('.rs-elapsed'); if (e) e.textContent = ''; } });
+  wrap._pi = idx;
+  // 매크로 실행(ref) 헤더 — 범위 [from,to] 기준(개수 적음), 전체 패스
+  wrap.querySelectorAll('.run-steps-row.rs-ref').forEach((r) => {
+    const from = r.dataset.from != null ? +r.dataset.from : -1;
+    const to = r.dataset.to != null ? +r.dataset.to : -1;
+    r.classList.toggle('active', from >= 0 && idx >= from && idx <= to);
+    r.classList.toggle('done', to >= 0 && idx > to);
   });
   wrap.querySelectorAll('.rs-loop-iter').forEach((b) => { b.textContent = ''; });
   (loops || []).forEach((f) => {
@@ -519,6 +517,7 @@ function scrollRowIntoPanel(wrap, row) {
 // shape 토큰: ["a"]=행위 / ["d",ms]=지연 / ["s",n]=반복시작 / ["e"]=반복끝. data-i = 재생 stepIndex.
 function buildTimeline(container, shape) {
   if (!container) return;
+  container._pi = -1; // 증분 진행 갱신용 마지막 적용 stepIndex(새로 그렸으니 초기화)
   container.innerHTML = '';
   container.dataset.shape = JSON.stringify(shape || []); // 전체 진행도(반복 반영) 계산용
   if (!shape || !shape.length) return;
@@ -554,6 +553,7 @@ function buildTimeline(container, shape) {
 function setLoopFill(lp, frac) { lp.style.setProperty('--loop-fill', (Math.max(0, Math.min(1, frac)) * 100).toFixed(1) + '%'); }
 function resetMacroTimeline(el) {
   if (!el) return;
+  el._pi = -1; // 증분 진행 갱신용 인덱스 초기화(전체를 비우므로)
   el.querySelectorAll('.tl-dot, .tl-line').forEach((n) => n.classList.remove('done', 'active'));
   el.querySelectorAll('.tl-fill').forEach((f) => { f.style.transition = 'none'; f.style.width = '0%'; });
   el.querySelectorAll('.tl-loop').forEach((lp) => { lp.classList.remove('active', 'done'); setLoopFill(lp, 0); });
@@ -614,14 +614,13 @@ function updateMacroTimeline(macroId, p) {
   const el = document.querySelector(`.macro-prog[data-id="${macroId}"]`);
   if (!el) return;
   const idx = p.stepIndex;
-  el.querySelectorAll('.tl-dot, .tl-line').forEach((n) => {
-    const i = +n.dataset.i;
-    n.classList.toggle('done', i < idx);
-    n.classList.toggle('active', i === idx);
-    if (n.classList.contains('tl-line') && i !== idx) {
-      const f = n.querySelector('.tl-fill'); if (f) { f.style.transition = 'none'; f.style.width = i < idx ? '100%' : '0%'; }
-    }
-  });
+  // 점·선(스텝)은 바뀐 노드만 갱신(전체 순회 제거). 채움: done=100% / undo=0% / active(지연)는 delayAnims가 담당.
+  applyIndexDelta(el._pi ?? -1, idx,
+    (i) => el.querySelector(`.tl-dot[data-i="${i}"], .tl-line[data-i="${i}"]`),
+    (n) => { n.classList.add('done'); n.classList.remove('active'); if (n.classList.contains('tl-line')) { const f = n.querySelector('.tl-fill'); if (f) { f.style.transition = 'none'; f.style.width = '100%'; } } },
+    (n) => { n.classList.add('active'); n.classList.remove('done'); },
+    (n) => { n.classList.remove('done', 'active'); if (n.classList.contains('tl-line')) { const f = n.querySelector('.tl-fill'); if (f) { f.style.transition = 'none'; f.style.width = '0%'; } } });
+  el._pi = idx;
   el.querySelectorAll('.tl-loop').forEach((lp) => {
     lp.classList.remove('active');
     const end = +lp.dataset.end;
@@ -851,7 +850,7 @@ function connectWs() {
       case 'status': renderStatus(msg.data); break;
       case 'log': log(msg.data.level, msg.data.message, msg.data.time); break;
       case 'recordedStep': editor.onRecordedStep(msg.data); break;
-      case 'progress': showProgress(msg.data); break;
+      case 'progress': queueProgress(msg.data); break;
       case 'inputDetected': if (capTrigId) onTriggerGamepad(msg.data); else editor.onInputDetected(msg.data); break;
       case 'inputMonitor': log('monitor', `[${msg.data.source}] ${msg.data.label}`, msg.data.time); break;
       case 'shutdown': handleShutdown(); break;
@@ -871,6 +870,28 @@ function handleShutdown() {
     o.innerHTML = '<div><h1>Y Input 종료됨</h1><p>프로그램이 종료되었습니다. 이 창을 닫아 주세요.</p></div>';
     document.body.appendChild(o);
   }, 150);
+}
+// 들어오는 progress를 macro별 최신 1건으로 합쳐 프레임당 1회만 적용 — 고속/동시 매크로 폭주로 인한 DOM 부하 방지.
+// (서버도 ~60Hz로 코얼레싱하지만, 동시 재생·백그라운드 탭 등에서 추가 안전장치.)
+const pendingProgress = new Map(); // macroId -> 최신 progress
+let progressRaf = 0;
+function queueProgress(p) {
+  if (!p || p.macroId == null) return;
+  pendingProgress.set(p.macroId, p); // 같은 매크로는 최신값으로 덮어씀(밀려도 누적 안 됨)
+  if (!progressRaf) progressRaf = requestAnimationFrame(flushProgress);
+}
+function flushProgress() {
+  progressRaf = 0;
+  const items = [...pendingProgress.values()];
+  pendingProgress.clear();
+  for (const p of items) showProgress(p);
+}
+// 진행 인덱스 prev→idx 변화 시 '바뀐 스텝 노드만' 갱신(전체 querySelectorAll 순회 O(스텝수) 제거).
+// resolve(i)=그 인덱스 노드(없으면 null). 정방향 [prev..idx-1]=done, 역방향(루프 되감기) (idx..prev]=undo, 그 후 idx=active.
+function applyIndexDelta(prev, idx, resolve, done, active, undone) {
+  if (idx > prev) { for (let i = Math.max(0, prev); i < idx; i++) { const n = resolve(i); if (n) done(n); } }
+  else if (idx < prev) { for (let i = prev; i > idx; i--) { const n = resolve(i); if (n) undone(n); } }
+  if (idx >= 0) { const n = resolve(idx); if (n) active(n); }
 }
 function showProgress(p) {
   // 좌측 타임라인(해당 macroId만) + 우측 패널(표시 중일 때) + 활성 지연 채움(공유 rAF)
