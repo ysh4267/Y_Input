@@ -86,6 +86,13 @@ public static class ApiEndpoints
             return Task.FromResult(Results.Ok(new { ok = true }));
         }));
 
+        // ---- 매크로 전체 초기화(모두 휴지통으로) ----
+        app.MapPost("/api/macros/reset", () => Guard(() =>
+        {
+            var deleted = service.DeleteAllMacros();
+            return Task.FromResult(Results.Ok(new { ok = true, deleted }));
+        }));
+
         // ---- 매크로 적용(활성) 토글 ----
         app.MapPost("/api/macros/{id}/enabled", (string id, EnabledBody? body) => Guard(() =>
         {

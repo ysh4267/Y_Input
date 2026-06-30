@@ -254,6 +254,19 @@ public sealed class MacroService
         BroadcastStatus();
     }
 
+    /// <summary>모든 매크로를 휴지통으로 보낸다(전체 초기화). 재생 중이면 먼저 정지한다.</summary>
+    public int DeleteAllMacros()
+    {
+        StopPlayback();
+        var all = _library.LoadAll();
+        foreach (var m in all)
+            RecycleBin.Delete(_library.PathFor(m.Id));
+        ReloadHotkeys();
+        Log("warn", $"매크로 전체 초기화: {all.Count}개를 휴지통으로 보냈습니다.");
+        BroadcastStatus();
+        return all.Count;
+    }
+
     /// <summary>매크로의 적용(활성) 여부를 토글한다. ON이면 트리거 핫키 무장, OFF면 보관만.</summary>
     public void SetEnabled(string id, bool enabled)
     {

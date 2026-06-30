@@ -1,6 +1,6 @@
 import { api } from './api.js';
 import { createEditor } from './editor.js';
-import { confirmDialog, installLockdown } from './ui.js';
+import { confirmDialog, alertDialog, installLockdown } from './ui.js';
 import * as km from './keymap.js';
 import { zipBlob, unzip } from './zip.js';
 
@@ -695,6 +695,17 @@ function wire() {
   $('btn-import').onclick = () => $('file-import').click();
   $('file-import').onchange = (e) => { importMacros(e.target.files); e.target.value = ''; };
   $('btn-export').onclick = openExportModal;
+  $('btn-reset-macros').onclick = async () => {
+    const n = state.macros.length;
+    if (!n) { await alertDialog('삭제할 매크로가 없습니다.', { title: '매크로 모두 초기화' }); return; }
+    const ok = await confirmDialog(`저장된 매크로 ${n}개를 모두 삭제할까요? 휴지통으로 이동되며, 되돌리려면 휴지통에서 복원해야 합니다.`, { title: '매크로 모두 초기화', ok: '모두 삭제', cancel: '취소' });
+    if (!ok) return;
+    try {
+      const r = await api.resetMacros();
+      await loadMacros();
+      log('warn', `매크로 ${r?.deleted ?? n}개를 모두 초기화했습니다(휴지통 이동).`);
+    } catch (e) { log('error', e.message); }
+  };
   $('log-fab').onclick = () => { $('log-float').hidden = !$('log-float').hidden; };
   $('log-float-close').onclick = () => { $('log-float').hidden = true; };
   $('btn-clear-log').onclick = () => { $('log').innerHTML = ''; };
