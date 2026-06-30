@@ -22,12 +22,12 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout (with tags)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0        # 기존 태그를 봐야 다음 PATCH 를 계산할 수 있음
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
