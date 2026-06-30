@@ -120,7 +120,6 @@ async function loadMacros() {
   renderMacroList($('macro-list-edit'), $('macro-empty-edit'), 'edit');
   if (runShownId && !state.macros.some((m) => m.id === runShownId)) clearRunSteps();
   renderMacroActive();
-  requestAnimationFrame(updateProgBars); // 전체 진행도 선 표시 여부(오버플로) 갱신
 }
 
 function renderMacroList(listEl, emptyEl, mode) {
@@ -562,15 +561,10 @@ function resetMacroTimeline(el) {
   const bar = el.nextElementSibling; // 전체 진행도 선 비우기
   if (bar && bar.firstElementChild) bar.firstElementChild.style.width = '0%';
 }
-// 전체 진행도 선 — 타임라인이 길어 한눈에 안 보일 때만(가로 오버플로) 표시. 채움=반복까지 반영한 단조 진행률(뒤로 안 감).
-function progBarShow(el) {
-  const bar = el && el.nextElementSibling;
-  if (bar && bar.classList.contains('macro-prog-bar')) bar.classList.toggle('show', el.scrollWidth > el.clientWidth + 2);
-}
+// 전체 진행도 선 — 모든 항목에 항상 표시. 채움=반복까지 반영한 단조 진행률(뒤로 안 감).
 function setProgBar(el, frac) {
   const bar = el && el.nextElementSibling;
   if (!bar || !bar.classList.contains('macro-prog-bar')) return;
-  bar.classList.toggle('show', el.scrollWidth > el.clientWidth + 2);
   const fill = bar.firstElementChild;
   if (fill) fill.style.width = (Math.max(0, Math.min(1, frac)) * 100).toFixed(1) + '%';
 }
@@ -616,7 +610,6 @@ function loopAwareFraction(shape, idx, loops) {
   const W = total(0, n);
   return W > 0 ? Math.max(0, Math.min(1, done(0, n) / W)) : 0;
 }
-function updateProgBars() { document.querySelectorAll('.macro-prog').forEach(progBarShow); } // 표시 여부(오버플로) 갱신
 function updateMacroTimeline(macroId, p) {
   const el = document.querySelector(`.macro-prog[data-id="${macroId}"]`);
   if (!el) return;
@@ -919,7 +912,6 @@ async function onUpdateDownload() {
 // ---------- 와이어링 ----------
 function wire() {
   document.querySelectorAll('.tab-btn').forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
-  window.addEventListener('resize', () => requestAnimationFrame(updateProgBars)); // 패널 폭 변하면 전체 진행도 선 표시 갱신
   $('btn-settings').onclick = openSettings;
   $('settings-close').onclick = closeSettings;
   $('settings-overlay').onclick = (e) => { if (e.target === $('settings-overlay')) closeSettings(); };

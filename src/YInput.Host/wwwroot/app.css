@@ -188,8 +188,7 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 .macro-prog::-webkit-scrollbar { height: 0; width: 0; }
 .macro-prog:empty { display: none; }
 /* 전체 진행도 선 — 타임라인이 길어 끝과 끝이 한눈에 안 보일 때만(.show) 아래에 얇은 녹색선 */
-.macro-prog-bar { display: none; height: 2px; margin: 3px 2px 0; border-radius: 2px; background: rgba(255,255,255,.07); overflow: hidden; }
-.macro-prog-bar.show { display: block; }
+.macro-prog-bar { display: block; height: 2px; margin: 3px 2px 0; border-radius: 2px; background: rgba(255,255,255,.07); overflow: hidden; } /* 모든 항목에 항상 표시 — 빈 트랙→재생 시 녹색 채움 */
 .macro-prog-bar-fill { display: block; height: 100%; width: 0; border-radius: 2px; background: var(--accent2); box-shadow: 0 0 5px rgba(52,211,153,.55); transition: width .12s linear; }
 .tl-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--border2); transition: background .12s, box-shadow .12s; }
 .tl-dot.done { background: var(--accent); box-shadow: 0 0 5px rgba(79,140,255,.6); }
