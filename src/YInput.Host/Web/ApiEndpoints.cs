@@ -93,6 +93,14 @@ public static class ApiEndpoints
             return Task.FromResult(Results.Ok(new { ok = true, deleted }));
         }));
 
+        // ---- 매크로 묶음 가져오기 — 내부 매크로 참조(macroRef)를 새 Id로 자동 재연결 ----
+        app.MapPost("/api/macros/import", (HttpRequest req) => Guard(async () =>
+        {
+            var macros = await ReadMacros(req);
+            var added = service.ImportMacros(macros);
+            return Results.Json(new { ok = true, added });
+        }));
+
         // ---- 매크로 적용(활성) 토글 ----
         app.MapPost("/api/macros/{id}/enabled", (string id, EnabledBody? body) => Guard(() =>
         {
@@ -290,6 +298,14 @@ public static class ApiEndpoints
         using var reader = new StreamReader(req.Body);
         var json = await reader.ReadToEndAsync();
         return MacroStore.Deserialize(json);
+    }
+
+    private static async Task<List<Macro>> ReadMacros(HttpRequest req)
+    {
+        using var reader = new StreamReader(req.Body);
+        var json = await reader.ReadToEndAsync();
+        if (string.IsNullOrWhiteSpace(json)) return new List<Macro>();
+        return JsonSerializer.Deserialize<List<Macro>>(json, MacroStore.Options) ?? new List<Macro>();
     }
 
     private static async Task<Hotkey?> ReadHotkey(HttpRequest req)

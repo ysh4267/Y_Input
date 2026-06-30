@@ -267,6 +267,66 @@ public sealed class MacroService
         return all.Count;
     }
 
+    /// <summary>매크로 묶음을 가져온다. 각 매크로에 새 Id를 부여하고, 내부 매크로 참조(MacroRefEvent)를
+    /// 같은 묶음(옛 Id/이름) → 새 Id 로 재연결한다. 묶음에 없으면 기존 라이브러리(Id/이름)로 연결을 보존한다.
+    /// 임포트/익스포트 시 macroRef 연결이 끊기던 문제를 해결한다. 추가한 개수를 반환.</summary>
+    public int ImportMacros(IReadOnlyList<Macro> incoming)
+    {
+        if (incoming is null || incoming.Count == 0) return 0;
+
+        var existing = _library.LoadAll();
+        var existingIds = new HashSet<string>(existing.Select(m => m.Id));
+        var existingByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var m in existing)
+            if (!string.IsNullOrWhiteSpace(m.Name)) existingByName[m.Name] = m.Id; // 동명은 마지막 것
+
+        // 1) 새 Id 부여 + 매핑(옛 Id→새 Id, 이름→새 Id)
+        var oldToNew = new Dictionary<string, string>(StringComparer.Ordinal);
+        var nameToNew = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var order = NextOrder();
+        foreach (var m in incoming)
+        {
+            var oldId = m.Id;
+            m.Id = Guid.NewGuid().ToString("N");
+            m.Order = order++;
+            if (!string.IsNullOrEmpty(oldId)) oldToNew[oldId] = m.Id;
+            if (!string.IsNullOrWhiteSpace(m.Name)) nameToNew[m.Name] = m.Id;
+        }
+        var newById = incoming.ToDictionary(m => m.Id, m => m.Name);
+
+        // 2) 매크로 참조 재연결 — 우선순위: 같은 묶음 Id → 같은 묶음 이름 → 기존 Id → 기존 이름
+        string? Resolve(MacroRefEvent r)
+        {
+            if (!string.IsNullOrEmpty(r.MacroId) && oldToNew.TryGetValue(r.MacroId, out var a)) return a;
+            if (!string.IsNullOrWhiteSpace(r.Name) && nameToNew.TryGetValue(r.Name, out var b)) return b;
+            if (!string.IsNullOrEmpty(r.MacroId) && existingIds.Contains(r.MacroId)) return r.MacroId;
+            if (!string.IsNullOrWhiteSpace(r.Name) && existingByName.TryGetValue(r.Name, out var c)) return c;
+            return null;
+        }
+        int relinked = 0;
+        foreach (var m in incoming)
+        {
+            if (m.Steps is null) continue;
+            foreach (var s in m.Steps)
+            {
+                if (s.Event is not MacroRefEvent r) continue;
+                var target = Resolve(r);
+                if (target is null) continue;
+                if (r.MacroId != target) relinked++;
+                r.MacroId = target;
+                // 표시 이름도 대상 이름으로 동기화
+                if (newById.TryGetValue(target, out var nm) && !string.IsNullOrWhiteSpace(nm)) r.Name = nm;
+                else { var ex = existing.FirstOrDefault(x => x.Id == target); if (ex is not null) r.Name = ex.Name; }
+            }
+        }
+
+        foreach (var m in incoming) _library.Save(m);
+        ReloadHotkeys();
+        Log("info", $"매크로 {incoming.Count}개 가져오기 완료(참조 {relinked}건 재연결).");
+        BroadcastStatus();
+        return incoming.Count;
+    }
+
     /// <summary>매크로의 적용(활성) 여부를 토글한다. ON이면 트리거 핫키 무장, OFF면 보관만.</summary>
     public void SetEnabled(string id, bool enabled)
     {
