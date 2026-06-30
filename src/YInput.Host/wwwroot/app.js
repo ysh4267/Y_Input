@@ -120,6 +120,7 @@ async function loadMacros() {
   renderMacroList($('macro-list-edit'), $('macro-empty-edit'), 'edit');
   if (runShownId && !state.macros.some((m) => m.id === runShownId)) clearRunSteps();
   renderMacroActive();
+  requestAnimationFrame(updateProgBars); // 전체 진행도 선 표시 여부(오버플로) 갱신
 }
 
 function renderMacroList(listEl, emptyEl, mode) {
@@ -157,7 +158,8 @@ function renderMacroList(listEl, emptyEl, mode) {
           <input type="number" class="mini pl-count" min="1" value="${repCount}" ${repMode === 'count' ? '' : 'hidden'} title="반복 횟수">
           <button class="mbtn-trig act-trigger" title="트리거 설정(클릭 후 키/마우스/패드 입력)">${ICON.trigger}<span class="trig-val">${esc(m.trigger || '없음')}</span></button>
         </div>
-        <div class="macro-prog" data-id="${m.id}" title="재생 진행(● 행위 · ━ 지연 · ⟲ 반복)"></div>`;
+        <div class="macro-prog" data-id="${m.id}" title="재생 진행(● 행위 · ━ 지연 · ⟲ 반복)"></div>
+        <div class="macro-prog-bar" data-id="${m.id}" title="전체 진행도"><i class="macro-prog-bar-fill"></i></div>`;
     } else {
       const sub = `${m.stepCount}스텝 · 총 ${fmtMs(m.durationMs || 0)}`;
       li.innerHTML = `
@@ -552,7 +554,23 @@ function resetMacroTimeline(el) {
   el.querySelectorAll('.tl-fill').forEach((f) => { f.style.transition = 'none'; f.style.width = '0%'; });
   el.querySelectorAll('.tl-loop').forEach((lp) => { lp.classList.remove('active'); setLoopFill(lp, 0); });
   el.scrollLeft = 0;
+  const bar = el.nextElementSibling; // 전체 진행도 선 비우기
+  if (bar && bar.firstElementChild) bar.firstElementChild.style.width = '0%';
 }
+// 전체 진행도 선 — 타임라인이 길어 한눈에 안 보일 때만(가로 오버플로) 활성 노드의 전체 위치를 녹색선으로
+function updateProgBar(el, idx) {
+  const bar = el && el.nextElementSibling;
+  if (!bar || !bar.classList.contains('macro-prog-bar')) return;
+  bar.classList.toggle('show', el.scrollWidth > el.clientWidth + 2);
+  const fill = bar.firstElementChild;
+  const node = idx >= 0 ? el.querySelector(`.tl-dot[data-i="${idx}"], .tl-line[data-i="${idx}"]`) : null;
+  if (fill && node && el.scrollWidth) {
+    const c = el.getBoundingClientRect(), n = node.getBoundingClientRect();
+    const frac = ((n.left + n.width / 2 - c.left) + el.scrollLeft) / el.scrollWidth; // 전체 타임라인 중 활성 노드 위치
+    fill.style.width = (Math.max(0, Math.min(1, frac)) * 100).toFixed(1) + '%';
+  }
+}
+function updateProgBars() { document.querySelectorAll('.macro-prog').forEach((el) => updateProgBar(el, -1)); } // 표시 여부(오버플로) 갱신
 function updateMacroTimeline(macroId, p) {
   const el = document.querySelector(`.macro-prog[data-id="${macroId}"]`);
   if (!el) return;
@@ -572,6 +590,7 @@ function updateMacroTimeline(macroId, p) {
     lp.classList.add('active');
     const total = f.total || 1; setLoopFill(lp, (total - f.remaining + 1) / total); // 색 채움 = 현재/전체 (숫자 없음)
   });
+  updateProgBar(el, idx); // 전체 진행도 녹색선
   scrollTimelineToActive(el, idx);
 }
 // 인디케이터가 항목 폭을 넘으면 활성 노드가 중앙~우측(60%)에 오도록 가로 스크롤 추적
@@ -847,6 +866,7 @@ async function onUpdateDownload() {
 // ---------- 와이어링 ----------
 function wire() {
   document.querySelectorAll('.tab-btn').forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
+  window.addEventListener('resize', () => requestAnimationFrame(updateProgBars)); // 패널 폭 변하면 전체 진행도 선 표시 갱신
   $('btn-settings').onclick = openSettings;
   $('settings-close').onclick = closeSettings;
   $('settings-overlay').onclick = (e) => { if (e.target === $('settings-overlay')) closeSettings(); };
