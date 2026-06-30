@@ -1,7 +1,5 @@
-using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Reflection;
-using System.Text;
 using System.Text.Json;
 
 namespace YInput.Host.Services;
@@ -27,11 +25,10 @@ public static class AppUpdater
         return h;
     }
 
-    public readonly record struct CheckResult(bool Ok, bool UpdateAvailable, string Current, string Latest, string Message);
-    public readonly record struct StartResult(bool Ok, string Message);
+    public readonly record struct CheckResult(bool Ok, bool UpdateAvailable, string Current, string Latest, string Message, string DownloadUrl, string PageUrl);
     public readonly record struct VersionInfo(string Current, string CurrentDate, string Release, string ReleaseDate);
 
-    private readonly record struct LatestRelease(string Tag, string Date, string AssetUrl);
+    private readonly record struct LatestRelease(string Tag, string Date, string AssetUrl, string HtmlUrl);
 
     /// <summary>현재 빌드 버전(빌드 시 어셈블리에 임베드). 예: "v0.3.1". 미임베드 개발 빌드면 "".</summary>
     public static string CurrentVersion()
@@ -66,60 +63,15 @@ public static class AppUpdater
     {
         var cur = CurrentVersion();
         var (ok, latest, err) = TryFetchLatest();
-        if (!ok) return new CheckResult(false, false, cur, "", "릴리즈 확인 실패: " + err);
-        if (string.IsNullOrEmpty(latest.Tag)) return new CheckResult(false, false, cur, "", "릴리즈를 찾을 수 없습니다.");
+        if (!ok) return new CheckResult(false, false, cur, "", "릴리즈 확인 실패: " + err, "", "");
+        if (string.IsNullOrEmpty(latest.Tag)) return new CheckResult(false, false, cur, "", "릴리즈를 찾을 수 없습니다.", "", "");
         if (string.IsNullOrEmpty(latest.AssetUrl))
-            return new CheckResult(false, false, cur, latest.Tag, $"{latest.Tag} 릴리즈에 {AssetName} 파일이 없습니다.");
+            return new CheckResult(false, false, cur, latest.Tag, $"{latest.Tag} 릴리즈에 {AssetName} 파일이 없습니다.", "", latest.HtmlUrl);
 
         // 임베드 버전과 최신 태그가 정확히 같으면 최신. (개발 빌드 등 cur="" 이면 업데이트 가능으로 안내)
         var upToDate = !string.IsNullOrEmpty(cur) && string.Equals(cur, latest.Tag, StringComparison.OrdinalIgnoreCase);
         return new CheckResult(true, !upToDate, cur, latest.Tag,
-            upToDate ? "최신 상태" : $"새 버전 {latest.Tag} 사용 가능");
-    }
-
-    public static StartResult Start()
-    {
-        var (ok, latest, err) = TryFetchLatest();
-        if (!ok) return new StartResult(false, "릴리즈 확인 실패: " + err);
-        if (string.IsNullOrEmpty(latest.AssetUrl)) return new StartResult(false, $"{AssetName} 에셋을 찾을 수 없습니다.");
-
-        var target = Environment.ProcessPath;
-        if (string.IsNullOrEmpty(target)) return new StartResult(false, "현재 실행 파일 경로를 알 수 없습니다.");
-
-        try
-        {
-            var dir = Path.Combine(Path.GetTempPath(), "YInput.update");
-            Directory.CreateDirectory(dir);
-            var newExe = Path.Combine(dir, "YInput.new.exe");
-            var script = Path.Combine(dir, "apply-update.ps1");
-
-            // 1) 새 빌드 다운로드
-            using (var resp = Http.GetAsync(latest.AssetUrl, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult())
-            {
-                if (!resp.IsSuccessStatusCode) return new StartResult(false, $"다운로드 실패({(int)resp.StatusCode})");
-                using var s = resp.Content.ReadAsStream();
-                using var f = File.Create(newExe);
-                s.CopyTo(f);
-            }
-            if (new FileInfo(newExe).Length < 1_000_000)
-                return new StartResult(false, "다운로드한 파일이 손상되었습니다.");
-
-            // 2) 교체 스크립트 기록(ASCII, PS 5.1 안전) + 분리 실행
-            File.WriteAllText(script, UpdaterScript, new UTF8Encoding(false));
-            var procId = Environment.ProcessId;
-            Process.Start(new ProcessStartInfo("powershell.exe",
-                $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{script}\" " +
-                $"-Target \"{target}\" -NewExe \"{newExe}\" -ProcId {procId}")
-            {
-                UseShellExecute = true,
-                WindowStyle = ProcessWindowStyle.Hidden,
-            });
-            return new StartResult(true, $"{latest.Tag} 다운로드 완료 — 교체 후 재시작합니다.");
-        }
-        catch (Exception ex)
-        {
-            return new StartResult(false, ex.Message);
-        }
+            upToDate ? "최신 상태" : $"새 버전 {latest.Tag} 사용 가능", latest.AssetUrl, latest.HtmlUrl);
     }
 
     private static (bool ok, LatestRelease latest, string error) TryFetchLatest()
@@ -133,6 +85,7 @@ public static class AppUpdater
             var root = doc.RootElement;
 
             var tag = root.TryGetProperty("tag_name", out var t) ? (t.GetString() ?? "") : "";
+            var htmlUrl = root.TryGetProperty("html_url", out var hu) ? (hu.GetString() ?? "") : "";
             var date = "";
             if (root.TryGetProperty("published_at", out var pa) && pa.GetString() is { Length: >= 10 } ds)
                 date = ds[..10];
@@ -151,7 +104,7 @@ public static class AppUpdater
                     }
                 }
             }
-            return (true, new LatestRelease(tag, date, assetUrl), "");
+            return (true, new LatestRelease(tag, date, assetUrl, htmlUrl), "");
         }
         catch (Exception ex)
         {
@@ -159,41 +112,4 @@ public static class AppUpdater
         }
     }
 
-    // 분리 실행되는 교체 스크립트. 이전 프로세스 종료를 기다린 뒤 exe 를 바꾸고 재실행한다.
-    // ($PID 는 PowerShell 자동 변수이므로 파라미터는 -ProcId 를 사용한다. ASCII only.)
-    private const string UpdaterScript = """
-param([string]$Target, [string]$NewExe, [int]$ProcId)
-$ErrorActionPreference = 'SilentlyContinue'
-
-# 1) wait for the old app to exit (graceful), then force kill if still alive
-for ($i = 0; $i -lt 50; $i++) {
-  if (-not (Get-Process -Id $ProcId -ErrorAction SilentlyContinue)) { break }
-  Start-Sleep -Milliseconds 200
-}
-if (Get-Process -Id $ProcId -ErrorAction SilentlyContinue) {
-  Stop-Process -Id $ProcId -Force
-  Start-Sleep -Milliseconds 500
-}
-
-# 2) swap the exe (if locked, rename the old one out of the way then copy)
-$ok = $false
-for ($i = 0; $i -lt 25 -and -not $ok; $i++) {
-  try {
-    Copy-Item -LiteralPath $NewExe -Destination $Target -Force -ErrorAction Stop
-    $ok = $true
-  } catch {
-    try {
-      $old = "$Target.old"
-      Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue
-      Rename-Item -LiteralPath $Target -NewName ([System.IO.Path]::GetFileName($old)) -ErrorAction Stop
-      Copy-Item -LiteralPath $NewExe -Destination $Target -Force -ErrorAction Stop
-      $ok = $true
-    } catch { Start-Sleep -Milliseconds 300 }
-  }
-}
-
-# 3) relaunch and clean up
-if ($ok) { Start-Process -FilePath $Target }
-Remove-Item -LiteralPath $NewExe -Force -ErrorAction SilentlyContinue
-""";
 }

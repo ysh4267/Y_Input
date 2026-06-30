@@ -13,6 +13,10 @@ internal sealed class TrayAppContext : ApplicationContext
     private readonly NotifyIcon _icon;
     private readonly MacroService _service;
     private readonly SynchronizationContext _ui;
+    private readonly ToolStripMenuItem _versionItem;   // 앱 이름 밑: 현재 버전 · 업데이트 여부
+    private string _verText = "버전 확인 중…";
+    private DateTime _verAt = DateTime.MinValue;        // 마지막 확인 시각(캐시)
+    private volatile bool _verBusy;
 
     public TrayAppContext(MacroService service)
     {
@@ -21,10 +25,12 @@ internal sealed class TrayAppContext : ApplicationContext
 
         var menu = new ContextMenuStrip();
         menu.Items.Add(new ToolStripMenuItem("Y Input") { Enabled = false }); // 앱 이름(헤더)
+        _versionItem = new ToolStripMenuItem(_verText) { Enabled = false };    // 앱 이름 밑: 버전 · 업데이트 여부
+        menu.Items.Add(_versionItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("열기", null, (_, _) => OpenUi());
-        menu.Items.Add("업데이트", null, (_, _) => StartUpdate());
         menu.Items.Add("끄기", null, (_, _) => ExitThread());
+        menu.Opening += (_, _) => RefreshVersion(false); // 메뉴 열 때마다 갱신(5분 캐시)
 
         _icon = new NotifyIcon
         {
@@ -34,6 +40,7 @@ internal sealed class TrayAppContext : ApplicationContext
             ContextMenuStrip = menu,
         };
         _icon.DoubleClick += (_, _) => OpenUi();
+        RefreshVersion(true); // 시작 시 미리 한 번 확인
     }
 
     /// <summary>exe에 내장된 아이콘(ApplicationIcon)을 트레이 아이콘으로 사용. 실패 시 기본 아이콘.</summary>
@@ -65,21 +72,30 @@ internal sealed class TrayAppContext : ApplicationContext
         }
     }
 
-    /// <summary>트레이 '업데이트' — Git 동기화 빌드를 분리 실행(웹 UI의 업데이트와 동일).</summary>
-    private void StartUpdate()
+    /// <summary>앱 이름 밑 '버전 · 업데이트 여부' 표시를 갱신한다. 백그라운드로 GitHub 최신 릴리즈를 확인(5분 캐시)하고
+    /// "v0.3.1 · 최신" / "v0.3.1 · 새 버전 v0.3.2 있음" 형태로 메뉴 텍스트를 바꾼다.</summary>
+    private void RefreshVersion(bool force)
     {
-        try
+        if (_verBusy) return;
+        if (!force && (DateTime.UtcNow - _verAt) < TimeSpan.FromMinutes(5)) return;
+        _verBusy = true;
+        Task.Run(() =>
         {
-            var r = AppUpdater.Start();
-            _service.Log(r.Ok ? "info" : "error",
-                r.Ok ? "업데이트 시작 — 곧 재빌드/재시작됩니다." : ("업데이트 실패: " + r.Message));
-            ShowBalloon(r.Ok ? "업데이트" : "업데이트 실패",
-                r.Ok ? "업데이트를 시작했습니다. 곧 재시작됩니다." : r.Message);
-        }
-        catch (Exception ex)
-        {
-            _service.Log("error", "업데이트 오류: " + ex.Message);
-        }
+            string text;
+            try
+            {
+                var c = AppUpdater.Check();
+                var cur = string.IsNullOrEmpty(c.Current) ? "개발 빌드" : c.Current;
+                if (!c.Ok) text = $"{cur} · 업데이트 확인 실패";
+                else if (c.UpdateAvailable) text = $"{cur} · 새 버전 {c.Latest} 있음";
+                else text = $"{cur} · 최신";
+            }
+            catch { text = "버전 확인 실패"; }
+            _verText = text;
+            _verAt = DateTime.UtcNow;
+            _ui.Post(_ => _versionItem.Text = text, null);
+            _verBusy = false;
+        });
     }
 
     /// <summary>외부(웹/스크립트) 요청으로 그레이스풀 종료. UI 스레드에서 ExitThread 호출.</summary>

@@ -52,5 +52,4 @@ export const api = {
 
   appVersion: () => request('GET', '/api/app/version'),
   updateCheck: () => request('GET', '/api/app/update/check'),
-  updateApply: () => request('POST', '/api/app/update'),
 };

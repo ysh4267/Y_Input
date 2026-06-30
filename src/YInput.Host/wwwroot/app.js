@@ -678,21 +678,26 @@ function showProgress(p) {
 // ---------- 업데이트(GitHub Releases) ----------
 async function onUpdateCheck() {
   $('update-status').textContent = '확인 중…';
-  $('btn-update-apply').disabled = true;
   try {
     const r = await api.updateCheck();
     if (!r.ok) { $('update-status').textContent = '확인 실패: ' + (r.message || ''); return; }
     const cur = r.current || '개발 빌드';
-    if (r.updateAvailable) { $('update-status').textContent = `새 버전 ${r.latest} 사용 가능 (현재 ${cur})`; $('btn-update-apply').disabled = false; }
+    if (r.updateAvailable) $('update-status').textContent = `새 버전 ${r.latest} 사용 가능 (현재 ${cur}) — 다운로드를 누르세요.`;
     else $('update-status').textContent = `최신 상태 (현재 ${cur})`;
   } catch (e) { $('update-status').textContent = '확인 실패: ' + e.message; }
 }
-async function onUpdateApply() {
-  const ok = await confirmDialog('최신 릴리즈를 내려받아 교체하고 앱을 재시작할까요?', { title: '업데이트 적용', ok: '업데이트', cancel: '취소' });
-  if (!ok) return;
-  $('update-status').textContent = '다운로드 중… 완료되면 교체 후 자동 재시작됩니다.';
-  $('btn-update-apply').disabled = true; $('btn-update-check').disabled = true;
-  try { await api.updateApply(); } catch (e) { /* 곧 종료되어 응답이 안 올 수 있음 */ }
+// 다운로드 — 교체/재시작 대신, 최신 릴리즈 빌드의 다운로드 링크를 열어 브라우저 다운로드 폴더에 받는다.
+async function onUpdateDownload() {
+  $('update-status').textContent = '다운로드 링크 확인 중…';
+  try {
+    const r = await api.updateCheck();
+    const url = (r && r.downloadUrl) || (r && r.pageUrl);
+    if (!url) { $('update-status').textContent = '다운로드 링크를 찾을 수 없습니다: ' + ((r && r.message) || ''); return; }
+    window.open(url, '_blank', 'noopener'); // 브라우저가 다운로드 폴더에 저장
+    $('update-status').textContent = r.downloadUrl
+      ? `${r.latest || '최신 버전'} 다운로드를 시작했습니다 — 브라우저 다운로드 폴더를 확인하세요.`
+      : '릴리즈 페이지를 열었습니다.';
+  } catch (e) { $('update-status').textContent = '다운로드 실패: ' + e.message; }
 }
 
 // ---------- 와이어링 ----------
@@ -702,7 +707,7 @@ function wire() {
   $('settings-close').onclick = closeSettings;
   $('settings-overlay').onclick = (e) => { if (e.target === $('settings-overlay')) closeSettings(); };
   $('btn-update-check').onclick = onUpdateCheck;
-  $('btn-update-apply').onclick = onUpdateApply;
+  $('btn-update-apply').onclick = onUpdateDownload;
   $('btn-new').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-new-run').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-import').onclick = () => $('file-import').click();
