@@ -124,7 +124,7 @@ function renderMacroList(listEl, emptyEl, mode) {
       const repCount = m.loopCount > 1 ? m.loopCount : 2;
       li.innerHTML = `
         <div class="mi-main">
-          <span class="macro-grip" draggable="true" title="드래그하여 순서 변경">⠿</span>
+          <span class="macro-grip" title="드래그하여 순서 변경">⠿</span>
           <label class="toggle" title="적용(트리거 활성)"><input type="checkbox" class="act-toggle" ${m.enabled ? 'checked' : ''}><span class="track"></span><span class="knob"></span></label>
           <div class="macro-meta"><span class="name">${esc(m.name)}</span><span class="macro-sub">${m.stepCount}스텝 · 총 ${fmtMs(m.durationMs || 0)}</span></div>
           <div class="macro-actions">
@@ -146,7 +146,7 @@ function renderMacroList(listEl, emptyEl, mode) {
     } else {
       const sub = `${m.stepCount}스텝 · 총 ${fmtMs(m.durationMs || 0)}`;
       li.innerHTML = `
-        <span class="macro-grip" draggable="true" title="드래그하여 순서 변경">⠿</span>
+        <span class="macro-grip" title="드래그하여 순서 변경">⠿</span>
         <div class="macro-meta"><span class="name">${esc(m.name)}</span><span class="macro-sub">${sub}</span></div>
         <div class="macro-actions">
           <button class="mbtn act-dup" title="복제">${ICON.dup}</button>
@@ -154,7 +154,7 @@ function renderMacroList(listEl, emptyEl, mode) {
         </div>`;
     }
     li.onclick = (e) => {
-      if (e.target.closest('button, label, input')) return;
+      if (e.target.closest('button, label, input, .macro-grip')) return;
       if (mode === 'run') selectRunMacro(m.id); else openMacro(m.id);
     };
     li.querySelector('.act-del').onclick = () => confirmDeleteInline(li, m.id);
@@ -183,50 +183,128 @@ function renderMacroList(listEl, emptyEl, mode) {
   }
 }
 
-// ---------- 매크로 목록 드래그 순서 변경(그립 핸들) ----------
-let dragMacroId = null;
-function wireMacroDrag(li, id) {
-  const grip = li.querySelector('.macro-grip');
-  if (grip) {
-    grip.addEventListener('dragstart', (e) => {
-      dragMacroId = id; e.dataTransfer.effectAllowed = 'move';
-      try { e.dataTransfer.setData('text/plain', id); } catch (_) {}
-      li.classList.add('dragging');
-    });
-    grip.addEventListener('dragend', () => {
-      dragMacroId = null;
-      document.querySelectorAll('.macro-item.dragging,.macro-item.drop-before,.macro-item.drop-after')
-        .forEach((x) => x.classList.remove('dragging', 'drop-before', 'drop-after'));
-    });
+// ---------- 매크로 목록 포인터 드래그(편집기 스텝처럼: 고스트가 손에 딸려 나오고, 슬라이드 + 자동 스크롤) ----------
+const MREDUCE = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+let mdrag = null;
+function scrollParent(el) {
+  let n = el && el.parentElement;
+  while (n) {
+    const oy = getComputedStyle(n).overflowY;
+    if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight + 1) return n;
+    n = n.parentElement;
   }
-  li.addEventListener('dragover', (e) => {
-    if (!dragMacroId || dragMacroId === id) return;
-    e.preventDefault();
-    const r = li.getBoundingClientRect();
-    const before = e.clientY < r.top + r.height / 2;
-    li.classList.toggle('drop-before', before);
-    li.classList.toggle('drop-after', !before);
-  });
-  li.addEventListener('dragleave', () => li.classList.remove('drop-before', 'drop-after'));
-  li.addEventListener('drop', (e) => {
-    if (!dragMacroId || dragMacroId === id) return;
-    e.preventDefault();
-    const r = li.getBoundingClientRect();
-    reorderMacros(dragMacroId, id, e.clientY < r.top + r.height / 2);
+  return document.scrollingElement || document.documentElement;
+}
+function nextVisibleMacro(el) {
+  let n = el.nextElementSibling;
+  while (n && (!n.classList || !n.classList.contains('macro-item') || n.style.display === 'none')) n = n.nextElementSibling;
+  return n;
+}
+function captureMacroRects(els) { const m = new Map(); els.forEach((el) => m.set(el, el.getBoundingClientRect())); return m; }
+function playMacroFlip(before) {
+  if (MREDUCE) return;
+  before.forEach((old, el) => {
+    if (!el.isConnected) return;
+    const now = el.getBoundingClientRect();
+    const dy = old.top - now.top;
+    if (!dy) return;
+    el.style.transition = 'none'; el.style.transform = `translateY(${dy}px)`;
+    requestAnimationFrame(() => { el.style.transition = 'transform .16s ease'; el.style.transform = ''; setTimeout(() => { el.style.transition = ''; el.style.transform = ''; }, 180); });
   });
 }
-async function reorderMacros(srcId, targetId, before) {
-  const ids = state.macros.map((m) => m.id);
-  const from = ids.indexOf(srcId); if (from < 0) return;
-  ids.splice(from, 1);
-  let to = ids.indexOf(targetId);
-  if (!before) to += 1;
-  ids.splice(to, 0, srcId);
-  // 낙관적 반영 후 저장
+function wireMacroDrag(li, id) {
+  const grip = li.querySelector('.macro-grip');
+  if (!grip) return;
+  grip.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const r = li.getBoundingClientRect();
+    mdrag = { id, li, listEl: li.closest('.macro-list'), scroller: scrollParent(li.closest('.macro-list')),
+      startX: e.clientX, startY: e.clientY, offX: e.clientX - r.left, offY: e.clientY - r.top, moving: false, lastY: e.clientY, autoTimer: 0 };
+    window.addEventListener('pointermove', macroPointerMove);
+    window.addEventListener('pointerup', macroPointerUp, { once: true });
+  });
+}
+function macroPointerMove(e) {
+  if (!mdrag) return;
+  if (!mdrag.moving) {
+    if (Math.abs(e.clientX - mdrag.startX) + Math.abs(e.clientY - mdrag.startY) < 5) return;
+    macroBeginDrag();
+  }
+  mdrag.lastY = e.clientY;
+  mdrag.ghost.style.left = (e.clientX - mdrag.offX) + 'px';
+  mdrag.ghost.style.top = (e.clientY - mdrag.offY) + 'px';
+  macroUpdatePlaceholder();
+  macroAutoScroll(e.clientY);
+}
+function macroBeginDrag() {
+  mdrag.moving = true;
+  const li = mdrag.li;
+  const ph = document.createElement('li');
+  ph.className = 'macro-placeholder';
+  ph.style.height = li.offsetHeight + 'px';
+  li.parentNode.insertBefore(ph, li);
+  mdrag.placeholder = ph;
+  const gr = li.getBoundingClientRect();
+  const ghost = li.cloneNode(true);
+  ghost.classList.add('macro-ghost');
+  ghost.style.width = gr.width + 'px';
+  ghost.style.left = gr.left + 'px';
+  ghost.style.top = gr.top + 'px';
+  document.body.appendChild(ghost);
+  mdrag.ghost = ghost;
+  li.style.display = 'none';
+}
+function macroUpdatePlaceholder() {
+  if (!mdrag || !mdrag.moving) return;
+  const listEl = mdrag.listEl;
+  const items = [...listEl.querySelectorAll('.macro-item')].filter((el) => el.style.display !== 'none');
+  const g = mdrag.ghost.getBoundingClientRect();
+  const mid = g.top + g.height / 2;
+  let target = null;
+  for (const c of items) { const r = c.getBoundingClientRect(); if (mid < r.top + r.height / 2) { target = c; break; } }
+  if (nextVisibleMacro(mdrag.placeholder) === target) return;
+  const before = captureMacroRects(items.concat(mdrag.placeholder));
+  if (target) listEl.insertBefore(mdrag.placeholder, target); else listEl.appendChild(mdrag.placeholder);
+  playMacroFlip(before);
+}
+function macroAutoScroll(clientY) {
+  if (mdrag.autoTimer) { cancelAnimationFrame(mdrag.autoTimer); mdrag.autoTimer = 0; }
+  const sc = mdrag.scroller; if (!sc) return;
+  const r = sc.getBoundingClientRect();
+  const EDGE = 44;
+  let dy = 0;
+  if (clientY < r.top + EDGE) dy = -Math.ceil((r.top + EDGE - clientY) / 3);
+  else if (clientY > r.bottom - EDGE) dy = Math.ceil((clientY - (r.bottom - EDGE)) / 3);
+  if (!dy) return;
+  const step = () => {
+    if (!mdrag || !mdrag.moving) return;
+    const top0 = sc.scrollTop;
+    sc.scrollTop = Math.max(0, Math.min(sc.scrollHeight - sc.clientHeight, sc.scrollTop + dy));
+    if (sc.scrollTop !== top0) { mdrag.ghost.style.top = (mdrag.lastY - mdrag.offY) + 'px'; macroUpdatePlaceholder(); }
+    mdrag.autoTimer = requestAnimationFrame(step);
+  };
+  mdrag.autoTimer = requestAnimationFrame(step);
+}
+function macroPointerUp() {
+  window.removeEventListener('pointermove', macroPointerMove);
+  const d = mdrag; mdrag = null;
+  if (!d) return;
+  if (d.autoTimer) cancelAnimationFrame(d.autoTimer);
+  if (!d.moving) return;
+  d.ghost.remove();
+  const listEl = d.listEl;
+  const ids = [];
+  for (const child of [...listEl.children]) {
+    if (child === d.placeholder) { ids.push(d.id); continue; }
+    if (child.classList && child.classList.contains('macro-item') && child.style.display !== 'none' && child.dataset.id !== d.id) ids.push(child.dataset.id);
+  }
+  d.placeholder.remove(); d.li.style.display = '';
+  state.macros.forEach((m) => { if (!ids.includes(m.id)) ids.push(m.id); });
   state.macros = ids.map((id) => state.macros.find((m) => m.id === id)).filter(Boolean);
   renderMacroList($('macro-list-run'), $('macro-empty-run'), 'run');
   renderMacroList($('macro-list-edit'), $('macro-empty-edit'), 'edit');
-  try { await api.reorder(ids); } catch (e) { log('error', e.message); await loadMacros(); }
+  api.reorder(state.macros.map((m) => m.id)).catch((e) => { log('error', e.message); loadMacros(); });
 }
 
 function renderMacroActive() {
