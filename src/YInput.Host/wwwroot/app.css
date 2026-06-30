@@ -27,9 +27,9 @@
 * { box-sizing: border-box; }
 /* 스크롤바 — 테마에 맞춘 얇고 둥근 스타일(전역) */
 * { scrollbar-width: thin; scrollbar-color: var(--border2) transparent; }
-::-webkit-scrollbar { width: 26px; height: 26px; }
+::-webkit-scrollbar { width: 12px; height: 12px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 99px; border: 10px solid transparent; background-clip: padding-box; } /* 10px 투명 테두리 = 내용과의 좌우 간격 */
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 99px; border: 3px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 ::-webkit-scrollbar-corner { background: transparent; }
 html, body { margin: 0; height: 100%; }
@@ -102,7 +102,7 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 .run-list-card { min-height: 0; display: flex; flex-direction: column; }
 .run-list-card .macro-list { flex: 1; max-height: none; min-height: 0; }
 .run-steps-card { min-height: 0; display: flex; flex-direction: column; }
-.run-steps { flex: 1; min-height: 0; max-height: none; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.run-steps { flex: 1; min-height: 0; max-height: none; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding-right: 10px; } /* 우측 여백 = 스크롤바 간격 */
 .run-steps-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; font-size: 12.5px; }
 .run-steps-row .rs-num { color: var(--muted); font-size: 11px; min-width: 20px; text-align: right; font-variant-numeric: tabular-nums; }
 .run-steps-row .rs-ico { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 13px; flex-shrink: 0; }
@@ -138,7 +138,7 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 @keyframes pulse { 50% { opacity: .55; } }
 
 /* 매크로 목록 — 이름 한 줄 + 상세 아랫줄 */
-.macro-list { list-style: none; margin: 0; padding: 0; max-height: 40vh; overflow-y: auto; }
+.macro-list { list-style: none; margin: 0; padding: 0 10px 0 0; max-height: 40vh; overflow-y: auto; } /* 우측 여백 = 스크롤바와 항목 간격 */
 .macro-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card2); margin-bottom: 6px; cursor: pointer; position: relative; }
 .macro-item:hover { border-color: var(--border2); }
 .macro-item.enabled { background: rgba(79,140,255,.12); border-color: rgba(79,140,255,.55); } /* 적용(ON) 하이라이트(파랑) */
@@ -207,7 +207,7 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 .log-float .log { flex: 1; height: auto; min-height: 140px; }
 
 /* 로그 */
-.log { height: 180px; overflow-y: auto; font-family: Consolas, monospace; font-size: 12px; }
+.log { height: 180px; overflow-y: auto; font-family: Consolas, monospace; font-size: 12px; padding-right: 10px; }
 .log .line { padding: 1px 0; display: flex; gap: 8px; }
 .log .time { color: var(--muted); flex-shrink: 0; }
 .log .info { color: var(--text); } .log .warn { color: var(--warn); }
