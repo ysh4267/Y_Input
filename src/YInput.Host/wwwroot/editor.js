@@ -65,7 +65,16 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
     return { id: '', name: '새 매크로', loopCount: 1, speedMultiplier: 1.0, randomizeDelayPercent: 0, trigger: null, steps: [] };
   }
 
+  // 녹화 중 편집기를 닫거나 다른 매크로로 전환하면 100ms 타이머가 고아로 남고 서버 녹화도 계속된다 — 진입 시 정리.
+  // 평상시(recordingUid·recTickTimer 모두 null)에는 완전한 no-op이라 부작용 없음.
+  function abortActiveRecording() {
+    if (recTickTimer) { clearInterval(recTickTimer); recTickTimer = null; }
+    if (recordingUid != null) { api.recordStop('', false).catch(() => {}); } // 서버 녹화 중단(베스트에포트)
+    recordingUid = null; liveRec = []; tickingUid = null; pendingServerGap = null; liveEl = null;
+  }
+
   function open(macro) {
+    abortActiveRecording(); // 녹화 중 닫기/전환 시 고아 타이머·서버 녹화 정리
     editing = structuredClone(macro || blank());
     editing.steps ||= [];
     ensureUids();
@@ -453,11 +462,18 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
     const t = ev.targets || {};
     return { keyboard: !!t.keyboard, mouseButtons: !!t.mouseButtons, mouseMove: !!t.mouseMove, mouseWheel: !!t.mouseWheel, gamepad: !!t.gamepad, fixedDelayMs };
   }
+  // 장시간 녹화 시 실시간 미리보기 DOM이 무한 증가하지 않게 가장 오래된 행부터 잘라낸다(로그 캡과 동일 패턴).
+  // liveRec 배열은 그대로 둔다 — 정지 시 매크로를 만드는 원본이고 평범한 객체라 가볍다(무거운 건 DOM 노드).
+  const LIVE_ROW_CAP = 500;
+  function capLiveRows() {
+    if (!liveEl) return;
+    while (liveEl.childElementCount > LIVE_ROW_CAP) liveEl.removeChild(liveEl.firstChild);
+  }
   // 새 '측정 중' 지연 행을 블록 내부에 추가하고 실시간 타이머로 흐른 시간 표시
   function startTickingDelay() {
     const d = tagUids([{ delayBeforeMs: 0, event: { '$type': 'delay', randomizePercent: 0 } }])[0];
     liveRec.push(d); tickingUid = d._uid; tickStart = performance.now();
-    if (liveEl) { liveEl.appendChild(liveRowEl(d)); liveEl.scrollTop = liveEl.scrollHeight; }
+    if (liveEl) { liveEl.appendChild(liveRowEl(d)); capLiveRows(); liveEl.scrollTop = liveEl.scrollHeight; }
   }
   // 100ms마다 진행 중 지연 행의 흐른 시간 갱신(텍스트만)
   function tickDelay() {
@@ -501,7 +517,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
     pendingServerGap = null;
     const inp = tagUids([{ delayBeforeMs: 0, event: data.event }])[0];
     liveRec.push(inp);
-    if (liveEl) liveEl.appendChild(liveRowEl(inp));
+    if (liveEl) { liveEl.appendChild(liveRowEl(inp)); capLiveRows(); }
     startTickingDelay(); // 다음 측정용 지연 행
   }
   // 녹화 종료 버튼 클릭(=마지막 왼쪽 클릭)과 그 직전 지연은 결과에서 제외
