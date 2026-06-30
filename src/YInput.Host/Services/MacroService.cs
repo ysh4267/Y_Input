@@ -267,44 +267,81 @@ public sealed class MacroService
         return all.Count;
     }
 
-    /// <summary>매크로 묶음을 가져온다. 각 매크로에 새 Id를 부여하고, 내부 매크로 참조(MacroRefEvent)를
-    /// 같은 묶음(옛 Id/이름) → 새 Id 로 재연결한다. 묶음에 없으면 기존 라이브러리(Id/이름)로 연결을 보존한다.
-    /// 임포트/익스포트 시 macroRef 연결이 끊기던 문제를 해결한다. 추가한 개수를 반환.</summary>
+    /// <summary>매크로 묶음을 가져온다. (1) 같은 이름·같은 내용의 매크로가 이미 있으면 새로 만들지 않고 그것을 재사용한다.
+    /// (2) 이름은 같지만 내용이 다르면 이름 뒤에 숫자를 붙여 유니크하게 만든다. (3) 내부 매크로 참조(MacroRefEvent)는
+    /// 옛 Id/이름 → 최종 대상 Id 로 재연결한다(내보내기에 참조 대상까지 함께 묶여 오므로 끊기지 않는다).
+    /// 새로 추가한(생성한) 매크로 개수를 반환.</summary>
     public int ImportMacros(IReadOnlyList<Macro> incoming)
     {
         if (incoming is null || incoming.Count == 0) return 0;
 
         var existing = _library.LoadAll();
-        var existingIds = new HashSet<string>(existing.Select(m => m.Id));
-        var existingByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var existingById = existing.ToDictionary(m => m.Id, m => m);
+        var existingSig = existing.ToDictionary(m => m.Id, m => ContentSignature(m));
+        var existingByName = new Dictionary<string, List<Macro>>(StringComparer.OrdinalIgnoreCase);
         foreach (var m in existing)
-            if (!string.IsNullOrWhiteSpace(m.Name)) existingByName[m.Name] = m.Id; // 동명은 마지막 것
+        {
+            if (!existingByName.TryGetValue(m.Name, out var list)) existingByName[m.Name] = list = new List<Macro>();
+            list.Add(m);
+        }
+        var usedNames = new HashSet<string>(existing.Select(m => m.Name), StringComparer.OrdinalIgnoreCase);
 
-        // 1) 새 Id 부여 + 매핑(옛 Id→새 Id, 이름→새 Id)
-        var oldToNew = new Dictionary<string, string>(StringComparer.Ordinal);
-        var nameToNew = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var oldToNew = new Dictionary<string, string>(StringComparer.Ordinal);            // 옛 Id → 최종 대상 Id(재사용/신규)
+        var nameToNew = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // 원래 이름 → 최종 대상 Id
+        var toSave = new List<Macro>();
+        int reused = 0, renamed = 0;
         var order = NextOrder();
+
         foreach (var m in incoming)
         {
-            var oldId = m.Id;
-            m.Id = Guid.NewGuid().ToString("N");
-            m.Order = order++;
-            if (!string.IsNullOrEmpty(oldId)) oldToNew[oldId] = m.Id;
-            if (!string.IsNullOrWhiteSpace(m.Name)) nameToNew[m.Name] = m.Id;
-        }
-        var newById = incoming.ToDictionary(m => m.Id, m => m.Name);
+            var oldId = m.Id ?? "";
+            var origName = string.IsNullOrWhiteSpace(m.Name) ? "Untitled" : m.Name;
+            var sig = ContentSignature(m);
 
-        // 2) 매크로 참조 재연결 — 우선순위: 같은 묶음 Id → 같은 묶음 이름 → 기존 Id → 기존 이름
+            // (1) 같은 이름 + 같은 내용이면 기존 매크로 재사용(중복 생성 안 함)
+            Macro? identical = null;
+            if (existingByName.TryGetValue(origName, out var sameName))
+                identical = sameName.FirstOrDefault(e => existingSig[e.Id] == sig);
+            if (identical is not null)
+            {
+                if (!string.IsNullOrEmpty(oldId)) oldToNew[oldId] = identical.Id;
+                nameToNew[origName] = identical.Id;
+                reused++;
+                continue;
+            }
+
+            // (2) 이름은 겹치는데 내용이 다르면 뒤에 숫자를 붙여 유니크하게
+            var finalName = origName;
+            if (usedNames.Contains(finalName))
+            {
+                int n = 1;
+                while (usedNames.Contains(origName + n)) n++;
+                finalName = origName + n;
+                renamed++;
+            }
+            usedNames.Add(finalName);
+
+            var newId = Guid.NewGuid().ToString("N");
+            m.Id = newId;
+            m.Name = finalName;
+            m.Order = order++;
+            if (!string.IsNullOrEmpty(oldId)) oldToNew[oldId] = newId;
+            nameToNew[origName] = newId;
+            toSave.Add(m);
+        }
+
+        // (3) 매크로 참조(macroRef) 재연결 — 옛 Id → 최종 Id, 없으면 원래 이름 → 기존 Id → 기존 이름 순
+        var existingIds = new HashSet<string>(existing.Select(m => m.Id));
         string? Resolve(MacroRefEvent r)
         {
             if (!string.IsNullOrEmpty(r.MacroId) && oldToNew.TryGetValue(r.MacroId, out var a)) return a;
             if (!string.IsNullOrWhiteSpace(r.Name) && nameToNew.TryGetValue(r.Name, out var b)) return b;
             if (!string.IsNullOrEmpty(r.MacroId) && existingIds.Contains(r.MacroId)) return r.MacroId;
-            if (!string.IsNullOrWhiteSpace(r.Name) && existingByName.TryGetValue(r.Name, out var c)) return c;
+            if (!string.IsNullOrWhiteSpace(r.Name) && existingByName.TryGetValue(r.Name, out var lst) && lst.Count > 0) return lst[0].Id;
             return null;
         }
         int relinked = 0;
-        foreach (var m in incoming)
+        foreach (var m in toSave)
         {
             if (m.Steps is null) continue;
             foreach (var s in m.Steps)
@@ -314,17 +351,31 @@ public sealed class MacroService
                 if (target is null) continue;
                 if (r.MacroId != target) relinked++;
                 r.MacroId = target;
-                // 표시 이름도 대상 이름으로 동기화
-                if (newById.TryGetValue(target, out var nm) && !string.IsNullOrWhiteSpace(nm)) r.Name = nm;
-                else { var ex = existing.FirstOrDefault(x => x.Id == target); if (ex is not null) r.Name = ex.Name; }
+                if (existingById.TryGetValue(target, out var et)) r.Name = et.Name;            // 표시 이름 동기화
+                else { var bt = toSave.FirstOrDefault(x => x.Id == target); if (bt is not null) r.Name = bt.Name; }
             }
         }
 
-        foreach (var m in incoming) _library.Save(m);
+        foreach (var m in toSave) _library.Save(m);
         ReloadHotkeys();
-        Log("info", $"매크로 {incoming.Count}개 가져오기 완료(참조 {relinked}건 재연결).");
+        Log("info", $"가져오기 완료: 신규 {toSave.Count}개"
+            + (reused > 0 ? $", 동일 재사용 {reused}개" : "")
+            + (renamed > 0 ? $", 이름변경 {renamed}개" : "")
+            + (relinked > 0 ? $", 참조 {relinked}건 재연결" : "") + ".");
         BroadcastStatus();
-        return incoming.Count;
+        return toSave.Count;
+    }
+
+    /// <summary>매크로의 "내용" 서명 — Id/이름/순서/수정시각/적용여부/트리거를 제외하고 스텝·반복·속도만으로
+    /// 동일성 비교 문자열을 만든다. 매크로 참조(macroRef)는 대상 이름으로 정규화해 Id 차이를 무시한다.</summary>
+    private static string ContentSignature(Macro m)
+    {
+        var c = MacroStore.Deserialize(MacroStore.Serialize(m)); // 깊은 복제
+        c.Id = string.Empty; c.Name = string.Empty; c.Order = 0; c.Enabled = false; c.Trigger = null; c.ModifiedUtc = default;
+        if (c.Steps is not null)
+            foreach (var s in c.Steps)
+                if (s.Event is MacroRefEvent r) r.MacroId = "ref:" + r.Name;
+        return MacroStore.Serialize(c);
     }
 
     /// <summary>매크로의 적용(활성) 여부를 토글한다. ON이면 트리거 핫키 무장, OFF면 보관만.</summary>

@@ -2,7 +2,7 @@ import { api } from './api.js';
 import { createEditor } from './editor.js';
 import { confirmDialog, alertDialog, installLockdown } from './ui.js';
 import * as km from './keymap.js';
-import { zipBlob, unzip } from './zip.js';
+import { unzip } from './zip.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
@@ -568,23 +568,29 @@ function openExportModal() {
   };
   upd();
 }
-// 내보내기 — 선택한 매크로를 각각 별도 .json 파일로 묶어 Y_Input Macrofiles.zip 으로 저장
+// 내보내기 — 선택한 매크로 + 그것들이 참조(매크로 실행)하는 모든 매크로를 재귀로 모아
+// 단일 JSON 배열 파일로 저장(자기완결적 번들 → 가져올 때 참조가 끊기지 않음).
 async function exportMacros(ids) {
   if (!ids.length) return;
   try {
-    const macros = [];
-    for (const id of ids) macros.push(await api.getMacro(id));
-    const used = new Set();
-    const entries = macros.map((m) => {
-      const base = safeName(m.name);
-      let name = base + '.json';
-      let i = 2;
-      while (used.has(name.toLowerCase())) name = `${base} (${i++}).json`; // 이름 중복 시 번호 부여
-      used.add(name.toLowerCase());
-      return { name, text: JSON.stringify(m, null, 2) };
-    });
-    downloadBlob(zipBlob(entries), 'Y_Input Macrofiles.zip');
-    log('info', `${macros.length}개 매크로를 Y_Input Macrofiles.zip 으로 내보냈습니다.`);
+    const wanted = new Map(); // id -> 전체 매크로(참조 대상까지 포함)
+    const addWithDeps = async (id) => {
+      if (!id || wanted.has(id)) return;
+      let m;
+      try { m = await api.getMacro(id); } catch { return; }
+      if (!m) return;
+      wanted.set(id, m);
+      for (const s of (m.steps || [])) {
+        const ev = s && s.event;
+        if (ev && ev.$type === 'macroRef' && ev.macroId) await addWithDeps(ev.macroId); // 매크로의 매크로의…까지 재귀
+      }
+    };
+    for (const id of ids) await addWithDeps(id);
+    const macros = [...wanted.values()];
+    const filename = (ids.length === 1 ? safeName(wanted.get(ids[0]) && wanted.get(ids[0]).name) : 'Y_Input Macros') + '.json';
+    downloadBlob(new Blob([JSON.stringify(macros, null, 2)], { type: 'application/json' }), filename);
+    const extra = macros.length - ids.length;
+    log('info', `${ids.length}개 매크로${extra > 0 ? ` + 참조 ${extra}개` : ''}를 ${filename} 으로 내보냈습니다.`);
   } catch (e) { log('error', e.message); }
 }
 // 가져오기 — .zip(여러 매크로 묶음) + .json(단일/배열 번들) 파일 여러 개 모두 지원.
@@ -609,7 +615,8 @@ async function importMacros(fileList) {
   try {
     const r = await api.importMacros(incoming);
     await loadMacros();
-    log('info', `${r?.added ?? incoming.length}개 매크로를 가져왔습니다(참조 자동 연결).`);
+    const added = r?.added ?? incoming.length;
+    log('info', added > 0 ? `${added}개 매크로를 가져왔습니다(참조 자동 연결).` : '이미 동일한 매크로가 있어 새로 추가된 항목은 없습니다.');
   } catch (e) { log('error', `가져오기 실패: ${e.message}`); }
 }
 // JSON 텍스트(단일 매크로 또는 배열 번들)에서 매크로 객체를 모은다. 옛 id/이름은 그대로 두어
