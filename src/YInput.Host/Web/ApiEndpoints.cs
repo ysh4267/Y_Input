@@ -38,13 +38,22 @@ public static class ApiEndpoints
             var all = service.ListMacros();
             var byId = new Dictionary<string, Macro>();
             foreach (var m in all) byId[m.Id] = m;
-            var summaries = all.Select(m => Summary(m, byId));
+            var summaries = all.Select(m => Summary(m, byId, BuildShape(service.Expanded(m.Id) ?? m)));
             return Results.Json(summaries);
         });
 
         app.MapGet("/api/macros/{id}", (string id) =>
         {
             var macro = service.GetMacro(id);
+            return macro is null
+                ? Results.NotFound(new { error = "매크로를 찾을 수 없습니다." })
+                : Json(macro);
+        });
+
+        // 참조(MacroRef) 인라인 전개본 — 재생되는 실제 스텝 시퀀스(우측 현황 패널·진행 하이라이트 기준)
+        app.MapGet("/api/macros/{id}/expanded", (string id) =>
+        {
+            var macro = service.Expanded(id);
             return macro is null
                 ? Results.NotFound(new { error = "매크로를 찾을 수 없습니다." })
                 : Json(macro);
@@ -231,7 +240,7 @@ public static class ApiEndpoints
     private static IResult Json(Macro macro) =>
         Results.Text(MacroStore.Serialize(macro), "application/json", System.Text.Encoding.UTF8);
 
-    private static object Summary(Macro m, IReadOnlyDictionary<string, Macro> byId) => new
+    private static object Summary(Macro m, IReadOnlyDictionary<string, Macro> byId, List<object[]> shape) => new
     {
         id = m.Id,
         name = m.Name,
@@ -243,7 +252,29 @@ public static class ApiEndpoints
         trigger = m.Trigger?.ToString() ?? "",
         enabled = m.Enabled,
         modifiedUtc = m.ModifiedUtc,
+        shape, // 좌측 인디케이터용 — 펼친 시퀀스의 compact 토큰(인덱스 = 재생 stepIndex)
     };
+
+    private const int MaxShape = 240; // 인디케이터 토큰 상한(초과 매크로는 잘림)
+
+    /// <summary>펼친(전개된) 매크로 스텝을 좌측 인디케이터용 compact 토큰 배열로 만든다.
+    /// "a"=행위 / "d",ms=지연 / "s",n=반복시작 / "e"=반복끝. 인덱스는 재생 stepIndex와 1:1.</summary>
+    private static List<object[]> BuildShape(Macro expanded)
+    {
+        var shape = new List<object[]>(Math.Min(expanded.Steps.Count, MaxShape));
+        foreach (var s in expanded.Steps)
+        {
+            if (shape.Count >= MaxShape) break;
+            switch (s.Event)
+            {
+                case DelayEvent: shape.Add(new object[] { "d", Math.Round(s.DelayBeforeMs) }); break;
+                case LoopStartEvent ls: shape.Add(new object[] { "s", Math.Max(1, ls.Count) }); break;
+                case LoopEndEvent: shape.Add(new object[] { "e" }); break;
+                default: shape.Add(new object[] { "a" }); break; // 키/마우스/패드/텍스트 = 행위
+            }
+        }
+        return shape;
+    }
 
     /// <summary>한 번 재생 기준 총 소요 시간(ms). 내부 반복(LoopStart/End) 배수를 반영하고
     /// 지연(Delay) 스텝의 DelayBeforeMs를 합산하며, 매크로 참조(MacroRef)는 대상 매크로의

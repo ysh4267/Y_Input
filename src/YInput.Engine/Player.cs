@@ -3,8 +3,12 @@ using YInput.Input;
 
 namespace YInput.Engine;
 
-/// <summary>재생 진행 상황(루프 인덱스, 현재 스텝/전체).</summary>
-public readonly record struct PlaybackProgress(int Loop, int StepIndex, int StepCount);
+/// <summary>재생 중 활성 반복(루프) 한 겹: 루프 시작 스텝 인덱스, 총 반복수, 남은 반복수(현재 포함). 현재 회차 = Total-Remaining+1.</summary>
+public readonly record struct LoopFrame(int StartIndex, int Total, int Remaining);
+
+/// <summary>재생 진행 상황. <paramref name="DelayMs"/>는 현재 스텝이 지연이면 그 실제 대기(ms), 아니면 0.
+/// <paramref name="Loops"/>는 현재 활성 반복 스택 스냅샷(StartIndex로 매칭).</summary>
+public readonly record struct PlaybackProgress(int Loop, int StepIndex, int StepCount, double DelayMs, IReadOnlyList<LoopFrame> Loops);
 
 /// <summary>
 /// 매크로를 <see cref="IInputSink"/>로 순차 재생한다. 속도 배율·반복·취소를 지원하며
@@ -72,7 +76,7 @@ public sealed class Player
             for (int loop = 0; loop < loops && !ct.IsCancellationRequested; loop++)
             {
                 // 반복(Loop) 블록을 스택으로 해석: LoopStart/End를 짝지어 본문을 Count회 반복(중첩 가능).
-                var loopStack = new Stack<(int bodyStart, int remaining)>();
+                var loopStack = new Stack<(int bodyStart, int total, int remaining)>();
                 int ip = 0;
                 while (ip < steps.Count && !ct.IsCancellationRequested)
                 {
@@ -82,14 +86,14 @@ public sealed class Player
                     switch (step.Event)
                     {
                         case LoopStartEvent ls:
-                            loopStack.Push((ip + 1, Math.Max(1, ls.Count)));
+                            loopStack.Push((ip + 1, Math.Max(1, ls.Count), Math.Max(1, ls.Count)));
                             ip++;
                             break;
                         case LoopEndEvent:
                             if (loopStack.Count > 0)
                             {
                                 var top = loopStack.Pop();
-                                if (top.remaining > 1) { loopStack.Push((top.bodyStart, top.remaining - 1)); ip = top.bodyStart; }
+                                if (top.remaining > 1) { loopStack.Push((top.bodyStart, top.total, top.remaining - 1)); ip = top.bodyStart; }
                                 else ip++;
                             }
                             else ip++; // 짝 없는 끝 → 무시
@@ -97,10 +101,10 @@ public sealed class Player
                         case DelayEvent de:
                             // 대기는 '지연' 블록에서만 발생(속도·휴머나이즈 적용). 다른 블록은 즉시 실행.
                             // 휴머나이즈는 각 지연 블록이 개별로 가진다(없으면 0 = 흔들림 없음).
-                            // 진행 보고는 '대기 시작 시점'에 — 그래야 대기 중 하이라이트가 직전 입력이 아닌 이 지연 행에 간다.
-                            Progress?.Invoke(this, new PlaybackProgress(loop, ip, steps.Count));
                             var delay = EffectiveDelayMs(step.DelayBeforeMs, speed);
                             delay = ApplyJitter(delay, de.RandomizePercent, Random.Shared);
+                            // 진행 보고는 '대기 시작 시점'에(실제 대기 ms 포함) — 하이라이트가 이 지연 행에 가고, 채움 애니메이션 길이가 된다.
+                            Progress?.Invoke(this, new PlaybackProgress(loop, ip, steps.Count, delay, SnapshotLoops(loopStack)));
                             if (delay > 0)
                                 await PreciseDelay.WaitAsync(delay, ct).ConfigureAwait(false);
                             ip++;
@@ -108,7 +112,7 @@ public sealed class Player
                         default:
                             _sink.Send(step.Event);
                             TrackHeld(step.Event); // 누름/뗌 상태 갱신(정지 시 떼기 위해)
-                            Progress?.Invoke(this, new PlaybackProgress(loop, ip, steps.Count));
+                            Progress?.Invoke(this, new PlaybackProgress(loop, ip, steps.Count, 0, SnapshotLoops(loopStack)));
                             // 지연이 0인 스텝도 최소 1ms(0.001s) 양보 — 전부 동기로 돌아 스레드를 막거나
                             // 드라이버에 과속 송출하는 것을 방지하고, 스텝마다 취소(정지)가 즉시 먹게 한다.
                             await PreciseDelay.WaitAsync(1, ct).ConfigureAwait(false);
@@ -184,6 +188,15 @@ public sealed class Player
     private void TrySend(InputEvent e)
     {
         try { _sink.Send(e); } catch { /* 정리 중 송출 실패 무시 */ }
+    }
+
+    /// <summary>현재 반복 스택을 진행 보고용 <see cref="LoopFrame"/> 목록으로 스냅샷한다(StartIndex = 루프 시작 스텝 인덱스).</summary>
+    private static IReadOnlyList<LoopFrame> SnapshotLoops(Stack<(int bodyStart, int total, int remaining)> stack)
+    {
+        if (stack.Count == 0) return System.Array.Empty<LoopFrame>();
+        var list = new List<LoopFrame>(stack.Count);
+        foreach (var f in stack) list.Add(new LoopFrame(f.bodyStart - 1, f.total, f.remaining));
+        return list;
     }
 
     public void Stop() => _cts?.Cancel();

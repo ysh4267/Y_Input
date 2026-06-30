@@ -156,7 +156,15 @@ public sealed class MacroService
         var macro = _library.Load(id) ?? throw new FileNotFoundException("매크로를 찾을 수 없습니다: " + id);
         var player = new Player(_backend); // 매크로마다 독립 Player → 서로 비동기·동시 재생
         player.Progress += (_, p) =>
-            _hub.Broadcast("progress", new { macroId = id, loop = p.Loop, stepIndex = p.StepIndex, stepCount = p.StepCount });
+            _hub.Broadcast("progress", new
+            {
+                macroId = id,
+                loop = p.Loop,
+                stepIndex = p.StepIndex,
+                stepCount = p.StepCount,
+                delayMs = p.DelayMs,                // 현재 지연의 실제 대기(ms) — 채움 애니메이션 길이
+                loops = p.Loops,                    // [{ startIndex, total, remaining }] — 반복 진행
+            });
         player.Failed += (_, ex) => Log("error", $"재생 오류({macro.Name}): {ex.Message}");
         player.Stopped += (_, _) => { _running.TryRemove(id, out _); BroadcastStatus(); };
         _running[id] = player;
@@ -237,6 +245,13 @@ public sealed class MacroService
     public IReadOnlyList<Macro> ListMacros() => _library.LoadAll();
 
     public Macro? GetMacro(string id) => _library.Load(id);
+
+    /// <summary>참조(MacroRef)를 인라인 전개한 매크로(재생되는 실제 스텝 시퀀스 = 진행 표시 기준). 없으면 null.</summary>
+    public Macro? Expanded(string id)
+    {
+        var m = _library.Load(id);
+        return m is null ? null : ExpandMacro(m);
+    }
 
     public void SaveMacro(Macro macro)
     {

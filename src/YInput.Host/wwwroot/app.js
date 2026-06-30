@@ -12,6 +12,7 @@ const fmtMs = (ms) => ms >= 1000 ? (ms / 1000).toFixed(2) + ' s' : Math.round(ms
 const state = { status: null, macros: [] };
 let runShownId = null;    // 실행 페이지에 스텝 표시 중인 매크로 id
 let lastStepIndex = -1;   // 재생 진행 중 현재 스텝(하이라이트용)
+let lastLoops = [];       // 표시 중 매크로의 최근 반복 프레임 [{startIndex,total,remaining}]
 let capTrigId = null;     // 실행 목록에서 트리거 캡처 중인 매크로 id
 let capCleanup = null;    // 트리거 캡처 정리 콜백
 
@@ -103,12 +104,12 @@ function renderStatus(s) {
 
   $('foot-url').textContent = s.url || '';
   editor.onStatus(s);
-  // 동시 재생: 재생 중이 아닌 매크로의 진행 점은 비우고, 표시 중인 매크로가 재생 아니면 하이라이트 해제
+  // 동시 재생: 재생 중이 아닌 매크로의 인디케이터는 초기화하고, 표시 중인 매크로가 재생 아니면 하이라이트 해제
   const playingSet = new Set(s.playingIds || []);
   document.querySelectorAll('.macro-prog').forEach((el) => {
-    if (!playingSet.has(el.dataset.id)) el.querySelectorAll('.pdot.on').forEach((d) => d.classList.remove('on'));
+    if (!playingSet.has(el.dataset.id)) { resetMacroTimeline(el); delayAnims.delete(el.dataset.id); }
   });
-  if (!runShownId || !playingSet.has(runShownId)) { lastStepIndex = -1; highlightRunStep(-1); }
+  if (!runShownId || !playingSet.has(runShownId)) { lastStepIndex = -1; lastLoops = []; applyRunProgress(-1, []); }
   renderMacroActive();
 }
 
@@ -156,7 +157,7 @@ function renderMacroList(listEl, emptyEl, mode) {
           <input type="number" class="mini pl-count" min="1" value="${repCount}" ${repMode === 'count' ? '' : 'hidden'} title="반복 횟수">
           <button class="mbtn-trig act-trigger" title="트리거 설정(클릭 후 키/마우스/패드 입력)">${ICON.trigger}<span class="trig-val">${esc(m.trigger || '없음')}</span></button>
         </div>
-        <div class="macro-prog" data-id="${m.id}" title="재생 진행">${'<i class="pdot"></i>'.repeat(Math.min(m.stepCount || 0, 60))}</div>`;
+        <div class="macro-prog" data-id="${m.id}" title="재생 진행(● 행위 · ━ 지연 · ⟲ 반복)"></div>`;
     } else {
       const sub = `${m.stepCount}스텝 · 총 ${fmtMs(m.durationMs || 0)}`;
       li.innerHTML = `
@@ -171,6 +172,7 @@ function renderMacroList(listEl, emptyEl, mode) {
     const dupBtn = li.querySelector('.act-dup'); if (dupBtn) dupBtn.onclick = () => duplicateMacro(m.id);
     wireMacroDrag(li, m.id, mode);
     if (mode === 'run') {
+      buildTimeline(li.querySelector('.macro-prog'), m.shape);
       const tg = li.querySelector('.act-toggle');
       tg.onchange = async () => {
         try { await api.setEnabled(m.id, tg.checked); await loadMacros(); } // 재정렬(활성 위로) 위해 다시 그림
@@ -414,9 +416,10 @@ function endTriggerCapture() {
   capTrigId = null;
 }
 
-// ---------- 실행 페이지: 현재 매크로 동작 순서(읽기전용) + 재생 하이라이트 ----------
+// ---------- 실행 페이지: 현재 매크로 동작 순서(펼친 스텝, 읽기전용) + 재생 하이라이트 ----------
 async function selectRunMacro(id) {
-  try { renderRunSteps(await api.getMacro(id)); }
+  runShownId = id; // 낙관적 설정 — 로딩 중 중복 요청/이벤트 누락 방지
+  try { renderRunSteps(await api.getExpanded(id)); } // 펼친(전개) 스텝 = 재생 stepIndex와 정렬
   catch (e) { log('error', e.message); }
 }
 function clearRunSteps() {
@@ -425,6 +428,7 @@ function clearRunSteps() {
   if ($('run-steps-empty')) $('run-steps-empty').hidden = false;
   if ($('run-steps-title')) $('run-steps-title').textContent = '현재 매크로';
 }
+// 펼친 스텝을 노드+다리(bridge) 타임라인으로 렌더. data-i = 재생 stepIndex와 1:1.
 function renderRunSteps(macro) {
   runShownId = macro.id;
   const wrap = $('run-steps'); if (!wrap) return;
@@ -434,40 +438,145 @@ function renderRunSteps(macro) {
   $('run-steps-title').textContent = macro.name || '현재 매크로';
   steps.forEach((s, i) => {
     const t = s.event['$type'];
-    const row = document.createElement('div'); row.className = 'run-steps-row'; row.dataset.i = i;
-    const num = document.createElement('span'); num.className = 'rs-num'; num.textContent = i + 1;
-    const ico = document.createElement('span'); ico.className = 'rs-ico type-' + t; ico.textContent = km.TYPE_ICON[t] || '•';
-    const label = document.createElement('span'); label.className = 'rs-label';
-    label.textContent = t === 'delay' ? `지연 ${Math.round(s.delayBeforeMs || 0)} ms` : km.summarizeEvent(s.event);
-    row.append(num, ico, label);
+    const isDelay = t === 'delay';
+    const ms = isDelay ? Math.round(s.delayBeforeMs || 0) : 0;
+    const row = document.createElement('div');
+    row.className = 'run-steps-row'; row.dataset.i = i; row.dataset.t = t;
+    row.innerHTML =
+      `<span class="rs-rail"><span class="rs-node type-${t}">${km.TYPE_ICON[t] || '•'}</span></span>` +
+      `<span class="rs-body"><span class="rs-head">` +
+        `<span class="rs-num">${i + 1}</span>` +
+        `<span class="rs-label">${esc(isDelay ? `지연 ${ms} ms` : km.summarizeEvent(s.event))}</span>` +
+        (isDelay ? `<span class="rs-elapsed"></span>` : '') +
+        (t === 'loopStart' ? `<span class="rs-loop-iter" data-start="${i}"></span>` : '') +
+      `</span>` +
+      (isDelay ? `<span class="rs-delaybar" data-ms="${ms}"><span class="rs-fill"></span></span>` : '') +
+      `</span>`;
     wrap.appendChild(row);
   });
   const st = state.status;
   const playingThis = st && st.playingIds && st.playingIds.includes(macro.id);
-  highlightRunStep(playingThis ? lastStepIndex : -1);
+  applyRunProgress(playingThis ? lastStepIndex : -1, playingThis ? lastLoops : []);
 }
-function highlightRunStep(idx) {
+// 우측 패널 진행 반영: 진행된 행 glow, 활성 행 강조, 지연 채움/경과ms(활성은 rAF), 반복 회차 k/N.
+function applyRunProgress(idx, loops) {
   const wrap = $('run-steps'); if (!wrap) return;
-  wrap.querySelectorAll('.run-steps-row.playing').forEach((r) => r.classList.remove('playing'));
-  if (idx < 0) return;
-  const row = wrap.querySelector(`.run-steps-row[data-i="${idx}"]`);
-  if (!row) return;
-  row.classList.add('playing');
-  // run-steps 패널 '안에서만' 스크롤 — 좌측 매크로 목록/페이지 스크롤은 건드리지 않는다.
+  wrap.querySelectorAll('.run-steps-row').forEach((r) => {
+    const i = +r.dataset.i;
+    r.classList.toggle('done', i < idx);
+    r.classList.toggle('active', i === idx);
+    if (r.dataset.t === 'delay' && i !== idx) {
+      const f = r.querySelector('.rs-fill'); if (f) { f.style.transition = 'none'; f.style.width = i < idx ? '100%' : '0%'; }
+      const e = r.querySelector('.rs-elapsed');
+      if (e) { const ms = +r.querySelector('.rs-delaybar').dataset.ms || 0; e.textContent = i < idx ? `${ms} / ${ms} ms` : ''; }
+    }
+  });
+  wrap.querySelectorAll('.rs-loop-iter').forEach((b) => { b.textContent = ''; });
+  (loops || []).forEach((f) => {
+    const b = wrap.querySelector(`.rs-loop-iter[data-start="${f.startIndex}"]`);
+    if (!b) return;
+    const total = f.total || 1;
+    b.textContent = `${total - f.remaining + 1} / ${total}`;
+  });
+  if (idx >= 0) { const row = wrap.querySelector(`.run-steps-row[data-i="${idx}"]`); if (row) scrollRowIntoPanel(wrap, row); }
+}
+function scrollRowIntoPanel(wrap, row) {
+  // run-steps 패널 '안에서만' 스크롤 — 좌측 목록/페이지 스크롤은 건드리지 않는다.
   const wr = wrap.getBoundingClientRect(), rr = row.getBoundingClientRect();
   if (rr.top < wr.top) wrap.scrollTop -= (wr.top - rr.top) + 8;
   else if (rr.bottom > wr.bottom) wrap.scrollTop += (rr.bottom - wr.bottom) + 8;
 }
-// 실행 목록의 매크로별 진행 점(인디케이터): 진행 비율만큼 왼쪽부터 채움
-function updateMacroProg(macroId, frac) {
+// ---------- 좌측 목록 인디케이터: 점(행위)·선(지연,채움)·반복 브라켓 가로 타임라인 ----------
+// shape 토큰: ["a"]=행위 / ["d",ms]=지연 / ["s",n]=반복시작 / ["e"]=반복끝. data-i = 재생 stepIndex.
+function buildTimeline(container, shape) {
+  if (!container) return;
+  container.innerHTML = '';
+  if (!shape || !shape.length) return;
+  let cur = container; const stack = [];
+  for (let i = 0; i < shape.length; i++) {
+    const t = shape[i][0];
+    if (t === 'a') {
+      const d = document.createElement('i'); d.className = 'tl-dot'; d.dataset.i = i; cur.appendChild(d);
+    } else if (t === 'd') {
+      const ln = document.createElement('i'); ln.className = 'tl-line'; ln.dataset.i = i;
+      const ms = +shape[i][1] || 0;
+      ln.style.width = Math.round(Math.max(12, Math.min(40, 12 + ms * 0.035))) + 'px';
+      const f = document.createElement('i'); f.className = 'tl-fill'; ln.appendChild(f); cur.appendChild(ln);
+    } else if (t === 's') {
+      const lp = document.createElement('span'); lp.className = 'tl-loop'; lp.dataset.start = i;
+      const br = document.createElement('i'); br.className = 'tl-loop-bracket';
+      const bf = document.createElement('i'); bf.className = 'tl-loop-bracket-fill';
+      const body = document.createElement('span'); body.className = 'tl-loop-body';
+      lp.append(br, bf, body); cur.appendChild(lp); stack.push(cur); cur = body;
+    } else if (t === 'e') {
+      if (stack.length) cur = stack.pop();
+    }
+  }
+}
+function setLoopFill(lp, frac) { lp.style.setProperty('--loop-fill', (Math.max(0, Math.min(1, frac)) * 100).toFixed(1) + '%'); }
+function resetMacroTimeline(el) {
+  if (!el) return;
+  el.querySelectorAll('.tl-dot, .tl-line').forEach((n) => n.classList.remove('done', 'active'));
+  el.querySelectorAll('.tl-fill').forEach((f) => { f.style.transition = 'none'; f.style.width = '0%'; });
+  el.querySelectorAll('.tl-loop').forEach((lp) => { lp.classList.remove('active'); setLoopFill(lp, 0); });
+  el.scrollLeft = 0;
+}
+function updateMacroTimeline(macroId, p) {
   const el = document.querySelector(`.macro-prog[data-id="${macroId}"]`);
   if (!el) return;
-  const dots = el.querySelectorAll('.pdot');
-  const filled = Math.max(0, Math.min(dots.length, Math.round((frac || 0) * dots.length)));
-  dots.forEach((d, i) => d.classList.toggle('on', i < filled));
+  const idx = p.stepIndex;
+  el.querySelectorAll('.tl-dot, .tl-line').forEach((n) => {
+    const i = +n.dataset.i;
+    n.classList.toggle('done', i < idx);
+    n.classList.toggle('active', i === idx);
+    if (n.classList.contains('tl-line') && i !== idx) {
+      const f = n.querySelector('.tl-fill'); if (f) { f.style.transition = 'none'; f.style.width = i < idx ? '100%' : '0%'; }
+    }
+  });
+  el.querySelectorAll('.tl-loop').forEach((lp) => { lp.classList.remove('active'); setLoopFill(lp, 0); });
+  (p.loops || []).forEach((f) => {
+    const lp = el.querySelector(`.tl-loop[data-start="${f.startIndex}"]`);
+    if (!lp) return;
+    lp.classList.add('active');
+    const total = f.total || 1; setLoopFill(lp, (total - f.remaining + 1) / total); // 색 채움 = 현재/전체 (숫자 없음)
+  });
+  scrollTimelineToActive(el, idx);
 }
-function clearMacroProg() {
-  document.querySelectorAll('.macro-prog .pdot.on').forEach((d) => d.classList.remove('on'));
+// 인디케이터가 항목 폭을 넘으면 활성 노드가 중앙~우측(60%)에 오도록 가로 스크롤 추적
+function scrollTimelineToActive(el, idx) {
+  const node = el.querySelector(`.tl-dot[data-i="${idx}"], .tl-line[data-i="${idx}"]`);
+  if (!node) return;
+  const c = el.getBoundingClientRect(), n = node.getBoundingClientRect();
+  const center = (n.left + n.width / 2) - c.left; // 보이는 영역 내 활성 노드 중심 x
+  if (center < c.width * 0.25 || center > c.width * 0.78) {
+    el.scrollTo({ left: Math.max(0, el.scrollLeft + center - c.width * 0.6), behavior: MREDUCE ? 'auto' : 'smooth' });
+  }
+}
+// 활성 지연 채움 애니메이션(좌측 .tl-fill + 우측 .rs-fill/.rs-elapsed) — 공유 rAF, 동시 재생별 추적.
+const delayAnims = new Map(); // macroId -> { start, dur, i }
+let delayRaf = 0;
+function setActiveDelay(macroId, idx, delayMs) {
+  if (delayMs > 0) { delayAnims.set(macroId, { start: performance.now(), dur: delayMs, i: idx }); if (!delayRaf) delayRaf = requestAnimationFrame(tickDelays); }
+  else delayAnims.delete(macroId);
+}
+function tickDelays() {
+  delayRaf = 0;
+  const now = performance.now();
+  delayAnims.forEach((a, macroId) => {
+    const frac = a.dur > 0 ? Math.min(1, (now - a.start) / a.dur) : 1;
+    const w = (frac * 100).toFixed(1) + '%';
+    const lf = document.querySelector(`.macro-prog[data-id="${macroId}"] .tl-line[data-i="${a.i}"] .tl-fill`);
+    if (lf) { lf.style.transition = 'none'; lf.style.width = w; }
+    if (runShownId === macroId) {
+      const row = document.querySelector(`#run-steps .run-steps-row[data-i="${a.i}"]`);
+      if (row) {
+        const rf = row.querySelector('.rs-fill'); if (rf) { rf.style.transition = 'none'; rf.style.width = w; }
+        const re = row.querySelector('.rs-elapsed'); if (re) re.textContent = `${Math.round(Math.min(a.dur, now - a.start))} / ${Math.round(a.dur)} ms`;
+      }
+    }
+    if (frac >= 1) delayAnims.delete(macroId);
+  });
+  if (delayAnims.size) delayRaf = requestAnimationFrame(tickDelays);
 }
 
 async function openMacro(id) {
@@ -667,12 +776,15 @@ function handleShutdown() {
   }, 150);
 }
 function showProgress(p) {
-  const frac = p.stepCount ? (p.stepIndex + 1) / p.stepCount : 0;
-  // 동시 재생: 진행 이벤트의 macroId 매크로 점만 채운다.
-  updateMacroProg(p.macroId, frac);
-  // run-steps 패널: 표시 중인 매크로의 진행만 하이라이트. 아무것도 안 보고 있으면 진행 중인 걸 표시.
-  if (runShownId && runShownId === p.macroId) { lastStepIndex = p.stepIndex; highlightRunStep(p.stepIndex); }
-  else if (!runShownId) selectRunMacro(p.macroId);
+  // 좌측 타임라인(해당 macroId만) + 우측 패널(표시 중일 때) + 활성 지연 채움(공유 rAF)
+  updateMacroTimeline(p.macroId, p);
+  if (runShownId && runShownId === p.macroId) {
+    lastStepIndex = p.stepIndex; lastLoops = p.loops || [];
+    applyRunProgress(p.stepIndex, p.loops);
+  } else if (!runShownId) {
+    selectRunMacro(p.macroId); // 아무것도 안 보고 있으면 진행 중인 매크로를 표시
+  }
+  setActiveDelay(p.macroId, p.stepIndex, p.delayMs);
 }
 
 // ---------- 업데이트(GitHub Releases) ----------
