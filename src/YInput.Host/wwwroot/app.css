@@ -187,10 +187,10 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 .macro-prog { display: flex; align-items: flex-end; flex-wrap: nowrap; gap: 4px; margin-top: 10px; padding: 11px 2px 3px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; position: relative; min-height: 18px; scroll-behavior: smooth; }
 .macro-prog::-webkit-scrollbar { height: 0; width: 0; }
 .macro-prog:empty { display: none; }
-.tl-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--card3); transition: background .12s, box-shadow .12s; }
+.tl-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--border2); transition: background .12s, box-shadow .12s; }
 .tl-dot.done { background: var(--accent); box-shadow: 0 0 5px rgba(79,140,255,.6); }
 .tl-dot.active { background: #cfe0ff; box-shadow: 0 0 9px rgba(79,140,255,.95); }
-.tl-line { flex: 0 0 auto; position: relative; height: 4px; border-radius: 3px; background: var(--card3); overflow: hidden; }
+.tl-line { flex: 0 0 auto; position: relative; height: 4px; border-radius: 3px; background: var(--border2); overflow: hidden; }
 .tl-line .tl-fill { position: absolute; left: 0; top: 0; height: 100%; width: 0; border-radius: 3px; background: var(--t-delay); }
 .tl-line.done .tl-fill { width: 100% !important; background: var(--accent); }
 .tl-line.active .tl-fill { background: linear-gradient(90deg, var(--accent), #cfe0ff); box-shadow: 0 0 6px rgba(79,140,255,.85); }
@@ -199,9 +199,10 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 .tl-loop-inner { position: relative; z-index: 1; display: inline-flex; align-items: flex-end; gap: 4px; } /* 점이 브라켓 위로 — 점 위에 선 안 비침 */
 /* 반복 시작·끝 점을 잇는 상단 각진 브라켓(⊓) — 지연 선과 같은 track + 채움(점점 차오름) */
 .tl-loop-bar, .tl-loop-fill { position: absolute; left: 3px; right: 3px; top: 0; bottom: 3px; border: 2.5px solid; border-bottom: none; border-radius: 6px 6px 0 0; pointer-events: none; box-sizing: border-box; }
-.tl-loop-bar { border-color: var(--card3); } /* track(지연 선 track과 동일 톤) */
-.tl-loop-fill { border-color: var(--t-loop); clip-path: inset(0 calc(100% - var(--loop-fill, 0%)) 0 0); filter: drop-shadow(0 0 3px rgba(251,146,60,.6)); transition: clip-path .15s linear; } /* 채움 = 현재/전체 만큼 좌→우로 차오름 */
-.tl-dot.tl-loop-pt.done { background: var(--t-loop); box-shadow: 0 0 5px rgba(251,146,60,.65); } /* 반복 시작/끝 점 */
+.tl-loop-bar { border-color: rgba(251,146,60,.45); } /* 반복 브라켓 track — 쉬는 중에도 보이게(은은한 주황) */
+.tl-loop-fill { border-color: var(--t-loop); clip-path: inset(0 calc(100% - var(--loop-fill, 0%)) 0 0); filter: drop-shadow(0 0 3px rgba(251,146,60,.7)); transition: clip-path .15s linear; } /* 채움 = 현재/전체 만큼 좌→우로 차오름 */
+.tl-dot.tl-loop-pt { background: rgba(251,146,60,.55); } /* 반복 시작/끝 점 — 쉬는 중에도 주황으로 구분 */
+.tl-dot.tl-loop-pt.done { background: var(--t-loop); box-shadow: 0 0 5px rgba(251,146,60,.65); }
 /* 액션: 상하 중앙, 아이콘 버튼(조금 큼) */
 .macro-actions { display: flex; gap: 5px; flex-shrink: 0; align-items: center; }
 .mbtn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; background: var(--card3); border: 1px solid var(--border2); border-radius: 8px; color: var(--muted); cursor: pointer; transition: filter .12s, color .12s, border-color .12s; }
