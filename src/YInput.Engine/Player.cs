@@ -15,6 +15,12 @@ public sealed class Player
     private readonly IInputSink _sink;
     private CancellationTokenSource? _cts;
 
+    // 재생 중 '누름(Down)'만 하고 아직 '뗌(Up)'하지 않은 입력 추적 — 정지/종료 시 모두 떼서 스턱(눌린 채 멈춤)을 방지.
+    private readonly Dictionary<(ushort code, ushort ext), ushort> _heldKeys = new(); // 값 = Down 상태(E0/E1 확장 플래그 포함)
+    private readonly HashSet<ushort> _heldMouseButtons = new();                       // 눌린 마우스 버튼의 Down 비트
+    private readonly Dictionary<GamepadControl, int> _heldPad = new();                // 0이 아닌(눌림/기울임) 패드 컨트롤
+    private static readonly ushort[] MouseButtonDownBits = { 0x001, 0x004, 0x010, 0x040, 0x100 }; // 좌·우·중·확장4·5 Down 비트(Up=Down<<1)
+
     public bool IsPlaying { get; private set; }
 
     public event EventHandler? Started;
@@ -52,8 +58,10 @@ public sealed class Player
         _cts = CancellationTokenSource.CreateLinkedTokenSource(external);
         var ct = _cts.Token;
         IsPlaying = true;
+        _heldKeys.Clear(); _heldMouseButtons.Clear(); _heldPad.Clear();
         Started?.Invoke(this, EventArgs.Empty);
 
+        bool interrupted = false; // 정상 종료가 아니라 정지/오류로 끝났는지 — 그때만 눌린 입력을 뗀다
         using var _ = MultimediaTimerScope.HighResolution();
         try
         {
@@ -99,6 +107,7 @@ public sealed class Player
                             break;
                         default:
                             _sink.Send(step.Event);
+                            TrackHeld(step.Event); // 누름/뗌 상태 갱신(정지 시 떼기 위해)
                             Progress?.Invoke(this, new PlaybackProgress(loop, ip, steps.Count));
                             // 지연이 0인 스텝도 최소 1ms(0.001s) 양보 — 전부 동기로 돌아 스레드를 막거나
                             // 드라이버에 과속 송출하는 것을 방지하고, 스텝마다 취소(정지)가 즉시 먹게 한다.
@@ -111,19 +120,70 @@ public sealed class Player
         }
         catch (OperationCanceledException)
         {
-            // 정상 정지
+            interrupted = true; // 사용자 중단(정지)
         }
         catch (Exception ex)
         {
+            interrupted = true; // 오류로 중단
             Failed?.Invoke(this, ex);
         }
         finally
         {
+            if (interrupted) ReleaseHeldInputs(); // 중단(정지/오류) 시에만 눌린 채 남은 키·버튼·패드를 모두 떼기(스턱 방지)
             IsPlaying = false;
             _cts?.Dispose();
             _cts = null;
             Stopped?.Invoke(this, EventArgs.Empty);
         }
+    }
+
+    /// <summary>송출한 입력의 누름/뗌을 추적한다. 키=Up 비트(0x01), 마우스=Down/Up 비트쌍, 패드=값 0 여부.
+    /// 텍스트는 백엔드가 키마다 누름+뗌을 완결하므로 추적하지 않는다.</summary>
+    private void TrackHeld(InputEvent e)
+    {
+        switch (e)
+        {
+            case KeyboardEvent k:
+            {
+                var id = (k.Code, (ushort)(k.State & 0x06)); // E0(0x02)/E1(0x04) — 같은 스캔코드라도 확장키를 구분
+                if ((k.State & 0x01) == 0) _heldKeys[id] = k.State; // Down → 보유
+                else _heldKeys.Remove(id);                          // Up → 해제
+                break;
+            }
+            case MouseEvent m:
+                foreach (var down in MouseButtonDownBits)
+                {
+                    if ((m.ButtonState & down) != 0) _heldMouseButtons.Add(down);
+                    if ((m.ButtonState & (down << 1)) != 0) _heldMouseButtons.Remove(down);
+                }
+                break;
+            case GamepadEvent g:
+                if (g.Value == 0) _heldPad.Remove(g.Control);
+                else _heldPad[g.Control] = g.Value;
+                break;
+        }
+    }
+
+    /// <summary>아직 눌린(Down) 채로 남은 키·마우스 버튼·패드 컨트롤을 모두 떼서(Up/중립) 스턱을 방지한다.
+    /// 정리 중 송출 실패는 무시한다(드라이버 미준비 등).</summary>
+    private void ReleaseHeldInputs()
+    {
+        foreach (var kv in _heldKeys)
+            TrySend(new KeyboardEvent { Code = kv.Key.code, State = (ushort)(kv.Value | 0x01) }); // 같은 키 + Up 비트
+        _heldKeys.Clear();
+
+        foreach (var down in _heldMouseButtons)
+            TrySend(new MouseEvent { ButtonState = (ushort)(down << 1) }); // 해당 버튼 Up 비트
+        _heldMouseButtons.Clear();
+
+        foreach (var kv in _heldPad)
+            TrySend(new GamepadEvent { Control = kv.Key, Value = 0 }); // 중립(0)으로
+        _heldPad.Clear();
+    }
+
+    private void TrySend(InputEvent e)
+    {
+        try { _sink.Send(e); } catch { /* 정리 중 송출 실패 무시 */ }
     }
 
     public void Stop() => _cts?.Cancel();

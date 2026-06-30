@@ -270,6 +270,44 @@ public class LoopPlayerTests
     }
 
     [Fact]
+    public async Task ReleasesHeldInputsOnStop()
+    {
+        // 누르고(Down) 아직 떼지 않은 상태에서 긴 지연에 멈춰 있을 때 정지하면, 키·마우스·패드를 모두 떼야 한다.
+        var macro = new Macro
+        {
+            LoopCount = 0, // 무한 — 정지해야 끝남
+            Steps =
+            {
+                S(new KeyboardEvent { Code = 30 }),                            // A Down
+                S(new MouseEvent { ButtonState = 0x001 }),                     // 좌클릭 Down
+                S(new GamepadEvent { Control = GamepadControl.A, Value = 1 }), // 패드 A Down
+                new MacroStep(new DelayEvent(), 60000),                        // 길게 대기(여기서 멈춰 있음)
+            },
+        };
+        var sink = new FakeSink();
+        var player = new Player(sink);
+        var task = player.PlayAsync(macro);
+        for (int i = 0; i < 400 && sink.Sent.Count < 3; i++) await Task.Delay(5); // 3개 Down이 모두 송출될 때까지
+        player.Stop();
+        await task;
+
+        Assert.Contains(sink.Sent, e => e is KeyboardEvent { Code: 30, IsKeyUp: true });             // 키 떼짐(Up)
+        Assert.Contains(sink.Sent, e => e is MouseEvent { ButtonState: 0x002 });                     // 좌클릭 Up(Down 0x001<<1)
+        Assert.Contains(sink.Sent, e => e is GamepadEvent { Control: GamepadControl.A, Value: 0 });   // 패드 중립(0)
+    }
+
+    [Fact]
+    public async Task NormalCompletionDoesNotAutoRelease()
+    {
+        // 정상 종료(중단 아님)에는 떼기 처리를 하지 않는다 — Down 한 번이면 Up은 추가되지 않음.
+        var macro = new Macro { LoopCount = 1, Steps = { S(new KeyboardEvent { Code = 30 }) } };
+        var sink = new FakeSink();
+        await new Player(sink).PlayAsync(macro);
+        Assert.Single(sink.Sent);
+        Assert.False(((KeyboardEvent)sink.Sent[0]).IsKeyUp);
+    }
+
+    [Fact]
     public void LoopEvents_RoundTrip()
     {
         var macro = new Macro { Steps = { S(new LoopStartEvent { Count = 5 }), S(new LoopEndEvent()) } };
