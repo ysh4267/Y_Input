@@ -87,8 +87,8 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 .page:not(.active) { display: none; }
 .page.active { display: flex; flex-direction: column; }
 /* 편집 페이지: 좁/낮아져도 세로 재배치 없이 최소 크기 유지 → 작아지면 페이지 스크롤 */
-#page-edit { overflow-x: auto; overflow-y: hidden; } /* 세로 페이지 스크롤 금지 → 좌측 목록·우측 편집기 각자 스크롤 */
-.layout { flex: 0 0 auto; display: grid; grid-template-columns: 320px 1fr; grid-template-rows: minmax(0, 1fr); gap: 14px; padding: 14px 18px; min-width: 1440px; height: 100%; }
+#page-edit { overflow: auto; } /* 최소 가로/세로 미만이면 페이지 스크롤, 아니면 내부 목록·편집기가 각자 스크롤 */
+.layout { flex: 0 0 auto; display: grid; grid-template-columns: 320px 1fr; grid-template-rows: minmax(0, 1fr); gap: 14px; padding: 14px 18px; min-width: 1440px; height: 100%; min-height: max(560px, 100%); }
 .sidebar { min-height: 0; display: flex; flex-direction: column; gap: 14px; }
 .sb-macros { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .sb-macros .macro-list { flex: 1; max-height: none; }
@@ -96,8 +96,8 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 
 /* 실행 페이지 대시보드 */
 /* 실행 페이지: 좁아져도 재배치 없이 최소 너비 유지 → 작아지면 페이지 스크롤 */
-#page-run { overflow-x: auto; overflow-y: hidden; } /* 세로 페이지 스크롤 금지 → 목록·상세 각자 스크롤 */
-.run-layout { flex: 0 0 auto; min-width: 1120px; height: 100%; display: grid; grid-template-columns: minmax(440px, 1fr) minmax(380px, 1.2fr); grid-template-rows: minmax(0, 1fr); gap: 14px; padding: 14px 18px; align-items: stretch; overflow: hidden; }
+#page-run { overflow: auto; } /* 최소 가로/세로 미만이면 페이지 스크롤, 아니면 목록·상세가 각자 스크롤 */
+.run-layout { flex: 0 0 auto; min-width: 1120px; height: 100%; min-height: max(520px, 100%); display: grid; grid-template-columns: minmax(440px, 1fr) minmax(380px, 1.2fr); grid-template-rows: minmax(0, 1fr); gap: 14px; padding: 14px 18px; align-items: stretch; overflow: hidden; }
 .run-aside { align-self: start; display: flex; flex-direction: column; gap: 14px; }
 .run-list-card { min-height: 0; display: flex; flex-direction: column; }
 .run-list-card .macro-list { flex: 1; max-height: none; min-height: 0; }
