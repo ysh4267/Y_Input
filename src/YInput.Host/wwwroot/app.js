@@ -172,7 +172,7 @@ function renderMacroList(listEl, emptyEl, mode) {
     const dupBtn = li.querySelector('.act-dup'); if (dupBtn) dupBtn.onclick = () => duplicateMacro(m.id);
     wireMacroDrag(li, m.id, mode);
     if (mode === 'run') {
-      buildTimeline(li.querySelector('.macro-prog'), m.shape);
+      try { buildTimeline(li.querySelector('.macro-prog'), m.shape); } catch (err) { /* 인디케이터 실패가 목록 렌더를 막지 않도록 */ }
       const tg = li.querySelector('.act-toggle');
       tg.onchange = async () => {
         try { await api.setEnabled(m.id, tg.checked); await loadMacros(); } // 재정렬(활성 위로) 위해 다시 그림
@@ -504,16 +504,16 @@ function buildTimeline(container, shape) {
       ln.style.width = Math.round(Math.max(12, Math.min(40, 12 + ms * 0.035))) + 'px';
       const f = document.createElement('i'); f.className = 'tl-fill'; ln.appendChild(f); cur.appendChild(ln);
     } else if (t === 's') {
-      // 반복: 시작 점 + 본문 + 끝 점, 그 위에 차오르는 각진 브라켓(track/채움) 오버레이
+      // 반복: 브라켓(track/채움) 오버레이 + 본문(시작/끝 점은 본문 안). 중첩 루프 안전(insertBefore 미사용).
       const lp = document.createElement('span'); lp.className = 'tl-loop'; lp.dataset.start = i;
-      const inner = document.createElement('span'); inner.className = 'tl-loop-inner';
       const bar = document.createElement('i'); bar.className = 'tl-loop-bar';
       const fill = document.createElement('i'); fill.className = 'tl-loop-fill';
-      lp.append(dot(i, ' tl-loop-pt'), inner, bar, fill);
-      cur.appendChild(lp); stack.push({ cur, lp }); cur = inner;
+      const inner = document.createElement('span'); inner.className = 'tl-loop-inner';
+      lp.append(bar, fill, inner);
+      inner.appendChild(dot(i, ' tl-loop-pt')); // 반복 시작 점
+      cur.appendChild(lp); stack.push(cur); cur = inner;
     } else if (t === 'e') {
-      const top = stack.pop();
-      if (top) { top.lp.insertBefore(dot(i, ' tl-loop-pt'), top.lp.querySelector('.tl-loop-bar')); cur = top.cur; }
+      if (stack.length) { cur.appendChild(dot(i, ' tl-loop-pt')); cur = stack.pop(); } // 반복 끝 점 후 상위로
     }
   }
 }
