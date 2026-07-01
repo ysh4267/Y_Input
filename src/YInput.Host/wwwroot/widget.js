@@ -20,7 +20,9 @@ function applyAppearance() {
   else if (enabled) { rgb = BG_ON; border = 'rgba(79,140,255,.6)'; } // 켜짐 = 어두운 파랑 + 파랑 테두리
   else { rgb = hex2rgb(cfg.color); border = 'rgba(255,255,255,.13)'; } // 대기 = 회색(사용자색)
   const a = Math.max(0, Math.min(100, cfg.opacity)) / 100; // 0%까지 (완전 투명 배경 = 테두리+내용만)
-  document.body.style.background = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a})`;
+  // 틴트는 html(캔버스)에만 → 폭을 늘려도 새 영역이 즉시 같은 색으로 채워짐. body는 투명(두 겹으로 겹쳐 불투명도 두 배 되는 것 방지).
+  document.documentElement.style.background = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a})`;
+  document.body.style.background = 'transparent';
   document.body.style.borderColor = border;
 }
 async function loadConfig() { try { cfg = (await fetch('/api/widget/config').then((r) => r.json())) || cfg; } catch { /* 기본값 */ } applyAppearance(); }
@@ -201,8 +203,9 @@ $('w-head').addEventListener('pointerdown', (e) => {
 $('w-grip').addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
   e.preventDefault();
-  toNative('resize'); // 네이티브가 우하단 크기조절 시작(Min/Max 존중)
+  toNative('resize'); // 네이티브가 우측 폭 조절 시작(Min/Max 존중)
 });
+window.addEventListener('resize', applyAppearance); // 폭 바뀔 때 배경을 새 크기에 다시 채움
 
 loadConfig();
 loadMacro();
