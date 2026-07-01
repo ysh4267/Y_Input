@@ -15,9 +15,8 @@ function hex2rgb(h) {
 }
 function applyAppearance() {
   const [r, g, b] = playing ? GREEN : enabled ? BLUE : hex2rgb(cfg.color);
-  const a = Math.round(Math.max(0, Math.min(100, cfg.opacity)) / 100 * 255);
-  const abgr = (((a << 24) | (b << 16) | (g << 8) | r) >>> 0).toString(16).padStart(8, '0');
-  toNative('tint:' + abgr); // 네이티브 아크릴 배경(반투명 블러) 색/불투명도
+  const a = Math.max(0, Math.min(100, cfg.opacity)) / 100;
+  document.body.style.background = `rgba(${r},${g},${b},${a})`; // 반투명 색(뒤 데스크톱 블러는 네이티브가 제공)
   document.body.style.borderColor = playing ? 'rgba(52,211,153,.9)' : enabled ? 'rgba(59,130,246,.9)' : 'rgba(255,255,255,.16)';
 }
 async function loadConfig() { try { cfg = (await fetch('/api/widget/config').then((r) => r.json())) || cfg; } catch { /* 기본값 */ } applyAppearance(); }

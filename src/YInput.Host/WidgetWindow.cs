@@ -1,5 +1,4 @@
 using System.Drawing;
-using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
@@ -30,17 +29,20 @@ internal sealed class WidgetWindow : Form
     private struct WinCompAttrData { public int Attribute; public IntPtr Data; public int SizeOfData; }
     [DllImport("user32.dll")] private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WinCompAttrData data);
     private const int WCA_ACCENT_POLICY = 19;
-    private const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
+    private const int ACCENT_DISABLED = 0;
+    private const int ACCENT_ENABLE_BLURBEHIND = 3; // 아크릴(4)은 이동/크기조절 시 심한 지연 → 부드러운 블러(3)
+    private const int WM_ENTERSIZEMOVE = 0x0231;
+    private const int WM_EXITSIZEMOVE = 0x0232;
 
-    private const int FixedHeight = 82;
+    private const int FixedHeight = 94;
     private const int CornerRadius = 9;
     private static readonly Color Bg = Color.FromArgb(21, 25, 33);
-    private uint _tint = 0xB8211915; // 기본(대기): 어두운 반투명. 페이지가 상태 색으로 바꿈.
 
     private readonly WebView2 _web;
     private readonly string _url;
     private readonly string _userDataFolder;
     private readonly Action<string>? _onError;
+    private bool _opaqueMove; // 이동/크기조절 중에는 불투명(블러 끔)으로 그려 랙 방지
     public string MacroId { get; }
 
     public WidgetWindow(string macroId, string url, string userDataFolder, Point location, Action<string>? onError = null)
@@ -66,10 +68,26 @@ internal sealed class WidgetWindow : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        try { ApplyAcrylic(); } catch { /* 아크릴 미지원 시 무시(단색 배경으로 동작) */ }
+        try { SetBlur(true); } catch { /* 블러 미지원 시 무시(단색 배경으로 동작) */ }
         UpdateRegion();
     }
     protected override void OnSizeChanged(EventArgs e) { base.OnSizeChanged(e); UpdateRegion(); }
+
+    // 배경을 칠하지 않아야 DWM 블러가 클라이언트에 보인다(투명 WebView2가 그 위에 콘텐츠만 렌더).
+    // 단, 이동/크기조절 중에는 블러를 꺼서 랙을 없애므로 이때만 불투명 배경을 칠해 깜빡임을 막는다.
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        if (_opaqueMove) e.Graphics.Clear(Bg);
+        // else: 그리지 않음 → 블러가 보임
+    }
+
+    // 이동/크기조절 중에는 블러를 잠깐 꺼서 지연(랙) 제거 → 끝나면 다시 켬.
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WM_ENTERSIZEMOVE) { _opaqueMove = true; try { SetBlur(false); } catch { /* 무시 */ } Invalidate(); }
+        else if (m.Msg == WM_EXITSIZEMOVE) { _opaqueMove = false; try { SetBlur(true); } catch { /* 무시 */ } Invalidate(); }
+        base.WndProc(ref m);
+    }
 
     private void UpdateRegion()
     {
@@ -79,10 +97,10 @@ internal sealed class WidgetWindow : Form
         DeleteObject(h);
     }
 
-    private void ApplyAcrylic()
+    private void SetBlur(bool on)
     {
         if (!IsHandleCreated) return;
-        var accent = new AccentPolicy { AccentState = ACCENT_ENABLE_ACRYLICBLURBEHIND, GradientColor = _tint };
+        var accent = new AccentPolicy { AccentState = on ? ACCENT_ENABLE_BLURBEHIND : ACCENT_DISABLED, GradientColor = 0 };
         int size = Marshal.SizeOf(accent);
         IntPtr ptr = Marshal.AllocHGlobal(size);
         try
@@ -121,10 +139,7 @@ internal sealed class WidgetWindow : Form
         string msg; try { msg = e.TryGetWebMessageAsString() ?? ""; } catch { return; }
         if (msg == "close") Close();
         else if (msg == "drag" && !IsDisposed) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, HTCAPTION, IntPtr.Zero); }
-        else if (msg == "resize" && !IsDisposed) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, HTRIGHT, IntPtr.Zero); } // 폭만
-        else if (msg.StartsWith("tint:", StringComparison.Ordinal)
-            && uint.TryParse(msg.AsSpan(5), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var abgr))
-        { _tint = abgr; try { ApplyAcrylic(); } catch { /* 무시 */ } }
+        else if (msg == "resize" && !IsDisposed) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, HTRIGHT, IntPtr.Zero); } // 폭만(색/불투명도는 페이지 CSS가 담당)
     }
 
     protected override void Dispose(bool disposing)
