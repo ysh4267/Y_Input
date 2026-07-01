@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Y Input Widget</title>
+  <link rel="stylesheet" href="app.css" />
+  <link rel="stylesheet" href="widget.css" />
+</head>
+<body class="widget-body">
+  <div class="w-head" id="w-head">
+    <span class="w-name" id="w-name">…</span>
+    <button class="w-close" id="w-close" title="닫기" aria-label="닫기">✕</button>
+  </div>
+  <div class="macro-prog" id="w-prog" title="재생 진행(● 행위 · ━ 지연 · ⟲ 반복)"></div>
+  <div class="macro-prog-bar" id="w-bar" title="전체 진행도"><i class="macro-prog-bar-fill"></i></div>
+  <div class="w-grip" id="w-grip" title="크기 조절"></div>
+  <script type="module" src="widget.js"></script>
+</body>
+</html>

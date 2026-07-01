@@ -168,44 +168,27 @@ async function loadMacros() {
   renderMacroList($('macro-list-edit'), $('macro-empty-edit'), 'edit');
   if (runShownId && !state.macros.some((m) => m.id === runShownId)) clearRunSteps();
   renderMacroActive();
-  renderPins();
+  reflectPins(); // 목록 다시 그린 뒤 핀 버튼 상태 반영
 }
 
-// ---------- 고정(핀) 위젯 — 클릭하면 상단에 이름+인디케이터만 있는 약식 위젯으로 띄움 ----------
-let pinnedIds = [];
-try { pinnedIds = JSON.parse(localStorage.getItem('yinput.pins') || '[]'); } catch { pinnedIds = []; }
-function savePins() { try { localStorage.setItem('yinput.pins', JSON.stringify(pinnedIds)); } catch { /* 무시 */ } }
+// ---------- 고정(핀) 위젯 — 클릭하면 별도의 보더리스 창(WebView2)으로 띄움. 상태는 서버가 관리 ----------
+let pinnedIds = []; // 현재 열려 있는 위젯 창의 macroId들(서버 기준)
 const isPinned = (id) => pinnedIds.includes(id);
-function togglePin(id) {
-  const i = pinnedIds.indexOf(id);
-  if (i >= 0) pinnedIds.splice(i, 1); else pinnedIds.push(id);
-  savePins();
-  document.querySelectorAll(`.macro-item.run[data-id="${id}"] .act-pin`).forEach((b) => b.classList.toggle('on', isPinned(id)));
-  renderPins();
+function reflectPins() { // 목록의 핀 버튼 활성 표시를 현재 열린 창과 맞춤
+  document.querySelectorAll('.macro-item.run').forEach((li) => {
+    const b = li.querySelector('.act-pin'); if (b) b.classList.toggle('on', isPinned(li.dataset.id));
+  });
 }
-function renderPins() {
-  const dock = $('pin-dock'); if (!dock) return;
-  const exist = new Set(state.macros.map((m) => m.id));
-  const kept = pinnedIds.filter((id) => exist.has(id)); // 사라진 매크로의 핀은 정리
-  if (kept.length !== pinnedIds.length) { pinnedIds = kept; savePins(); }
-  dock.innerHTML = '';
-  dock.classList.toggle('has', kept.length > 0);
-  for (const id of kept) {
-    const m = state.macros.find((x) => x.id === id); if (!m) continue;
-    const w = document.createElement('div'); w.className = 'pin-widget'; w.dataset.id = id;
-    w.innerHTML = `
-      <div class="pin-head">
-        <span class="pin-name" title="실행 탭에서 보기">${esc(m.name)}</span>
-        <button class="pin-close" title="고정 해제" aria-label="고정 해제">✕</button>
-      </div>
-      <div class="macro-prog" data-id="${id}" title="재생 진행(● 행위 · ━ 지연 · ⟲ 반복)"></div>
-      <div class="macro-prog-bar" data-id="${id}" title="전체 진행도"><i class="macro-prog-bar-fill"></i></div>`;
-    dock.appendChild(w);
-    try { buildTimeline(w.querySelector('.macro-prog'), m.shape); } catch { /* 인디케이터 실패 무시 */ }
-    w.querySelector('.pin-close').onclick = () => togglePin(id);
-    w.querySelector('.pin-name').onclick = () => { switchTab('run'); selectRunMacro(id); };
-  }
+function setPinned(ids) { pinnedIds = Array.isArray(ids) ? ids : []; reflectPins(); }
+async function togglePin(id) {
+  const open = isPinned(id);
+  // 낙관적 반영(서버 'widgets' 브로드캐스트가 최종 확정)
+  pinnedIds = open ? pinnedIds.filter((x) => x !== id) : [...pinnedIds, id];
+  reflectPins();
+  try { if (open) await api.widgetClose(id); else await api.widgetOpen(id); }
+  catch (e) { log('error', '위젯 ' + (open ? '닫기' : '열기') + ' 실패: ' + e.message); loadPinned(); }
 }
+async function loadPinned() { try { const r = await api.widgetList(); setPinned(r.ids || []); } catch { /* 무시 */ } }
 
 function renderMacroList(listEl, emptyEl, mode) {
   if (!listEl) return;
@@ -948,6 +931,7 @@ function connectWs() {
       case 'inputMonitor': log('monitor', `[${msg.data.source}] ${msg.data.label}`, msg.data.time); break;
       case 'macrosChanged': loadMacros(); break; // 동기화로 원격 변경 반영(목록 새로고침)
       case 'syncStatus': if (!$('settings-overlay').hidden) renderSyncStatus(msg.data); break; // 동기화 진행/결과 실시간
+      case 'widgets': setPinned(msg.data.ids); break; // 열린 위젯 창 목록 → 핀 버튼 상태 동기화
       case 'shutdown': handleShutdown(); break;
     }
   };
@@ -1076,6 +1060,7 @@ async function init() {
   connectWs();
   try { renderStatus(await api.status()); } catch (e) { log('error', e.message); }
   await loadMacros();
+  loadPinned(); // 열려 있는 위젯 창 목록 → 핀 버튼 상태
   editor.open(null); // 기본: 새 매크로 추가 모드로 시작
   log('info', 'Y Input UI 준비됨.');
 }

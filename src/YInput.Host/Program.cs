@@ -52,7 +52,13 @@ internal static class Program
         string url = $"http://127.0.0.1:{port}";
         service.Url = url;
 
-        var app = BuildWebApp(service, hub, sync, url);
+        // 위젯(보더리스 WebView2 창) 매니저 — WebView2 창은 UI(메시지 루프) 스레드에서만 생성 가능.
+        // 이 STA 스레드에 바인딩된 SynchronizationContext로 마셜(Application.Run이 교체하지 않도록 현재로 지정).
+        var uiSync = new System.Windows.Forms.WindowsFormsSynchronizationContext();
+        SynchronizationContext.SetSynchronizationContext(uiSync);
+        var widgets = new WidgetManager(uiSync, url, dataRoot, service);
+
+        var app = BuildWebApp(service, hub, sync, widgets, url);
         app.StartAsync().GetAwaiter().GetResult();
 
         sync.Start(); // 시작 시 원격에서 내려받기(설정돼 있으면) + 주기 동기화 타이머
@@ -62,9 +68,12 @@ internal static class Program
         service.QuitRequested = tray.RequestExit; // /api/app/quit → 그레이스풀 종료
         tray.OpenUi(); // 실행 즉시 기본 브라우저로 편집 UI 열기
         RunBootstrap(service, tray);
+        widgets.RestoreSaved(); // 지난 세션에 열린 위젯 복원(메시지 루프 시작되면 생성)
 
         // 메시지 루프(블로킹) — 종료 시까지
         System.Windows.Forms.Application.Run(tray);
+
+        try { widgets.CloseAll(); } catch { /* ignore */ } // 위젯 창 정리
 
         // 기본 브라우저로 열린(앱 모드가 아닌) 페이지에 종료 신호 → 페이지가 스스로 닫힘 처리
         try { hub.Broadcast("shutdown", new { }); Thread.Sleep(150); } catch { /* ignore */ }
@@ -74,7 +83,7 @@ internal static class Program
         try { (app as IDisposable)?.Dispose(); } catch { /* ignore */ }
     }
 
-    private static WebApplication BuildWebApp(MacroService service, SocketHub hub, GitHubSync sync, string url)
+    private static WebApplication BuildWebApp(MacroService service, SocketHub hub, GitHubSync sync, WidgetManager widgets, string url)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
@@ -99,7 +108,7 @@ internal static class Program
             OnPrepareResponse = ctx => ctx.Context.Response.Headers["Cache-Control"] = "no-cache, must-revalidate",
         });
 
-        app.MapApi(service, hub, sync);
+        app.MapApi(service, hub, sync, widgets);
         return app;
     }
 

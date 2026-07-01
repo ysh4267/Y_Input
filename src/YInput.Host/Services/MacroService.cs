@@ -55,6 +55,9 @@ public sealed class MacroService
     /// <summary>동기화 진행/결과를 웹 UI에 실시간 전달(설정 패널의 상태 줄 갱신용).</summary>
     public void BroadcastSyncStatus(object data) => _hub.Broadcast("syncStatus", data);
 
+    /// <summary>현재 열린 위젯(핀) 창 목록을 웹 UI에 전달(목록의 핀 버튼 상태 동기화용).</summary>
+    public void BroadcastWidgets(IReadOnlyList<string> ids) => _hub.Broadcast("widgets", new { ids });
+
     /// <summary>웹/스크립트에서 앱 종료를 요청한다(그레이스풀).</summary>
     public void RequestQuit()
     {

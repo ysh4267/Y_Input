@@ -203,16 +203,6 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 .macro-prog-bar { display: block; height: 2px; margin: 3px 2px 0; border-radius: 2px; background: rgba(255,255,255,.07); overflow: hidden; } /* 모든 항목에 항상 표시 — 빈 트랙→재생 시 녹색 채움 */
 .macro-prog-bar-fill { display: block; height: 100%; width: 0; border-radius: 2px; background: var(--accent2); box-shadow: 0 0 5px rgba(52,211,153,.55); transition: width .12s linear; }
 
-/* 고정(핀) 위젯 도크 — 상단 중앙 플로팅. 이름 + 인디케이터만 있는 약식 위젯 */
-.pin-dock { position: fixed; top: 54px; left: 50%; transform: translateX(-50%); z-index: 60; display: none; flex-direction: column; gap: 8px; width: min(360px, 92vw); pointer-events: none; }
-.pin-dock.has { display: flex; }
-.pin-widget { pointer-events: auto; background: var(--card); border: 1px solid var(--border2); border-radius: 12px; padding: 8px 11px 9px; box-shadow: 0 10px 28px rgba(0,0,0,.45); }
-.pin-head { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
-.pin-name { flex: 1; min-width: 0; font-weight: 700; font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
-.pin-name:hover { color: var(--accent); }
-.pin-close { flex: 0 0 auto; width: 20px; height: 20px; border: none; background: transparent; color: var(--muted); border-radius: 6px; cursor: pointer; font-size: 13px; line-height: 1; }
-.pin-close:hover { background: rgba(255,255,255,.08); color: var(--text); }
-.pin-widget .macro-prog-bar { margin-top: 5px; }
 .tl-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--border2); transition: background .12s, box-shadow .12s; }
 .tl-dot.done { background: var(--accent); box-shadow: 0 0 5px rgba(79,140,255,.6); }
 .tl-dot.active { background: #cfe0ff; box-shadow: 0 0 9px rgba(79,140,255,.95); }

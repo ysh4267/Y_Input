@@ -58,4 +58,8 @@ export const api = {
   syncConfig: () => request('GET', '/api/sync/config'),
   syncSave: (cfg) => request('POST', '/api/sync/config', cfg),
   syncNow: () => request('POST', '/api/sync/now'),
+
+  widgetList: () => request('GET', '/api/widget/list'),
+  widgetOpen: (id) => request('POST', '/api/widget/open', { id }),
+  widgetClose: (id) => request('POST', '/api/widget/close', { id }),
 };
