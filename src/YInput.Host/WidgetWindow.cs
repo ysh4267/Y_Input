@@ -33,8 +33,6 @@ internal sealed class WidgetWindow : Form
     private const int ACCENT_DISABLED = 0;
     private const int ACCENT_ENABLE_BLURBEHIND = 3;         // 약함(가벼운 블러)
     private const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;  // 강함(프로스티드, 더 진함)
-    private const int WM_ENTERSIZEMOVE = 0x0231;
-    private const int WM_EXITSIZEMOVE = 0x0232;
     private int _blurState = ACCENT_ENABLE_BLURBEHIND;       // 페이지가 'blur:1|2'로 지정
     private uint _tint = 0xB82C231F;                          // 배경 색+알파(ABGR). 페이지가 'tint:'로 지정. DWM이 창 전체에 균일 적용.
 
@@ -75,15 +73,16 @@ internal sealed class WidgetWindow : Form
         UpdateRegion();
     }
 
-    protected override void OnSizeChanged(EventArgs e) { base.OnSizeChanged(e); UpdateRegion(); }
-
-    // 이동/크기조절 중에는 블러를 꺼서 부드럽게(특히 강한 아크릴), 끝나면 다시 켜 전체를 재계산(새 영역 균일).
-    protected override void WndProc(ref Message m)
+    protected override void OnSizeChanged(EventArgs e)
     {
-        if (m.Msg == WM_ENTERSIZEMOVE) { try { SetBlur(false); } catch { /* 무시 */ } }
-        else if (m.Msg == WM_EXITSIZEMOVE) { try { SetBlur(true); } catch { /* 무시 */ } }
-        base.WndProc(ref m);
+        base.OnSizeChanged(e);
+        UpdateRegion();
+        try { SetBlur(true); } catch { /* 무시 */ } // 크기 바뀌면 블러+틴트 재적용(끄지 않음)
     }
+
+    // 폼 배경을 칠하지 않는다 → WebView2가 아직 못 덮은 영역까지 DWM 블러+틴트가 그대로 보여 창 전체가 균일.
+    // (예전엔 폼의 불투명 BackColor가 그 영역을 덮어 폭 늘렸을 때 좌/우 색·투명도가 달라 보였음.)
+    protected override void OnPaintBackground(PaintEventArgs e) { /* skip */ }
 
     private void UpdateRegion()
     {
