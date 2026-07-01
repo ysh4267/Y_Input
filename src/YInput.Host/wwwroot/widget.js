@@ -5,23 +5,26 @@ const MREDUCE = window.matchMedia && window.matchMedia('(prefers-reduced-motion:
 const MID = new URLSearchParams(location.search).get('id') || '';
 const toNative = (m) => { try { window.chrome.webview.postMessage(m); } catch { /* WebView2 밖에서 열림 */ } };
 
-// ---------- 모양: 매크로 목록과 같은 흐름(대기=회색 / 켜짐=파랑 / 재생=녹색). 채도 낮춘 배경 + 상태색 테두리 ----------
-let cfg = { color: '#1f232c', opacity: 72 };
+// ---------- 모양: 상태별(대기/켜짐/재생) 배경색 + 알파(각각 지정). 상태 테두리색은 고정(회색/파랑/녹색). ----------
+let cfg = { idleColor: '#1f232c', idleAlpha: 72, onColor: '#243650', onAlpha: 72, playColor: '#1f3d34', playAlpha: 72 };
 let enabled = false, playing = false;
-// 창 배경색은 사용자 지정(항상 적용). 상태(대기/켜짐/재생)는 테두리 색으로만 표시.
 function hex2rgb(h) {
   const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); if (!m) return [31, 35, 44];
   const n = parseInt(m[1], 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 function applyAppearance() {
-  const [r, g, b] = hex2rgb(cfg.color);
-  const a = Math.max(0, Math.min(100, cfg.opacity)) / 100; // 알파(0%=완전 투명 배경 → 테두리+내용만)
-  // 틴트는 html(캔버스)에만 → 폭을 늘려도 새 영역이 즉시 같은 색으로 채워짐. body는 투명(두 겹으로 겹쳐 불투명도 두 배 방지).
-  document.documentElement.style.background = `rgba(${r},${g},${b},${a})`;
-  document.body.style.background = 'transparent';
-  document.body.style.borderColor = playing ? 'rgba(52,211,153,.85)' : enabled ? 'rgba(79,140,255,.75)' : 'rgba(255,255,255,.16)'; // 대기=회색 / 켜짐=파랑 / 재생=녹색
+  let color, alpha, border;
+  if (playing) { color = cfg.playColor; alpha = cfg.playAlpha; border = 'rgba(52,211,153,.85)'; }
+  else if (enabled) { color = cfg.onColor; alpha = cfg.onAlpha; border = 'rgba(79,140,255,.75)'; }
+  else { color = cfg.idleColor; alpha = cfg.idleAlpha; border = 'rgba(255,255,255,.16)'; }
+  const [r, g, b] = hex2rgb(color);
+  const a = Math.max(0, Math.min(100, alpha ?? 72)) / 100; // 0%=완전 투명(블러만)
+  $('w-bg').style.background = `rgba(${r},${g},${b},${a})`;
+  document.body.style.borderColor = border;
 }
-async function loadConfig() { try { cfg = (await fetch('/api/widget/config').then((r) => r.json())) || cfg; } catch { /* 기본값 */ } applyAppearance(); }
+// WebView2가 폭을 늘렸을 때 새 영역을 다시 안 그리는 문제 → 배경 레이어를 잠깐 껐다 켜 강제 리페인트.
+function repaintBg() { const bg = $('w-bg'); bg.style.display = 'none'; void bg.offsetHeight; bg.style.display = ''; }
+async function loadConfig() { try { cfg = Object.assign(cfg, (await fetch('/api/widget/config').then((r) => r.json())) || {}); } catch { /* 기본값 */ } applyAppearance(); }
 
 // ---------- 인디케이터 (app.js buildTimeline/updateOneTimeline 등과 동일) ----------
 function buildTimeline(container, shape) {
@@ -201,7 +204,10 @@ $('w-grip').addEventListener('pointerdown', (e) => {
   e.preventDefault();
   toNative('resize'); // 네이티브가 우측 폭 조절 시작(Min/Max 존중)
 });
-window.addEventListener('resize', applyAppearance); // 폭 바뀔 때 배경을 새 크기에 다시 채움
+// 폭 바뀔 때 배경을 새 크기에 다시 채우고 강제 리페인트(새 영역 배경색 갱신 안 되는 문제 방지)
+function onResized() { applyAppearance(); repaintBg(); }
+window.addEventListener('resize', onResized);
+try { new ResizeObserver(onResized).observe(document.documentElement); } catch { /* 미지원 무시 */ }
 
 loadConfig();
 loadMacro();

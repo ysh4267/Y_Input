@@ -193,10 +193,11 @@
       </section>
       <section class="drawer-sec">
         <h3>위젯 모양</h3>
-        <p class="hint">고정(핀)한 매크로가 뜨는 위젯 창의 <b>대기 상태</b> 배경색·불투명도입니다. 켜진 매크로는 <b style="color:#3b82f6">파랑</b>, 재생 중은 <b style="color:#34d399">녹색</b>으로 자동 표시됩니다. 배경은 반투명 블러입니다.</p>
+        <p class="hint">고정(핀) 위젯의 <b>상태별</b> 배경색·불투명도입니다. 불투명도 <b>0% = 배경 완전 투명(블러만)</b>. 상태 테두리는 회색/파랑/녹색으로 자동 표시됩니다.</p>
         <div class="sync-form">
-          <label class="sync-row"><span>배경색</span><input id="widget-color" type="color" value="#1f232c"></label>
-          <label class="sync-row"><span>불투명도</span><input id="widget-opacity" type="range" min="0" max="100" step="1" value="72"><b id="widget-opacity-val" class="wo-val">72%</b></label>
+          <label class="sync-row"><span>대기</span><input id="wc-idle" type="color" value="#1f232c"><input id="wo-idle" type="range" min="0" max="100" step="1" value="72"><b id="wov-idle" class="wo-val">72%</b></label>
+          <label class="sync-row"><span>켜짐</span><input id="wc-on" type="color" value="#243650"><input id="wo-on" type="range" min="0" max="100" step="1" value="72"><b id="wov-on" class="wo-val">72%</b></label>
+          <label class="sync-row"><span>재생</span><input id="wc-play" type="color" value="#1f3d34"><input id="wo-play" type="range" min="0" max="100" step="1" value="72"><b id="wov-play" class="wo-val">72%</b></label>
         </div>
       </section>
       <section class="drawer-sec">

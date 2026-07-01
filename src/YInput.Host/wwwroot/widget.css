@@ -9,6 +9,8 @@ body.widget-body {
   padding: 9px 13px 14px; /* 아래 여백 넉넉히(진행도 인디케이터가 바닥에 붙지 않게) */
   border: 1.5px solid rgba(255,255,255,.16); border-radius: 10px; /* 색은 상태에 따라 JS가 지정 */
 }
+/* 배경색 레이어(고정, 콘텐츠 뒤). 폭을 늘려도 inset:0 이라 새 영역까지 즉시 채워지고 리페인트가 확실. */
+#w-bg { position: fixed; inset: 0; z-index: -1; background: transparent; }
 .w-head { display: flex; align-items: center; gap: 8px; cursor: move; flex: 0 0 auto; }
 .w-name { flex: 1; min-width: 0; font-weight: 700; font-size: 13px; color: #f3f5f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
 .w-close { flex: 0 0 auto; width: 20px; height: 20px; border: none; background: transparent; color: var(--muted); border-radius: 6px; cursor: pointer; font-size: 13px; line-height: 1; }

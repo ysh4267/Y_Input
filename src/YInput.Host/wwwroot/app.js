@@ -46,21 +46,32 @@ function openSettings() {
   loadWidgetConfig();
 }
 
-// ---------- 위젯 모양(색/불투명도) ----------
+// ---------- 위젯 모양(상태별 색/불투명도) ----------
+const WIDGET_ROWS = [
+  ['wc-idle', 'wo-idle', 'wov-idle', 'idleColor', 'idleAlpha', '#1f232c'],
+  ['wc-on', 'wo-on', 'wov-on', 'onColor', 'onAlpha', '#243650'],
+  ['wc-play', 'wo-play', 'wov-play', 'playColor', 'playAlpha', '#1f3d34'],
+];
 async function loadWidgetConfig() {
   try {
     const c = await api.widgetGetConfig();
-    if ($('widget-color')) $('widget-color').value = c.color || '#1f232c';
-    if ($('widget-opacity')) { $('widget-opacity').value = c.opacity ?? 72; $('widget-opacity-val').textContent = $('widget-opacity').value + '%'; }
+    for (const [cid, oid, vid, ck, ak, def] of WIDGET_ROWS) {
+      if ($(cid)) $(cid).value = c[ck] || def;
+      const a = c[ak] ?? 72;
+      if ($(oid)) { $(oid).value = a; $(vid).textContent = a + '%'; }
+    }
   } catch { /* 무시 */ }
 }
 let widgetCfgTimer = null;
 function saveWidgetConfig() {
-  const color = $('widget-color').value;
-  const ov = parseInt($('widget-opacity').value, 10);
-  const opacity = Number.isFinite(ov) ? ov : 72; // 0도 유효(|| 72 쓰면 0%가 72%로 튀는 버그)
+  const cfg = {};
+  for (const [cid, oid, , ck, ak] of WIDGET_ROWS) {
+    cfg[ck] = $(cid).value;
+    const v = parseInt($(oid).value, 10);
+    cfg[ak] = Number.isFinite(v) ? v : 72; // 0도 유효(|| 쓰면 0%가 튀는 버그)
+  }
   clearTimeout(widgetCfgTimer);
-  widgetCfgTimer = setTimeout(() => api.widgetSetConfig({ color, opacity }).catch((e) => log('error', e.message)), 140);
+  widgetCfgTimer = setTimeout(() => api.widgetSetConfig(cfg).catch((e) => log('error', e.message)), 140);
 }
 
 // ---------- 동기화(GitHub 비공개 저장소) ----------
@@ -1038,8 +1049,10 @@ function wire() {
   $('btn-reload').onclick = () => location.reload(); // 화면 새로고침(잠금으로 키보드 단축키가 막혀 있어 버튼 제공)
   $('btn-sync-save').onclick = onSyncSave;
   $('btn-sync-now').onclick = onSyncNow;
-  $('widget-color').oninput = saveWidgetConfig;
-  $('widget-opacity').oninput = () => { $('widget-opacity-val').textContent = $('widget-opacity').value + '%'; saveWidgetConfig(); };
+  WIDGET_ROWS.forEach(([cid, oid, vid]) => {
+    $(cid).oninput = saveWidgetConfig;
+    $(oid).oninput = () => { $(vid).textContent = $(oid).value + '%'; saveWidgetConfig(); };
+  });
   $('btn-new').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-new-run').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-import').onclick = () => $('file-import').click();
