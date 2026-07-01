@@ -57,7 +57,8 @@ async function loadWidgetConfig() {
 let widgetCfgTimer = null;
 function saveWidgetConfig() {
   const color = $('widget-color').value;
-  const opacity = parseInt($('widget-opacity').value, 10) || 72;
+  const ov = parseInt($('widget-opacity').value, 10);
+  const opacity = Number.isFinite(ov) ? ov : 72; // 0도 유효(|| 72 쓰면 0%가 72%로 튀는 버그)
   clearTimeout(widgetCfgTimer);
   widgetCfgTimer = setTimeout(() => api.widgetSetConfig({ color, opacity }).catch((e) => log('error', e.message)), 140);
 }

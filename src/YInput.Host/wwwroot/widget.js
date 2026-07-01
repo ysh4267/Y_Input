@@ -8,22 +8,18 @@ const toNative = (m) => { try { window.chrome.webview.postMessage(m); } catch { 
 // ---------- 모양: 매크로 목록과 같은 흐름(대기=회색 / 켜짐=파랑 / 재생=녹색). 채도 낮춘 배경 + 상태색 테두리 ----------
 let cfg = { color: '#1f232c', opacity: 72 };
 let enabled = false, playing = false;
-// 배경은 어두운 계열(채도·명도 낮춤)로 내용과 대비. 테두리만 상태색으로 또렷하게.
-const BG_ON = [34, 52, 84], BG_PLAY = [30, 66, 55]; // 켜짐=어두운 파랑 / 재생=어두운 녹색
+// 창 배경색은 사용자 지정(항상 적용). 상태(대기/켜짐/재생)는 테두리 색으로만 표시.
 function hex2rgb(h) {
   const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); if (!m) return [31, 35, 44];
   const n = parseInt(m[1], 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 function applyAppearance() {
-  let rgb, border;
-  if (playing) { rgb = BG_PLAY; border = 'rgba(52,211,153,.75)'; }   // 재생 = 어두운 녹색 + 녹색 테두리
-  else if (enabled) { rgb = BG_ON; border = 'rgba(79,140,255,.6)'; } // 켜짐 = 어두운 파랑 + 파랑 테두리
-  else { rgb = hex2rgb(cfg.color); border = 'rgba(255,255,255,.13)'; } // 대기 = 회색(사용자색)
-  const a = Math.max(0, Math.min(100, cfg.opacity)) / 100; // 0%까지 (완전 투명 배경 = 테두리+내용만)
-  // 틴트는 html(캔버스)에만 → 폭을 늘려도 새 영역이 즉시 같은 색으로 채워짐. body는 투명(두 겹으로 겹쳐 불투명도 두 배 되는 것 방지).
-  document.documentElement.style.background = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a})`;
+  const [r, g, b] = hex2rgb(cfg.color);
+  const a = Math.max(0, Math.min(100, cfg.opacity)) / 100; // 알파(0%=완전 투명 배경 → 테두리+내용만)
+  // 틴트는 html(캔버스)에만 → 폭을 늘려도 새 영역이 즉시 같은 색으로 채워짐. body는 투명(두 겹으로 겹쳐 불투명도 두 배 방지).
+  document.documentElement.style.background = `rgba(${r},${g},${b},${a})`;
   document.body.style.background = 'transparent';
-  document.body.style.borderColor = border;
+  document.body.style.borderColor = playing ? 'rgba(52,211,153,.85)' : enabled ? 'rgba(79,140,255,.75)' : 'rgba(255,255,255,.16)'; // 대기=회색 / 켜짐=파랑 / 재생=녹색
 }
 async function loadConfig() { try { cfg = (await fetch('/api/widget/config').then((r) => r.json())) || cfg; } catch { /* 기본값 */ } applyAppearance(); }
 

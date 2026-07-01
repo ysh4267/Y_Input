@@ -29,7 +29,9 @@ internal sealed class WidgetWindow : Form
     private struct WinCompAttrData { public int Attribute; public IntPtr Data; public int SizeOfData; }
     [DllImport("user32.dll")] private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WinCompAttrData data);
     private const int WCA_ACCENT_POLICY = 19;
+    private const int ACCENT_DISABLED = 0;
     private const int ACCENT_ENABLE_BLURBEHIND = 3; // 아크릴(4)은 이동/크기조절 시 심한 지연 → 가벼운 블러(3, 상시)
+    private const int WM_EXITSIZEMOVE = 0x0232;
 
     private const int FixedHeight = 104;
     private const int CornerRadius = 9;
@@ -64,16 +66,24 @@ internal sealed class WidgetWindow : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        try { EnableBlur(); } catch { /* 블러 미지원 시 무시(단색 배경으로 동작) */ }
+        try { SetBlur(true); } catch { /* 블러 미지원 시 무시(단색 배경으로 동작) */ }
         UpdateRegion();
     }
 
-    // 크기가 바뀔 때마다 블러 재적용 + 둥근 영역 갱신 → 새로 늘어난 영역도 기존과 균일하게 보이도록.
+    // 크기가 바뀔 때마다 둥근 영역 갱신 + 블러 재적용.
     protected override void OnSizeChanged(EventArgs e)
     {
         base.OnSizeChanged(e);
         UpdateRegion();
-        try { EnableBlur(); } catch { /* 무시 */ }
+        try { SetBlur(true); } catch { /* 무시 */ }
+    }
+
+    // 크기조절이 끝나면 블러를 껐다 켜서 DWM이 새(넓어진) 영역까지 다시 계산하게 한다
+    // (재적용만으론 늘어난 부분에 블러가 안 입혀져 좌/우 배경이 달라 보이던 문제 해결).
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WM_EXITSIZEMOVE) { try { SetBlur(false); SetBlur(true); } catch { /* 무시 */ } }
+        base.WndProc(ref m);
     }
 
     private void UpdateRegion()
@@ -84,10 +94,10 @@ internal sealed class WidgetWindow : Form
         DeleteObject(h);
     }
 
-    private void EnableBlur()
+    private void SetBlur(bool on)
     {
         if (!IsHandleCreated) return;
-        var accent = new AccentPolicy { AccentState = ACCENT_ENABLE_BLURBEHIND, GradientColor = 0 };
+        var accent = new AccentPolicy { AccentState = on ? ACCENT_ENABLE_BLURBEHIND : ACCENT_DISABLED, GradientColor = 0 };
         int size = Marshal.SizeOf(accent);
         IntPtr ptr = Marshal.AllocHGlobal(size);
         try
