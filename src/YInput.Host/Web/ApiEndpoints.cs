@@ -250,7 +250,7 @@ public static class ApiEndpoints
         app.MapPost("/api/widget/open", (WidgetBody? b) => { if (!string.IsNullOrWhiteSpace(b?.Id)) widgets.Open(b!.Id); return Results.Ok(new { ok = true }); });
         app.MapPost("/api/widget/close", (WidgetBody? b) => { if (!string.IsNullOrWhiteSpace(b?.Id)) widgets.Close(b!.Id); return Results.Ok(new { ok = true }); });
         app.MapGet("/api/widget/config", () => Results.Json(widgets.Appearance())); // 위젯 모양(색/불투명도)
-        app.MapPost("/api/widget/config", (WidgetConfigBody? b) => { widgets.SetAppearance(b?.IdleColor, b?.IdleAlpha, b?.OnColor, b?.OnAlpha, b?.PlayColor, b?.PlayAlpha, b?.Blur); return Results.Json(widgets.Appearance()); });
+        app.MapPost("/api/widget/config", (WidgetConfigBody? b) => { widgets.SetAppearance(b?.IdleColor, b?.IdleAlpha, b?.OnColor, b?.OnAlpha, b?.PlayColor, b?.PlayAlpha); return Results.Json(widgets.Appearance()); });
 
         // ---- WebSocket ----
         app.Map("/ws", async (HttpContext ctx) =>
@@ -395,7 +395,7 @@ public static class ApiEndpoints
     private sealed record WidgetConfigBody(
         string? IdleColor = null, int? IdleAlpha = null,
         string? OnColor = null, int? OnAlpha = null,
-        string? PlayColor = null, int? PlayAlpha = null, int? Blur = null);
+        string? PlayColor = null, int? PlayAlpha = null);
     private sealed record RecordStartBody(
         bool Keyboard = true,
         bool MouseButtons = true,

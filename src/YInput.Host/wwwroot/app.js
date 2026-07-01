@@ -60,7 +60,6 @@ async function loadWidgetConfig() {
       const a = c[ak] ?? 72;
       if ($(oid)) { $(oid).value = a; $(vid).textContent = a + '%'; }
     }
-    if ($('w-blur')) $('w-blur').value = String(c.blur === 2 ? 2 : 1);
   } catch { /* 무시 */ }
 }
 let widgetCfgTimer = null;
@@ -71,7 +70,6 @@ function saveWidgetConfig() {
     const v = parseInt($(oid).value, 10);
     cfg[ak] = Number.isFinite(v) ? v : 72; // 0도 유효(|| 쓰면 0%가 튀는 버그)
   }
-  cfg.blur = $('w-blur').value === '2' ? 2 : 1;
   clearTimeout(widgetCfgTimer);
   widgetCfgTimer = setTimeout(() => api.widgetSetConfig(cfg).catch((e) => log('error', e.message)), 140);
 }
@@ -1055,7 +1053,6 @@ function wire() {
     $(cid).oninput = saveWidgetConfig;
     $(oid).oninput = () => { $(vid).textContent = $(oid).value + '%'; saveWidgetConfig(); };
   });
-  $('w-blur').onchange = saveWidgetConfig;
   $('btn-new').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-new-run').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-import').onclick = () => $('file-import').click();

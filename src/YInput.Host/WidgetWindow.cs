@@ -31,9 +31,7 @@ internal sealed class WidgetWindow : Form
     [DllImport("user32.dll")] private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WinCompAttrData data);
     private const int WCA_ACCENT_POLICY = 19;
     private const int ACCENT_DISABLED = 0;
-    private const int ACCENT_ENABLE_BLURBEHIND = 3;         // 약함(가벼운 블러)
-    private const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;  // 강함(프로스티드, 더 진함)
-    private int _blurState = ACCENT_ENABLE_BLURBEHIND;       // 페이지가 'blur:1|2'로 지정
+    private const int ACCENT_ENABLE_BLURBEHIND = 3;         // 가벼운 블러(아크릴은 렉 때문에 제외)
     private uint _tint = 0xB82C231F;                          // 배경 색+알파(ABGR). 페이지가 'tint:'로 지정. DWM이 창 전체에 균일 적용.
 
     private const int FixedHeight = 104;
@@ -95,7 +93,7 @@ internal sealed class WidgetWindow : Form
     private void SetBlur(bool on)
     {
         if (!IsHandleCreated) return;
-        var accent = new AccentPolicy { AccentState = on ? _blurState : ACCENT_DISABLED, GradientColor = _tint };
+        var accent = new AccentPolicy { AccentState = on ? ACCENT_ENABLE_BLURBEHIND : ACCENT_DISABLED, GradientColor = _tint };
         int size = Marshal.SizeOf(accent);
         IntPtr ptr = Marshal.AllocHGlobal(size);
         try
@@ -135,11 +133,6 @@ internal sealed class WidgetWindow : Form
         if (msg == "close") Close();
         else if (msg == "drag" && !IsDisposed) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, HTCAPTION, IntPtr.Zero); }
         else if (msg == "resize" && !IsDisposed) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, HTRIGHT, IntPtr.Zero); } // 폭만(색/불투명도는 페이지 CSS가 담당)
-        else if (msg.StartsWith("blur:", StringComparison.Ordinal)) // 블러 강도: 1=약함(블러) / 2=강함(아크릴)
-        {
-            _blurState = msg.EndsWith("2", StringComparison.Ordinal) ? ACCENT_ENABLE_ACRYLICBLURBEHIND : ACCENT_ENABLE_BLURBEHIND;
-            try { SetBlur(true); } catch { /* 무시 */ }
-        }
         else if (msg.StartsWith("tint:", StringComparison.Ordinal) // 배경 색+알파(ABGR 8자리 hex)
             && uint.TryParse(msg.AsSpan(5), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var abgr))
         {
