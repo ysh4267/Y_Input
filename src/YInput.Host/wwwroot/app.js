@@ -50,7 +50,7 @@ function openSettings() {
 async function loadWidgetConfig() {
   try {
     const c = await api.widgetGetConfig();
-    if ($('widget-color')) $('widget-color').value = c.color || '#1b2230';
+    if ($('widget-color')) $('widget-color').value = c.color || '#1f232c';
     if ($('widget-opacity')) { $('widget-opacity').value = c.opacity ?? 72; $('widget-opacity-val').textContent = $('widget-opacity').value + '%'; }
   } catch { /* 무시 */ }
 }

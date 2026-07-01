@@ -23,7 +23,7 @@ public sealed class WidgetManager
 
     // 위젯 모양(대기 상태 배경색 + 불투명도). 켜짐=파랑/재생=녹색은 위젯 페이지가 상태로 결정.
     private readonly string _appearancePath;
-    private string _appColor = "#1b2230";
+    private string _appColor = "#1f232c"; // 목록 대기색(card2)과 동일한 회색
     private int _appOpacity = 72;
 
     public WidgetManager(SynchronizationContext ui, string baseUrl, string dataRoot, MacroService service)

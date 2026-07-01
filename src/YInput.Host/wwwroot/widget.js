@@ -5,19 +5,24 @@ const MREDUCE = window.matchMedia && window.matchMedia('(prefers-reduced-motion:
 const MID = new URLSearchParams(location.search).get('id') || '';
 const toNative = (m) => { try { window.chrome.webview.postMessage(m); } catch { /* WebView2 밖에서 열림 */ } };
 
-// ---------- 모양(배경 반투명 색 + 테두리 하이라이트): 대기=사용자색 / 켜짐=파랑 / 재생=녹색 ----------
-let cfg = { color: '#1b2230', opacity: 72 };
+// ---------- 모양: 매크로 목록과 같은 흐름(대기=회색 / 켜짐=파랑 / 재생=녹색). 채도 낮춘 배경 + 상태색 테두리 ----------
+let cfg = { color: '#1f232c', opacity: 72 };
 let enabled = false, playing = false;
-const GREEN = [52, 211, 153], BLUE = [59, 130, 246];
+const ACC_BLUE = [79, 140, 255], ACC_GREEN = [52, 211, 153]; // 목록의 --accent / --accent2 와 동일
 function hex2rgb(h) {
-  const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); if (!m) return [27, 34, 48];
+  const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); if (!m) return [31, 35, 44];
   const n = parseInt(m[1], 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
+const mix = (a, b, t) => a.map((v, i) => Math.round(v * (1 - t) + b[i] * t)); // 회색 베이스에 살짝 섞어 채도 낮춤
 function applyAppearance() {
-  const [r, g, b] = playing ? GREEN : enabled ? BLUE : hex2rgb(cfg.color);
-  const a = Math.max(0, Math.min(100, cfg.opacity)) / 100;
-  document.body.style.background = `rgba(${r},${g},${b},${a})`; // 반투명 색(뒤 데스크톱 블러는 네이티브가 제공)
-  document.body.style.borderColor = playing ? 'rgba(52,211,153,.9)' : enabled ? 'rgba(59,130,246,.9)' : 'rgba(255,255,255,.16)';
+  const base = hex2rgb(cfg.color); // 대기 = 회색(사용자색)
+  let rgb, border;
+  if (playing) { rgb = mix(base, ACC_GREEN, 0.38); border = 'rgba(52,211,153,.85)'; }  // 재생 = 녹색
+  else if (enabled) { rgb = mix(base, ACC_BLUE, 0.30); border = 'rgba(79,140,255,.7)'; } // 켜짐 = 파랑
+  else { rgb = base; border = 'rgba(255,255,255,.14)'; }                                 // 대기 = 회색
+  const a = Math.max(0, Math.min(100, cfg.opacity)) / 100; // 0%까지 (완전 투명 배경 = 테두리+내용만)
+  document.body.style.background = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a})`;
+  document.body.style.borderColor = border;
 }
 async function loadConfig() { try { cfg = (await fetch('/api/widget/config').then((r) => r.json())) || cfg; } catch { /* 기본값 */ } applyAppearance(); }
 
