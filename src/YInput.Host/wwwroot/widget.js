@@ -19,12 +19,11 @@ function applyAppearance() {
   else if (enabled) { color = cfg.onColor; alpha = cfg.onAlpha; border = 'rgba(79,140,255,.75)'; }
   else { color = cfg.idleColor; alpha = cfg.idleAlpha; border = 'rgba(255,255,255,.16)'; }
   const [r, g, b] = hex2rgb(color);
-  const a = Math.max(0, Math.min(100, alpha ?? 72)) / 100; // 0%=완전 투명(블러만)
-  $('w-bg').style.background = `rgba(${r},${g},${b},${a})`;
+  const av = Math.round(Math.max(0, Math.min(100, alpha ?? 72)) / 100 * 255); // 0=완전 투명(블러만)
+  const abgr = (((av << 24) | (b << 16) | (g << 8) | r) >>> 0).toString(16).padStart(8, '0');
+  toNative('tint:' + abgr); // 색+알파를 네이티브(DWM)가 창 전체에 균일 적용 → 폭 늘려도 안 갈라짐(페이지 배경은 안 씀)
   document.body.style.borderColor = border;
 }
-// WebView2가 폭을 늘렸을 때 새 영역을 다시 안 그리는 문제 → 배경 레이어를 잠깐 껐다 켜 강제 리페인트.
-function repaintBg() { const bg = $('w-bg'); bg.style.display = 'none'; void bg.offsetHeight; bg.style.display = ''; }
 async function loadConfig() { try { cfg = Object.assign(cfg, (await fetch('/api/widget/config').then((r) => r.json())) || {}); } catch { /* 기본값 */ } applyAppearance(); applyBlur(); }
 
 // ---------- 인디케이터 (app.js buildTimeline/updateOneTimeline 등과 동일) ----------
@@ -205,10 +204,8 @@ $('w-grip').addEventListener('pointerdown', (e) => {
   e.preventDefault();
   toNative('resize'); // 네이티브가 우측 폭 조절 시작(Min/Max 존중)
 });
-// 폭 바뀔 때 배경을 새 크기에 다시 채우고 강제 리페인트(새 영역 배경색 갱신 안 되는 문제 방지)
-function onResized() { applyAppearance(); repaintBg(); }
-window.addEventListener('resize', onResized);
-try { new ResizeObserver(onResized).observe(document.documentElement); } catch { /* 미지원 무시 */ }
+// 폭 바뀌면 테두리 다시 적용(배경 색/알파는 네이티브 DWM이 창 전체에 균일 적용하므로 갈라짐 없음)
+window.addEventListener('resize', applyAppearance);
 
 loadConfig();
 loadMacro();

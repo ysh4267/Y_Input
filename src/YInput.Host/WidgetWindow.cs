@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
@@ -35,6 +36,7 @@ internal sealed class WidgetWindow : Form
     private const int WM_ENTERSIZEMOVE = 0x0231;
     private const int WM_EXITSIZEMOVE = 0x0232;
     private int _blurState = ACCENT_ENABLE_BLURBEHIND;       // 페이지가 'blur:1|2'로 지정
+    private uint _tint = 0xB82C231F;                          // 배경 색+알파(ABGR). 페이지가 'tint:'로 지정. DWM이 창 전체에 균일 적용.
 
     private const int FixedHeight = 104;
     private const int CornerRadius = 9;
@@ -94,7 +96,7 @@ internal sealed class WidgetWindow : Form
     private void SetBlur(bool on)
     {
         if (!IsHandleCreated) return;
-        var accent = new AccentPolicy { AccentState = on ? _blurState : ACCENT_DISABLED, GradientColor = 0 };
+        var accent = new AccentPolicy { AccentState = on ? _blurState : ACCENT_DISABLED, GradientColor = _tint };
         int size = Marshal.SizeOf(accent);
         IntPtr ptr = Marshal.AllocHGlobal(size);
         try
@@ -137,6 +139,12 @@ internal sealed class WidgetWindow : Form
         else if (msg.StartsWith("blur:", StringComparison.Ordinal)) // 블러 강도: 1=약함(블러) / 2=강함(아크릴)
         {
             _blurState = msg.EndsWith("2", StringComparison.Ordinal) ? ACCENT_ENABLE_ACRYLICBLURBEHIND : ACCENT_ENABLE_BLURBEHIND;
+            try { SetBlur(true); } catch { /* 무시 */ }
+        }
+        else if (msg.StartsWith("tint:", StringComparison.Ordinal) // 배경 색+알파(ABGR 8자리 hex)
+            && uint.TryParse(msg.AsSpan(5), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var abgr))
+        {
+            _tint = abgr;
             try { SetBlur(true); } catch { /* 무시 */ }
         }
     }
