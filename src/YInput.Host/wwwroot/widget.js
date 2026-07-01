@@ -5,6 +5,23 @@ const MREDUCE = window.matchMedia && window.matchMedia('(prefers-reduced-motion:
 const MID = new URLSearchParams(location.search).get('id') || '';
 const toNative = (m) => { try { window.chrome.webview.postMessage(m); } catch { /* WebView2 밖에서 열림 */ } };
 
+// ---------- 모양(배경 반투명 색 + 테두리 하이라이트): 대기=사용자색 / 켜짐=파랑 / 재생=녹색 ----------
+let cfg = { color: '#1b2230', opacity: 72 };
+let enabled = false, playing = false;
+const GREEN = [52, 211, 153], BLUE = [59, 130, 246];
+function hex2rgb(h) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); if (!m) return [27, 34, 48];
+  const n = parseInt(m[1], 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function applyAppearance() {
+  const [r, g, b] = playing ? GREEN : enabled ? BLUE : hex2rgb(cfg.color);
+  const a = Math.round(Math.max(0, Math.min(100, cfg.opacity)) / 100 * 255);
+  const abgr = (((a << 24) | (b << 16) | (g << 8) | r) >>> 0).toString(16).padStart(8, '0');
+  toNative('tint:' + abgr); // 네이티브 아크릴 배경(반투명 블러) 색/불투명도
+  document.body.style.borderColor = playing ? 'rgba(52,211,153,.9)' : enabled ? 'rgba(59,130,246,.9)' : 'rgba(255,255,255,.16)';
+}
+async function loadConfig() { try { cfg = (await fetch('/api/widget/config').then((r) => r.json())) || cfg; } catch { /* 기본값 */ } applyAppearance(); }
+
 // ---------- 인디케이터 (app.js buildTimeline/updateOneTimeline 등과 동일) ----------
 function buildTimeline(container, shape) {
   if (!container) return;
@@ -147,18 +164,25 @@ async function loadMacro() {
     if (!m) { toNative('close'); return; } // 매크로가 삭제됨 → 창 닫기
     $('w-name').textContent = m.name;
     document.title = m.name;
+    enabled = !!m.enabled;
     buildTimeline($('w-prog'), m.shape || []);
+    applyAppearance(); // 켜짐 상태 반영(파랑)
   } catch { /* 서버 준비 전 — WS 재연결 때 다시 시도 */ }
 }
 function showProgress(p) { if (p.macroId === MID) { updateTimeline($('w-prog'), p); setActiveDelay(p.stepIndex, p.delayMs); } }
-function onStatus(s) { const playing = new Set(s.playingIds || []); if (!playing.has(MID)) { resetTimeline($('w-prog')); delayAnim = null; } }
+function onStatus(s) {
+  playing = new Set(s.playingIds || []).has(MID);
+  if (!playing) { resetTimeline($('w-prog')); delayAnim = null; }
+  applyAppearance(); // 재생=녹색 / 정지 시 원래색
+}
 function connectWs() {
   const ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'progress') showProgress(msg.data);
     else if (msg.type === 'status') onStatus(msg.data);
-    else if (msg.type === 'macrosChanged') loadMacro(); // 이름/모양 갱신(삭제 시 창 닫힘)
+    else if (msg.type === 'macrosChanged') loadMacro(); // 이름/켜짐/모양 갱신(삭제 시 창 닫힘)
+    else if (msg.type === 'widgetConfig') { cfg = msg.data || cfg; applyAppearance(); } // 설정 패널에서 색/불투명도 변경
     else if (msg.type === 'shutdown') toNative('close');
   };
   ws.onclose = () => setTimeout(connectWs, 1200);
@@ -177,5 +201,6 @@ $('w-grip').addEventListener('pointerdown', (e) => {
   toNative('resize'); // 네이티브가 우하단 크기조절 시작(Min/Max 존중)
 });
 
+loadConfig();
 loadMacro();
 connectWs();

@@ -58,6 +58,9 @@ public sealed class MacroService
     /// <summary>현재 열린 위젯(핀) 창 목록을 웹 UI에 전달(목록의 핀 버튼 상태 동기화용).</summary>
     public void BroadcastWidgets(IReadOnlyList<string> ids) => _hub.Broadcast("widgets", new { ids });
 
+    /// <summary>위젯 모양(색/불투명도) 변경을 열린 위젯 창들에 전달(실시간 반영).</summary>
+    public void BroadcastWidgetConfig(object data) => _hub.Broadcast("widgetConfig", data);
+
     /// <summary>웹/스크립트에서 앱 종료를 요청한다(그레이스풀).</summary>
     public void RequestQuit()
     {

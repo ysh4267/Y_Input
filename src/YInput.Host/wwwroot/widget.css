@@ -1,21 +1,22 @@
-/* 보더리스 위젯 창 — 이름 + 인디케이터만. 인디케이터 스타일(.macro-prog/.tl-*)은 app.css 재사용. */
+/* 보더리스 위젯 창 — 이름 + 인디케이터만. 인디케이터 스타일(.macro-prog/.tl-*)은 app.css 재사용.
+   배경(반투명 블러 + 상태색)은 네이티브 아크릴이 담당 → body는 투명, 둥근 테두리 하이라이트만 표시. */
 html { height: 100%; }
 body.widget-body {
   margin: 0; height: 100%; box-sizing: border-box; position: relative;
-  background: var(--card); color: var(--text);
+  background: transparent; color: var(--text);
   overflow: hidden; user-select: none; cursor: default;
   display: flex; flex-direction: column; gap: 2px;
-  padding: 8px 11px 9px;
-  border: 1px solid var(--border2); /* 보더리스 창 가장자리 살짝 구분 */
+  padding: 8px 12px 9px;
+  border: 1.5px solid rgba(255,255,255,.16); border-radius: 10px; /* 색은 상태에 따라 JS가 지정 */
 }
 .w-head { display: flex; align-items: center; gap: 8px; cursor: move; flex: 0 0 auto; }
-.w-name { flex: 1; min-width: 0; font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.w-name { flex: 1; min-width: 0; font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px rgba(0,0,0,.55); }
 .w-close { flex: 0 0 auto; width: 20px; height: 20px; border: none; background: transparent; color: var(--muted); border-radius: 6px; cursor: pointer; font-size: 13px; line-height: 1; }
-.w-close:hover { background: rgba(255,255,255,.1); color: var(--text); }
-/* 인디케이터는 아래로 붙임(위쪽에 남는 여백) — 하단 여백 제거 */
+.w-close:hover { background: rgba(255,255,255,.14); color: var(--text); }
+/* 인디케이터는 아래로 붙임(위쪽에 남는 여백) */
 .widget-body > .macro-prog { flex: 0 0 auto; margin-top: auto; }
 .widget-body > .macro-prog-bar { flex: 0 0 auto; margin-top: 4px; }
-/* 우하단 크기조절 그립 */
-.w-grip { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; }
-.w-grip::after { content: ''; position: absolute; right: 3px; bottom: 3px; width: 6px; height: 6px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); opacity: .7; }
+/* 오른쪽 가장자리 = 폭 조절 그립(높이는 고정) */
+.w-grip { position: absolute; right: 0; top: 26px; bottom: 8px; width: 8px; cursor: ew-resize; }
+.w-grip::after { content: ''; position: absolute; right: 2px; top: 50%; transform: translateY(-50%); height: 16px; border-left: 2px dotted var(--muted); opacity: .55; }
 .w-grip:hover::after { opacity: 1; border-color: var(--accent); }

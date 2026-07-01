@@ -62,4 +62,6 @@ export const api = {
   widgetList: () => request('GET', '/api/widget/list'),
   widgetOpen: (id) => request('POST', '/api/widget/open', { id }),
   widgetClose: (id) => request('POST', '/api/widget/close', { id }),
+  widgetGetConfig: () => request('GET', '/api/widget/config'),
+  widgetSetConfig: (cfg) => request('POST', '/api/widget/config', cfg),
 };

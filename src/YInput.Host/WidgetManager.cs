@@ -21,13 +21,43 @@ public sealed class WidgetManager
     private readonly object _gate = new();
     private int _cascade;
 
+    // 위젯 모양(대기 상태 배경색 + 불투명도). 켜짐=파랑/재생=녹색은 위젯 페이지가 상태로 결정.
+    private readonly string _appearancePath;
+    private string _appColor = "#1b2230";
+    private int _appOpacity = 72;
+
     public WidgetManager(SynchronizationContext ui, string baseUrl, string dataRoot, MacroService service)
     {
         _ui = ui;
         _baseUrl = baseUrl.TrimEnd('/');
         _userDataFolder = Path.Combine(dataRoot, "webview2");
         _statePath = Path.Combine(dataRoot, "widgets.json");
+        _appearancePath = Path.Combine(dataRoot, "widget-config.json");
         _service = service;
+        LoadAppearance();
+    }
+
+    // ---- 모양 설정 ----
+    public object Appearance() => new { color = _appColor, opacity = _appOpacity };
+
+    public void SetAppearance(string? color, int? opacity)
+    {
+        if (!string.IsNullOrWhiteSpace(color)) _appColor = color!.Trim();
+        if (opacity is int o) _appOpacity = Math.Clamp(o, 0, 100);
+        try { File.WriteAllText(_appearancePath, JsonSerializer.Serialize(Appearance())); } catch { /* 무시 */ }
+        _service.BroadcastWidgetConfig(Appearance()); // 열린 위젯들 실시간 갱신
+    }
+
+    private void LoadAppearance()
+    {
+        try
+        {
+            if (!File.Exists(_appearancePath)) return;
+            using var doc = JsonDocument.Parse(File.ReadAllText(_appearancePath));
+            if (doc.RootElement.TryGetProperty("color", out var c) && c.GetString() is { Length: > 0 } cs) _appColor = cs;
+            if (doc.RootElement.TryGetProperty("opacity", out var o) && o.TryGetInt32(out var oi)) _appOpacity = Math.Clamp(oi, 0, 100);
+        }
+        catch { /* 기본값 유지 */ }
     }
 
     public IReadOnlyList<string> OpenIds() { lock (_gate) return _windows.Keys.ToArray(); }

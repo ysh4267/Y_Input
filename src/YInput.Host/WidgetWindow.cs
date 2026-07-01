@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
@@ -7,18 +8,35 @@ using Microsoft.Web.WebView2.WinForms;
 namespace YInput.Host;
 
 /// <summary>
-/// 보더리스·항상 위·작업표시줄 미표시 위젯 창. 안에 WebView2로 <c>/widget.html?id=…</c>를 띄운다.
-/// 드래그(이동)와 닫기는 위젯 페이지가 <c>window.chrome.webview.postMessage('drag'|'close')</c>로 요청한다.
+/// 보더리스·항상 위·작업표시줄 미표시 위젯 창(둥근 모서리 + 아크릴 반투명 블러). 안에 WebView2로
+/// <c>/widget.html?id=…</c>를 띄운다. 높이는 고정, 폭만 조절. 페이지가 상태(대기/켜짐/재생)에 맞는
+/// 배경 틴트를 <c>window.chrome.webview.postMessage('tint:AABBGGRR')</c>로 보내면 창의 아크릴 색이 바뀐다.
+/// 이동은 'drag', 크기조절(폭)은 'resize', 닫기는 'close' 메시지.
 /// </summary>
 internal sealed class WidgetWindow : Form
 {
     private const int WM_NCLBUTTONDOWN = 0xA1;
     private const int HTCAPTION = 0x2;
-    private const int HTBOTTOMRIGHT = 17;
+    private const int HTRIGHT = 11;
     [DllImport("user32.dll")] private static extern bool ReleaseCapture();
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
-    private static readonly Color Bg = Color.FromArgb(21, 25, 33); // --card, 로딩 중 깜빡임 방지
+    [DllImport("gdi32.dll")] private static extern IntPtr CreateRoundRectRgn(int l, int t, int r, int b, int we, int he);
+    [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr h);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct AccentPolicy { public int AccentState; public int AccentFlags; public uint GradientColor; public int AnimationId; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WinCompAttrData { public int Attribute; public IntPtr Data; public int SizeOfData; }
+    [DllImport("user32.dll")] private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WinCompAttrData data);
+    private const int WCA_ACCENT_POLICY = 19;
+    private const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
+
+    private const int FixedHeight = 82;
+    private const int CornerRadius = 9;
+    private static readonly Color Bg = Color.FromArgb(21, 25, 33);
+    private uint _tint = 0xB8211915; // 기본(대기): 어두운 반투명. 페이지가 상태 색으로 바꿈.
+
     private readonly WebView2 _web;
     private readonly string _url;
     private readonly string _userDataFolder;
@@ -27,25 +45,53 @@ internal sealed class WidgetWindow : Form
 
     public WidgetWindow(string macroId, string url, string userDataFolder, Point location, Action<string>? onError = null)
     {
-        MacroId = macroId;
-        _url = url;
-        _userDataFolder = userDataFolder;
-        _onError = onError;
+        MacroId = macroId; _url = url; _userDataFolder = userDataFolder; _onError = onError;
 
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
         Location = location;
-        ClientSize = new Size(340, 82);
-        MinimumSize = new Size(170, 54);
-        MaximumSize = new Size(1400, 320);
+        ClientSize = new Size(340, FixedHeight);
+        MinimumSize = new Size(180, Height);   // 높이 고정(최소=최대), 폭만 조절
+        MaximumSize = new Size(1400, Height);
         BackColor = Bg;
         Text = "Y Input Widget";
 
-        _web = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = Bg };
+        _web = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.Transparent };
         Controls.Add(_web);
         InitAsync();
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        try { ApplyAcrylic(); } catch { /* 아크릴 미지원 시 무시(단색 배경으로 동작) */ }
+        UpdateRegion();
+    }
+    protected override void OnSizeChanged(EventArgs e) { base.OnSizeChanged(e); UpdateRegion(); }
+
+    private void UpdateRegion()
+    {
+        if (Width <= 0 || Height <= 0) return;
+        var h = CreateRoundRectRgn(0, 0, Width + 1, Height + 1, CornerRadius * 2, CornerRadius * 2);
+        Region = System.Drawing.Region.FromHrgn(h);
+        DeleteObject(h);
+    }
+
+    private void ApplyAcrylic()
+    {
+        if (!IsHandleCreated) return;
+        var accent = new AccentPolicy { AccentState = ACCENT_ENABLE_ACRYLICBLURBEHIND, GradientColor = _tint };
+        int size = Marshal.SizeOf(accent);
+        IntPtr ptr = Marshal.AllocHGlobal(size);
+        try
+        {
+            Marshal.StructureToPtr(accent, ptr, false);
+            var data = new WinCompAttrData { Attribute = WCA_ACCENT_POLICY, Data = ptr, SizeOfData = size };
+            SetWindowCompositionAttribute(Handle, ref data);
+        }
+        finally { Marshal.FreeHGlobal(ptr); }
     }
 
     private async void InitAsync()
@@ -66,28 +112,19 @@ internal sealed class WidgetWindow : Form
         catch (Exception ex)
         {
             _onError?.Invoke("위젯 WebView2 초기화 실패(런타임 확인): " + ex.Message);
-            try { if (!IsDisposed) Close(); } catch { /* 무시 */ } // 빈 보더리스 창이 남지 않게
+            try { if (!IsDisposed) Close(); } catch { /* 무시 */ }
         }
     }
 
-    // 위젯 페이지 → 네이티브: 'drag'(창 이동 시작) / 'close'(창 닫기)
     private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
-        string msg;
-        try { msg = e.TryGetWebMessageAsString() ?? ""; } catch { return; }
+        string msg; try { msg = e.TryGetWebMessageAsString() ?? ""; } catch { return; }
         if (msg == "close") Close();
-        else if (msg == "drag" && !IsDisposed)
-        {
-            // 보더리스 창을 캡션처럼 잡아 OS 이동 루프 시작(부드럽고 안정적).
-            ReleaseCapture();
-            SendMessage(Handle, WM_NCLBUTTONDOWN, HTCAPTION, IntPtr.Zero);
-        }
-        else if (msg == "resize" && !IsDisposed)
-        {
-            // 우하단 그립 → OS 크기조절 루프 시작(Min/MaximumSize를 OS가 존중).
-            ReleaseCapture();
-            SendMessage(Handle, WM_NCLBUTTONDOWN, HTBOTTOMRIGHT, IntPtr.Zero);
-        }
+        else if (msg == "drag" && !IsDisposed) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, HTCAPTION, IntPtr.Zero); }
+        else if (msg == "resize" && !IsDisposed) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, HTRIGHT, IntPtr.Zero); } // 폭만
+        else if (msg.StartsWith("tint:", StringComparison.Ordinal)
+            && uint.TryParse(msg.AsSpan(5), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var abgr))
+        { _tint = abgr; try { ApplyAcrylic(); } catch { /* 무시 */ } }
     }
 
     protected override void Dispose(bool disposing)

@@ -249,6 +249,8 @@ public static class ApiEndpoints
         app.MapGet("/api/widget/list", () => Results.Json(new { ids = widgets.OpenIds() }));
         app.MapPost("/api/widget/open", (WidgetBody? b) => { if (!string.IsNullOrWhiteSpace(b?.Id)) widgets.Open(b!.Id); return Results.Ok(new { ok = true }); });
         app.MapPost("/api/widget/close", (WidgetBody? b) => { if (!string.IsNullOrWhiteSpace(b?.Id)) widgets.Close(b!.Id); return Results.Ok(new { ok = true }); });
+        app.MapGet("/api/widget/config", () => Results.Json(widgets.Appearance())); // 위젯 모양(색/불투명도)
+        app.MapPost("/api/widget/config", (WidgetConfigBody? b) => { widgets.SetAppearance(b?.Color, b?.Opacity); return Results.Json(widgets.Appearance()); });
 
         // ---- WebSocket ----
         app.Map("/ws", async (HttpContext ctx) =>
@@ -390,6 +392,7 @@ public static class ApiEndpoints
     // 동기화 설정(gist). Token=null이면 기존 토큰 유지(빈 문자열이면 지움).
     private sealed record SyncConfigBody(bool Enabled = false, string? Token = null);
     private sealed record WidgetBody(string? Id = null);
+    private sealed record WidgetConfigBody(string? Color = null, int? Opacity = null);
     private sealed record RecordStartBody(
         bool Keyboard = true,
         bool MouseButtons = true,

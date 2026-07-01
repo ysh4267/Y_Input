@@ -43,6 +43,23 @@ function openSettings() {
   requestAnimationFrame(() => ov.classList.add('open'));
   loadVersion();
   loadSyncConfig();
+  loadWidgetConfig();
+}
+
+// ---------- 위젯 모양(색/불투명도) ----------
+async function loadWidgetConfig() {
+  try {
+    const c = await api.widgetGetConfig();
+    if ($('widget-color')) $('widget-color').value = c.color || '#1b2230';
+    if ($('widget-opacity')) { $('widget-opacity').value = c.opacity ?? 72; $('widget-opacity-val').textContent = $('widget-opacity').value + '%'; }
+  } catch { /* 무시 */ }
+}
+let widgetCfgTimer = null;
+function saveWidgetConfig() {
+  const color = $('widget-color').value;
+  const opacity = parseInt($('widget-opacity').value, 10) || 72;
+  clearTimeout(widgetCfgTimer);
+  widgetCfgTimer = setTimeout(() => api.widgetSetConfig({ color, opacity }).catch((e) => log('error', e.message)), 140);
 }
 
 // ---------- 동기화(GitHub 비공개 저장소) ----------
@@ -1020,6 +1037,8 @@ function wire() {
   $('btn-reload').onclick = () => location.reload(); // 화면 새로고침(잠금으로 키보드 단축키가 막혀 있어 버튼 제공)
   $('btn-sync-save').onclick = onSyncSave;
   $('btn-sync-now').onclick = onSyncNow;
+  $('widget-color').oninput = saveWidgetConfig;
+  $('widget-opacity').oninput = () => { $('widget-opacity-val').textContent = $('widget-opacity').value + '%'; saveWidgetConfig(); };
   $('btn-new').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-new-run').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-import').onclick = () => $('file-import').click();

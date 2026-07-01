@@ -92,6 +92,9 @@ input, textarea, .log, code, .modal-msg, .modal-input { -webkit-user-select: tex
 .sync-status.err { color: var(--danger, #f87171); }
 .sync-link { color: var(--accent); text-decoration: underline; cursor: pointer; font-weight: 600; }
 .sync-link:hover { color: #7aa8ff; }
+.sync-row > input[type="color"] { flex: 0 0 46px; height: 28px; padding: 2px; cursor: pointer; }
+.sync-row > input[type="range"] { flex: 1; padding: 0; border: none; background: transparent; accent-color: var(--accent); cursor: pointer; }
+.wo-val { flex: 0 0 auto; font-size: 12px; color: var(--muted); min-width: 36px; text-align: right; }
 
 /* 레이아웃 / 탭 페이지 */
 .main { flex: 1; display: flex; min-height: 0; }
