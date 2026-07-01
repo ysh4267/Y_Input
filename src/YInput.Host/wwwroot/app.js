@@ -16,8 +16,9 @@ let lastLoops = [];       // 표시 중 매크로의 최근 반복 프레임 [{s
 let capTrigId = null;     // 실행 목록에서 트리거 캡처 중인 매크로 id
 let capCleanup = null;    // 트리거 캡처 정리 콜백
 
-// 매크로 목록 아이콘(라인 SVG): 복제·삭제·편집·트리거
+// 매크로 목록 아이콘(라인 SVG): 복제·삭제·편집·트리거·핀
 const ICON = {
+  pin: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h10M9 3v6l-2.2 3.2V13h10.4v-.8L15 9V3M12 13v8"/></svg>',
   dup: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="5.6" y="5.6" width="8.1" height="8.1" rx="1.6"/><path d="M10.4 5.4V3.1A1.6 1.6 0 0 0 8.8 1.5H3.1A1.6 1.6 0 0 0 1.5 3.1V8.8A1.6 1.6 0 0 0 3.1 10.4H5.4"/></svg>',
   del: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.3H13.4"/><path d="M6.4 4.3V3.2A1.1 1.1 0 0 1 7.5 2.1H8.5A1.1 1.1 0 0 1 9.6 3.2V4.3"/><path d="M3.9 4.3 4.6 13A1.3 1.3 0 0 0 5.9 14.2H10.1A1.3 1.3 0 0 0 11.4 13L12.1 4.3"/><path d="M6.6 6.9V11.3M9.4 6.9V11.3"/></svg>',
   edit: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M11.4 2.3 13.7 4.6"/><path d="M10.6 3.1 3.4 10.3 2.4 13.6 5.7 12.6 12.9 5.4Z"/></svg>',
@@ -167,6 +168,43 @@ async function loadMacros() {
   renderMacroList($('macro-list-edit'), $('macro-empty-edit'), 'edit');
   if (runShownId && !state.macros.some((m) => m.id === runShownId)) clearRunSteps();
   renderMacroActive();
+  renderPins();
+}
+
+// ---------- 고정(핀) 위젯 — 클릭하면 상단에 이름+인디케이터만 있는 약식 위젯으로 띄움 ----------
+let pinnedIds = [];
+try { pinnedIds = JSON.parse(localStorage.getItem('yinput.pins') || '[]'); } catch { pinnedIds = []; }
+function savePins() { try { localStorage.setItem('yinput.pins', JSON.stringify(pinnedIds)); } catch { /* 무시 */ } }
+const isPinned = (id) => pinnedIds.includes(id);
+function togglePin(id) {
+  const i = pinnedIds.indexOf(id);
+  if (i >= 0) pinnedIds.splice(i, 1); else pinnedIds.push(id);
+  savePins();
+  document.querySelectorAll(`.macro-item.run[data-id="${id}"] .act-pin`).forEach((b) => b.classList.toggle('on', isPinned(id)));
+  renderPins();
+}
+function renderPins() {
+  const dock = $('pin-dock'); if (!dock) return;
+  const exist = new Set(state.macros.map((m) => m.id));
+  const kept = pinnedIds.filter((id) => exist.has(id)); // 사라진 매크로의 핀은 정리
+  if (kept.length !== pinnedIds.length) { pinnedIds = kept; savePins(); }
+  dock.innerHTML = '';
+  dock.classList.toggle('has', kept.length > 0);
+  for (const id of kept) {
+    const m = state.macros.find((x) => x.id === id); if (!m) continue;
+    const w = document.createElement('div'); w.className = 'pin-widget'; w.dataset.id = id;
+    w.innerHTML = `
+      <div class="pin-head">
+        <span class="pin-name" title="실행 탭에서 보기">${esc(m.name)}</span>
+        <button class="pin-close" title="고정 해제" aria-label="고정 해제">✕</button>
+      </div>
+      <div class="macro-prog" data-id="${id}" title="재생 진행(● 행위 · ━ 지연 · ⟲ 반복)"></div>
+      <div class="macro-prog-bar" data-id="${id}" title="전체 진행도"><i class="macro-prog-bar-fill"></i></div>`;
+    dock.appendChild(w);
+    try { buildTimeline(w.querySelector('.macro-prog'), m.shape); } catch { /* 인디케이터 실패 무시 */ }
+    w.querySelector('.pin-close').onclick = () => togglePin(id);
+    w.querySelector('.pin-name').onclick = () => { switchTab('run'); selectRunMacro(id); };
+  }
 }
 
 function renderMacroList(listEl, emptyEl, mode) {
@@ -190,6 +228,7 @@ function renderMacroList(listEl, emptyEl, mode) {
           <label class="toggle" title="적용(트리거 활성)"><input type="checkbox" class="act-toggle" ${m.enabled ? 'checked' : ''}><span class="track"></span><span class="knob"></span></label>
           <div class="macro-meta"><span class="name">${esc(m.name)}</span><span class="macro-sub">${m.stepCount}스텝 · 총 ${fmtMs(m.durationMs || 0)}</span></div>
           <div class="macro-actions">
+            <button class="mbtn act-pin${isPinned(m.id) ? ' on' : ''}" title="상단에 고정(위젯으로 띄우기)">${ICON.pin}</button>
             <button class="mbtn act-edit" title="편집">${ICON.edit}</button>
             <button class="mbtn act-del" title="삭제">${ICON.del}</button>
           </div>
@@ -227,6 +266,7 @@ function renderMacroList(listEl, emptyEl, mode) {
         catch (e) { log('error', e.message); tg.checked = !tg.checked; }
       };
       li.querySelector('.act-edit').onclick = () => { openMacro(m.id); switchTab('edit'); };
+      li.querySelector('.act-pin').onclick = (e) => { e.stopPropagation(); togglePin(m.id); };
       li.querySelector('.act-trigger').onclick = (e) => beginTriggerCapture(m.id, m.name, e.currentTarget);
       // 반복(속도 기능 제거)
       const seg = li.querySelector('.pl-rep');
@@ -658,8 +698,10 @@ function loopAwareFraction(shape, idx, loops) {
   return W > 0 ? Math.max(0, Math.min(1, done(0, n) / W)) : 0;
 }
 function updateMacroTimeline(macroId, p) {
-  const el = document.querySelector(`.macro-prog[data-id="${macroId}"]`);
-  if (!el) return;
+  // 목록 항목 + 고정(핀) 위젯 등 같은 macroId의 모든 인디케이터를 갱신(각자 _pi로 증분 추적).
+  document.querySelectorAll(`.macro-prog[data-id="${macroId}"]`).forEach((el) => updateOneTimeline(el, p));
+}
+function updateOneTimeline(el, p) {
   const idx = p.stepIndex;
   // 점·선(스텝)은 바뀐 노드만 갱신(전체 순회 제거). 채움: done=100% / undo=0% / active(지연)는 delayAnims가 담당.
   applyIndexDelta(el._pi ?? -1, idx,
@@ -708,8 +750,8 @@ function tickDelays() {
   delayAnims.forEach((a, macroId) => {
     const frac = a.dur > 0 ? Math.min(1, (now - a.start) / a.dur) : 1;
     const w = (frac * 100).toFixed(1) + '%';
-    const lf = document.querySelector(`.macro-prog[data-id="${macroId}"] .tl-line[data-i="${a.i}"] .tl-fill`);
-    if (lf) { lf.style.transition = 'none'; lf.style.width = w; }
+    document.querySelectorAll(`.macro-prog[data-id="${macroId}"] .tl-line[data-i="${a.i}"] .tl-fill`)
+      .forEach((lf) => { lf.style.transition = 'none'; lf.style.width = w; });
     if (runShownId === macroId) {
       const row = document.querySelector(`#run-steps .run-steps-row[data-i="${a.i}"]`);
       if (row) {
