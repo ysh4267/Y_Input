@@ -6,8 +6,9 @@ const MID = new URLSearchParams(location.search).get('id') || '';
 const toNative = (m) => { try { window.chrome.webview.postMessage(m); } catch { /* WebView2 밖에서 열림 */ } };
 
 // ---------- 모양: 상태별(대기/켜짐/재생) 배경색 + 알파(각각 지정). 상태 테두리색은 고정(회색/파랑/녹색). ----------
-let cfg = { idleColor: '#1f232c', idleAlpha: 72, onColor: '#243650', onAlpha: 72, playColor: '#1f3d34', playAlpha: 72 };
+let cfg = { idleColor: '#1f232c', idleAlpha: 72, onColor: '#243650', onAlpha: 72, playColor: '#1f3d34', playAlpha: 72, blur: 1 };
 let enabled = false, playing = false;
+function applyBlur() { toNative('blur:' + (cfg.blur === 2 ? 2 : 1)); } // 1=약함 / 2=강함(아크릴) — 네이티브가 적용
 function hex2rgb(h) {
   const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); if (!m) return [31, 35, 44];
   const n = parseInt(m[1], 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
@@ -24,7 +25,7 @@ function applyAppearance() {
 }
 // WebView2가 폭을 늘렸을 때 새 영역을 다시 안 그리는 문제 → 배경 레이어를 잠깐 껐다 켜 강제 리페인트.
 function repaintBg() { const bg = $('w-bg'); bg.style.display = 'none'; void bg.offsetHeight; bg.style.display = ''; }
-async function loadConfig() { try { cfg = Object.assign(cfg, (await fetch('/api/widget/config').then((r) => r.json())) || {}); } catch { /* 기본값 */ } applyAppearance(); }
+async function loadConfig() { try { cfg = Object.assign(cfg, (await fetch('/api/widget/config').then((r) => r.json())) || {}); } catch { /* 기본값 */ } applyAppearance(); applyBlur(); }
 
 // ---------- 인디케이터 (app.js buildTimeline/updateOneTimeline 등과 동일) ----------
 function buildTimeline(container, shape) {
@@ -186,7 +187,7 @@ function connectWs() {
     if (msg.type === 'progress') showProgress(msg.data);
     else if (msg.type === 'status') onStatus(msg.data);
     else if (msg.type === 'macrosChanged') loadMacro(); // 이름/켜짐/모양 갱신(삭제 시 창 닫힘)
-    else if (msg.type === 'widgetConfig') { cfg = msg.data || cfg; applyAppearance(); } // 설정 패널에서 색/불투명도 변경
+    else if (msg.type === 'widgetConfig') { cfg = Object.assign(cfg, msg.data || {}); applyAppearance(); applyBlur(); } // 설정 패널에서 색/불투명도/블러 변경
     else if (msg.type === 'shutdown') toNative('close');
   };
   ws.onclose = () => setTimeout(connectWs, 1200);

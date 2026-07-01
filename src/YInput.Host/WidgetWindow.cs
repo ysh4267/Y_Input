@@ -30,8 +30,11 @@ internal sealed class WidgetWindow : Form
     [DllImport("user32.dll")] private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WinCompAttrData data);
     private const int WCA_ACCENT_POLICY = 19;
     private const int ACCENT_DISABLED = 0;
-    private const int ACCENT_ENABLE_BLURBEHIND = 3; // 아크릴(4)은 이동/크기조절 시 심한 지연 → 가벼운 블러(3, 상시)
+    private const int ACCENT_ENABLE_BLURBEHIND = 3;         // 약함(가벼운 블러)
+    private const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;  // 강함(프로스티드, 더 진함)
+    private const int WM_ENTERSIZEMOVE = 0x0231;
     private const int WM_EXITSIZEMOVE = 0x0232;
+    private int _blurState = ACCENT_ENABLE_BLURBEHIND;       // 페이지가 'blur:1|2'로 지정
 
     private const int FixedHeight = 104;
     private const int CornerRadius = 9;
@@ -70,19 +73,13 @@ internal sealed class WidgetWindow : Form
         UpdateRegion();
     }
 
-    // 크기가 바뀔 때마다 둥근 영역 갱신 + 블러 재적용.
-    protected override void OnSizeChanged(EventArgs e)
-    {
-        base.OnSizeChanged(e);
-        UpdateRegion();
-        try { SetBlur(true); } catch { /* 무시 */ }
-    }
+    protected override void OnSizeChanged(EventArgs e) { base.OnSizeChanged(e); UpdateRegion(); }
 
-    // 크기조절이 끝나면 블러를 껐다 켜서 DWM이 새(넓어진) 영역까지 다시 계산하게 한다
-    // (재적용만으론 늘어난 부분에 블러가 안 입혀져 좌/우 배경이 달라 보이던 문제 해결).
+    // 이동/크기조절 중에는 블러를 꺼서 부드럽게(특히 강한 아크릴), 끝나면 다시 켜 전체를 재계산(새 영역 균일).
     protected override void WndProc(ref Message m)
     {
-        if (m.Msg == WM_EXITSIZEMOVE) { try { SetBlur(false); SetBlur(true); } catch { /* 무시 */ } }
+        if (m.Msg == WM_ENTERSIZEMOVE) { try { SetBlur(false); } catch { /* 무시 */ } }
+        else if (m.Msg == WM_EXITSIZEMOVE) { try { SetBlur(true); } catch { /* 무시 */ } }
         base.WndProc(ref m);
     }
 
@@ -97,7 +94,7 @@ internal sealed class WidgetWindow : Form
     private void SetBlur(bool on)
     {
         if (!IsHandleCreated) return;
-        var accent = new AccentPolicy { AccentState = on ? ACCENT_ENABLE_BLURBEHIND : ACCENT_DISABLED, GradientColor = 0 };
+        var accent = new AccentPolicy { AccentState = on ? _blurState : ACCENT_DISABLED, GradientColor = 0 };
         int size = Marshal.SizeOf(accent);
         IntPtr ptr = Marshal.AllocHGlobal(size);
         try
@@ -137,6 +134,11 @@ internal sealed class WidgetWindow : Form
         if (msg == "close") Close();
         else if (msg == "drag" && !IsDisposed) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, HTCAPTION, IntPtr.Zero); }
         else if (msg == "resize" && !IsDisposed) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, HTRIGHT, IntPtr.Zero); } // 폭만(색/불투명도는 페이지 CSS가 담당)
+        else if (msg.StartsWith("blur:", StringComparison.Ordinal)) // 블러 강도: 1=약함(블러) / 2=강함(아크릴)
+        {
+            _blurState = msg.EndsWith("2", StringComparison.Ordinal) ? ACCENT_ENABLE_ACRYLICBLURBEHIND : ACCENT_ENABLE_BLURBEHIND;
+            try { SetBlur(true); } catch { /* 무시 */ }
+        }
     }
 
     protected override void Dispose(bool disposing)

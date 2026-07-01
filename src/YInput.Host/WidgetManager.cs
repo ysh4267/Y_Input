@@ -26,6 +26,7 @@ public sealed class WidgetManager
     private string _idleColor = "#1f232c"; private int _idleAlpha = 72; // 대기: 회색(card2)
     private string _onColor = "#243650"; private int _onAlpha = 72;     // 켜짐: 어두운 파랑
     private string _playColor = "#1f3d34"; private int _playAlpha = 72; // 재생: 어두운 녹색
+    private int _blur = 1; // 블러 강도: 1=약함(BlurBehind) / 2=강함(Acrylic)
 
     public WidgetManager(SynchronizationContext ui, string baseUrl, string dataRoot, MacroService service)
     {
@@ -44,9 +45,10 @@ public sealed class WidgetManager
         idleColor = _idleColor, idleAlpha = _idleAlpha,
         onColor = _onColor, onAlpha = _onAlpha,
         playColor = _playColor, playAlpha = _playAlpha,
+        blur = _blur,
     };
 
-    public void SetAppearance(string? idleColor, int? idleAlpha, string? onColor, int? onAlpha, string? playColor, int? playAlpha)
+    public void SetAppearance(string? idleColor, int? idleAlpha, string? onColor, int? onAlpha, string? playColor, int? playAlpha, int? blur)
     {
         if (!string.IsNullOrWhiteSpace(idleColor)) _idleColor = idleColor!.Trim();
         if (idleAlpha is int ia) _idleAlpha = Math.Clamp(ia, 0, 100);
@@ -54,6 +56,7 @@ public sealed class WidgetManager
         if (onAlpha is int oa) _onAlpha = Math.Clamp(oa, 0, 100);
         if (!string.IsNullOrWhiteSpace(playColor)) _playColor = playColor!.Trim();
         if (playAlpha is int pa) _playAlpha = Math.Clamp(pa, 0, 100);
+        if (blur is int bl) _blur = bl == 2 ? 2 : 1;
         try { File.WriteAllText(_appearancePath, JsonSerializer.Serialize(Appearance())); } catch { /* 무시 */ }
         _service.BroadcastWidgetConfig(Appearance()); // 열린 위젯들 실시간 갱신
     }
@@ -70,6 +73,7 @@ public sealed class WidgetManager
             _idleColor = Str("idleColor", _idleColor); _idleAlpha = Int("idleAlpha", _idleAlpha);
             _onColor = Str("onColor", _onColor); _onAlpha = Int("onAlpha", _onAlpha);
             _playColor = Str("playColor", _playColor); _playAlpha = Int("playAlpha", _playAlpha);
+            if (r.TryGetProperty("blur", out var bv) && bv.TryGetInt32(out var bn)) _blur = bn == 2 ? 2 : 1;
         }
         catch { /* 기본값 유지 */ }
     }
