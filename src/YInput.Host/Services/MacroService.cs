@@ -39,6 +39,22 @@ public sealed class MacroService
     /// <summary>앱 종료 요청 콜백(트레이가 설정). /api/app/quit에서 호출.</summary>
     public Action? QuitRequested { get; set; }
 
+    /// <summary>로컬 매크로 변경 후 호출(Program이 GitHubSync.SchedulePush로 연결) — 동기화 푸시 예약.</summary>
+    public Action? MacrosChanged { get; set; }
+
+    private void NotifyChanged() => MacrosChanged?.Invoke();
+
+    /// <summary>동기화가 원격 변경을 로컬에 반영한 뒤 호출 — 핫키 재등록 + 상태/목록 새로고침 방송(푸시는 다시 트리거하지 않음).</summary>
+    public void OnExternalMacrosChanged()
+    {
+        ReloadHotkeys();
+        _hub.Broadcast("macrosChanged", new { });
+        BroadcastStatus();
+    }
+
+    /// <summary>동기화 진행/결과를 웹 UI에 실시간 전달(설정 패널의 상태 줄 갱신용).</summary>
+    public void BroadcastSyncStatus(object data) => _hub.Broadcast("syncStatus", data);
+
     /// <summary>웹/스크립트에서 앱 종료를 요청한다(그레이스풀).</summary>
     public void RequestQuit()
     {
@@ -146,6 +162,7 @@ public sealed class MacroService
         ReloadHotkeys();
         Log("info", persist ? $"녹화 저장: {macro.Name} ({macro.Steps.Count} 스텝)" : $"녹화 종료 ({macro.Steps.Count} 스텝)");
         BroadcastStatus();
+        if (persist) NotifyChanged();
         return macro;
     }
 
@@ -297,6 +314,7 @@ public sealed class MacroService
         ReloadHotkeys();
         Log("info", $"매크로 저장: {macro.Name}");
         BroadcastStatus();
+        NotifyChanged();
     }
 
     public void DeleteMacro(string id)
@@ -305,6 +323,7 @@ public sealed class MacroService
         ReloadHotkeys();
         Log("info", "매크로를 휴지통으로 보냈습니다.");
         BroadcastStatus();
+        NotifyChanged();
     }
 
     /// <summary>모든 매크로를 휴지통으로 보낸다(전체 초기화). 재생 중이면 먼저 정지한다.</summary>
@@ -317,6 +336,7 @@ public sealed class MacroService
         ReloadHotkeys();
         Log("warn", $"매크로 전체 초기화: {all.Count}개를 휴지통으로 보냈습니다.");
         BroadcastStatus();
+        NotifyChanged();
         return all.Count;
     }
 
@@ -416,6 +436,7 @@ public sealed class MacroService
             + (renamed > 0 ? $", 이름변경 {renamed}개" : "")
             + (relinked > 0 ? $", 참조 {relinked}건 재연결" : "") + ".");
         BroadcastStatus();
+        NotifyChanged();
         return toSave.Count;
     }
 
@@ -442,6 +463,7 @@ public sealed class MacroService
         ReloadHotkeys();
         Log("info", $"매크로 '{macro.Name}' 적용 {(enabled ? "켬" : "끔")}.");
         BroadcastStatus();
+        NotifyChanged();
     }
 
     /// <summary>매크로의 반복 횟수를 설정한다(실행 페이지 목록에서 직접). 트리거에 영향 없음.</summary>
@@ -450,6 +472,7 @@ public sealed class MacroService
         var macro = _library.Load(id) ?? throw new FileNotFoundException("매크로를 찾을 수 없습니다: " + id);
         macro.LoopCount = loopCount;
         _library.Save(macro);
+        NotifyChanged();
     }
 
     /// <summary>새 매크로에 부여할 순서값(현재 최댓값+1 → 목록 맨 아래).</summary>
@@ -464,6 +487,7 @@ public sealed class MacroService
             if (m is not null && m.Order != i) { m.Order = i; _library.Save(m); }
         }
         BroadcastStatus();
+        NotifyChanged();
     }
 
     /// <summary>매크로의 트리거 핫키를 설정/해제한다(실행 페이지 목록에서 직접 지정).</summary>
@@ -475,6 +499,7 @@ public sealed class MacroService
         ReloadHotkeys();
         Log("info", $"매크로 '{macro.Name}' 트리거: {trigger?.ToString() ?? "없음"}");
         BroadcastStatus();
+        NotifyChanged();
     }
 
     // ---------- 핫키 ----------

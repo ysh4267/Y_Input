@@ -54,4 +54,8 @@ export const api = {
 
   appVersion: () => request('GET', '/api/app/version'),
   updateCheck: () => request('GET', '/api/app/update/check'),
+
+  syncConfig: () => request('GET', '/api/sync/config'),
+  syncSave: (cfg) => request('POST', '/api/sync/config', cfg),
+  syncNow: () => request('POST', '/api/sync/now'),
 };

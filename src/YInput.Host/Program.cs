@@ -44,14 +44,18 @@ internal static class Program
         var hub = new SocketHub();
         using var progress = new ProgressBroadcaster(hub); // 진행 보고 ~60Hz 코얼레싱(종료 시 타이머 정리)
         var service = new MacroService(backend, library, player, recorder, hotkeys, rawInput, hub, progress);
+        using var sync = new GitHubSync(library, service, dataRoot); // GitHub 비공개 저장소 동기화
+        service.MacrosChanged = sync.SchedulePush; // 로컬 매크로 변경 → 동기화 푸시 예약(디바운스)
 
         // 로컬 웹서버 (127.0.0.1 전용)
         int port = FindFreePort(PreferredPort);
         string url = $"http://127.0.0.1:{port}";
         service.Url = url;
 
-        var app = BuildWebApp(service, hub, url);
+        var app = BuildWebApp(service, hub, sync, url);
         app.StartAsync().GetAwaiter().GetResult();
+
+        sync.Start(); // 시작 시 원격에서 내려받기(설정돼 있으면) + 주기 동기화 타이머
 
         // 트레이 + 드라이버 부트스트랩(백그라운드)
         var tray = new TrayAppContext(service);
@@ -70,7 +74,7 @@ internal static class Program
         try { (app as IDisposable)?.Dispose(); } catch { /* ignore */ }
     }
 
-    private static WebApplication BuildWebApp(MacroService service, SocketHub hub, string url)
+    private static WebApplication BuildWebApp(MacroService service, SocketHub hub, GitHubSync sync, string url)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
@@ -95,7 +99,7 @@ internal static class Program
             OnPrepareResponse = ctx => ctx.Context.Response.Headers["Cache-Control"] = "no-cache, must-revalidate",
         });
 
-        app.MapApi(service, hub);
+        app.MapApi(service, hub, sync);
         return app;
     }
 

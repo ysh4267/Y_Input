@@ -11,7 +11,7 @@ namespace YInput.Host.Web;
 /// <summary>REST API + WebSocket 엔드포인트 매핑.</summary>
 public static class ApiEndpoints
 {
-    public static void MapApi(this WebApplication app, MacroService service, SocketHub hub)
+    public static void MapApi(this WebApplication app, MacroService service, SocketHub hub, GitHubSync sync)
     {
         // ---- 상태 ----
         app.MapGet("/api/status", () => Results.Json(service.GetStatusData()));
@@ -230,6 +230,21 @@ public static class ApiEndpoints
             var r = await Task.Run(AppUpdater.Check);
             return Results.Json(new { ok = r.Ok, updateAvailable = r.UpdateAvailable, current = r.Current, latest = r.Latest, message = r.Message, downloadUrl = r.DownloadUrl, pageUrl = r.PageUrl });
         }));
+
+        // ---- GitHub 비공개 저장소 동기화 ----
+        app.MapGet("/api/sync/config", () => Results.Json(sync.StatusData())); // 토큰은 존재 여부만 반환
+        app.MapPost("/api/sync/config", (SyncConfigBody? body) => Guard(() =>
+        {
+            var b = body ?? new SyncConfigBody();
+            sync.UpdateConfig(b.Enabled, b.Owner, b.Repo, b.Branch, b.Path, b.Token); // token=null이면 기존 유지
+            return Task.FromResult(Results.Json(sync.StatusData()));
+        }));
+        app.MapPost("/api/sync/now", () => Guard(async () =>
+        {
+            var msg = await sync.SyncAsync("수동");
+            return Results.Json(new { ok = true, message = msg, status = sync.StatusData() });
+        }));
+
         // ---- WebSocket ----
         app.Map("/ws", async (HttpContext ctx) =>
         {
@@ -367,6 +382,9 @@ public static class ApiEndpoints
     private sealed record EnabledBody(bool Enabled = true);
     private sealed record PlaybackBody(int LoopCount = 1);
     private sealed record StopRecordingBody(string? Name, bool Persist = true);
+    // 동기화 설정. Token=null이면 기존 토큰 유지(빈 문자열이면 지움).
+    private sealed record SyncConfigBody(bool Enabled = false, string? Owner = null, string? Repo = null,
+        string? Branch = null, string? Path = null, string? Token = null);
     private sealed record RecordStartBody(
         bool Keyboard = true,
         bool MouseButtons = true,

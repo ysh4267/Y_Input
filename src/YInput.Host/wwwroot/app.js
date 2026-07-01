@@ -41,6 +41,58 @@ function openSettings() {
   ov.hidden = false;
   requestAnimationFrame(() => ov.classList.add('open'));
   loadVersion();
+  loadSyncConfig();
+}
+
+// ---------- 동기화(GitHub 비공개 저장소) ----------
+let syncTokenSet = false; // 서버에 토큰이 이미 있으면 빈 입력=유지
+function fmtSyncTime(iso) {
+  if (!iso) return '';
+  try { return new Date(iso).toLocaleString(); } catch { return ''; }
+}
+function renderSyncStatus(s) {
+  const el = $('sync-status'); if (!el || !s) return;
+  syncTokenSet = !!s.hasToken;
+  const tok = $('sync-token'); if (tok) tok.placeholder = s.hasToken ? '설정됨 — 바꾸려면 새로 입력' : 'ghp_… (repo 권한)';
+  const parts = [];
+  parts.push(s.enabled ? '켜짐' : '꺼짐');
+  if (s.syncing) parts.push('동기화 중…');
+  if (s.lastResult) parts.push(s.lastResult);
+  if (s.lastSync) parts.push('마지막: ' + fmtSyncTime(s.lastSync));
+  el.textContent = parts.join(' · ');
+  el.classList.toggle('err', !!(s.lastResult && s.lastResult.startsWith('실패')));
+}
+async function loadSyncConfig() {
+  try {
+    const s = await api.syncConfig();
+    $('sync-owner').value = s.owner || '';
+    $('sync-repo').value = s.repo || '';
+    $('sync-branch').value = s.branch || 'main';
+    $('sync-enabled').checked = !!s.enabled;
+    renderSyncStatus(s);
+  } catch (e) { const el = $('sync-status'); if (el) el.textContent = '설정을 불러오지 못했습니다: ' + e.message; }
+}
+async function onSyncSave() {
+  const token = $('sync-token').value;
+  const cfg = {
+    enabled: $('sync-enabled').checked,
+    owner: $('sync-owner').value.trim(),
+    repo: $('sync-repo').value.trim(),
+    branch: $('sync-branch').value.trim() || 'main',
+    token: token ? token : null, // 빈칸이면 기존 토큰 유지
+  };
+  try {
+    const s = await api.syncSave(cfg);
+    $('sync-token').value = ''; // 저장 후 입력칸 비움(플레이스홀더가 '설정됨' 표시)
+    renderSyncStatus(s);
+    log('info', '동기화 설정을 저장했습니다.');
+  } catch (e) { log('error', e.message); }
+}
+async function onSyncNow() {
+  const btn = $('btn-sync-now'); if (btn) btn.disabled = true;
+  try { const r = await api.syncNow(); renderSyncStatus(r.status); log('info', '동기화: ' + r.message); }
+  catch (e) { log('error', e.message); }
+  finally { if (btn) btn.disabled = false; }
 }
 
 // 설정 패널 하단 버전 표시: 현재 빌드·GitHub 최신 릴리즈 태그·릴리즈 날짜
@@ -857,6 +909,8 @@ function connectWs() {
       case 'progress': queueProgress(msg.data); break;
       case 'inputDetected': if (capTrigId) onTriggerGamepad(msg.data); else editor.onInputDetected(msg.data); break;
       case 'inputMonitor': log('monitor', `[${msg.data.source}] ${msg.data.label}`, msg.data.time); break;
+      case 'macrosChanged': loadMacros(); break; // 동기화로 원격 변경 반영(목록 새로고침)
+      case 'syncStatus': if (!$('settings-overlay').hidden) renderSyncStatus(msg.data); break; // 동기화 진행/결과 실시간
       case 'shutdown': handleShutdown(); break;
     }
   };
@@ -943,6 +997,8 @@ function wire() {
   $('btn-update-check').onclick = onUpdateCheck;
   $('btn-update-apply').onclick = onUpdateDownload;
   $('btn-reload').onclick = () => location.reload(); // 화면 새로고침(잠금으로 키보드 단축키가 막혀 있어 버튼 제공)
+  $('btn-sync-save').onclick = onSyncSave;
+  $('btn-sync-now').onclick = onSyncNow;
   $('btn-new').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-new-run').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-import').onclick = () => $('file-import').click();
