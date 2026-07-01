@@ -236,7 +236,7 @@ public static class ApiEndpoints
         app.MapPost("/api/sync/config", (SyncConfigBody? body) => Guard(() =>
         {
             var b = body ?? new SyncConfigBody();
-            sync.UpdateConfig(b.Enabled, b.Owner, b.Repo, b.Branch, b.Path, b.Token); // token=null이면 기존 유지
+            sync.UpdateConfig(b.Enabled, b.Token); // token=null이면 기존 유지
             return Task.FromResult(Results.Json(sync.StatusData()));
         }));
         app.MapPost("/api/sync/now", () => Guard(async () =>
@@ -382,9 +382,8 @@ public static class ApiEndpoints
     private sealed record EnabledBody(bool Enabled = true);
     private sealed record PlaybackBody(int LoopCount = 1);
     private sealed record StopRecordingBody(string? Name, bool Persist = true);
-    // 동기화 설정. Token=null이면 기존 토큰 유지(빈 문자열이면 지움).
-    private sealed record SyncConfigBody(bool Enabled = false, string? Owner = null, string? Repo = null,
-        string? Branch = null, string? Path = null, string? Token = null);
+    // 동기화 설정(gist). Token=null이면 기존 토큰 유지(빈 문자열이면 지움).
+    private sealed record SyncConfigBody(bool Enabled = false, string? Token = null);
     private sealed record RecordStartBody(
         bool Keyboard = true,
         bool MouseButtons = true,

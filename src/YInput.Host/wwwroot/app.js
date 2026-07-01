@@ -53,9 +53,10 @@ function fmtSyncTime(iso) {
 function renderSyncStatus(s) {
   const el = $('sync-status'); if (!el || !s) return;
   syncTokenSet = !!s.hasToken;
-  const tok = $('sync-token'); if (tok) tok.placeholder = s.hasToken ? '설정됨 — 바꾸려면 새로 입력' : 'ghp_… (repo 권한)';
+  const tok = $('sync-token'); if (tok) tok.placeholder = s.hasToken ? '설정됨 — 바꾸려면 새로 입력' : 'ghp_… (gist 권한)';
   const parts = [];
   parts.push(s.enabled ? '켜짐' : '꺼짐');
+  if (s.hasGist) parts.push('gist 연결됨');
   if (s.syncing) parts.push('동기화 중…');
   if (s.lastResult) parts.push(s.lastResult);
   if (s.lastSync) parts.push('마지막: ' + fmtSyncTime(s.lastSync));
@@ -65,9 +66,6 @@ function renderSyncStatus(s) {
 async function loadSyncConfig() {
   try {
     const s = await api.syncConfig();
-    $('sync-owner').value = s.owner || '';
-    $('sync-repo').value = s.repo || '';
-    $('sync-branch').value = s.branch || 'main';
     $('sync-enabled').checked = !!s.enabled;
     renderSyncStatus(s);
   } catch (e) { const el = $('sync-status'); if (el) el.textContent = '설정을 불러오지 못했습니다: ' + e.message; }
@@ -76,9 +74,6 @@ async function onSyncSave() {
   const token = $('sync-token').value;
   const cfg = {
     enabled: $('sync-enabled').checked,
-    owner: $('sync-owner').value.trim(),
-    repo: $('sync-repo').value.trim(),
-    branch: $('sync-branch').value.trim() || 'main',
     token: token ? token : null, // 빈칸이면 기존 토큰 유지
   };
   try {

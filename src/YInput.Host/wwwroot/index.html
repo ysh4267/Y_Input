@@ -178,13 +178,11 @@
         </div>
       </section>
       <section class="drawer-sec">
-        <h3>동기화 (GitHub 비공개 저장소)</h3>
-        <p class="hint">여러 PC에서 매크로를 자동으로 맞춥니다. GitHub에서 <b>비공개 저장소</b>를 하나 만들고(README 포함해 <code>main</code> 브랜치가 있게), <code>repo</code>(또는 Contents 읽기/쓰기) 권한 토큰을 넣으세요.</p>
+        <h3>동기화 (GitHub Gist)</h3>
+        <p class="hint">여러 PC에서 매크로를 자동으로 맞춥니다. 저장소를 만들 필요 없이 <b>토큰만</b> 넣으면 앱이 비공개(secret) gist를 자동 생성합니다. 같은 토큰을 쓰는 다른 PC도 그 gist를 자동으로 찾습니다.</p>
+        <p class="hint">토큰: GitHub → Settings → Developer settings → <b>Tokens (classic)</b>에서 <code>gist</code> 권한만 체크해 발급.</p>
         <div class="sync-form">
-          <label class="sync-row"><span>소유자</span><input id="sync-owner" type="text" placeholder="예: ysh4267" autocomplete="off" spellcheck="false"></label>
-          <label class="sync-row"><span>저장소</span><input id="sync-repo" type="text" placeholder="예: yinput-macros" autocomplete="off" spellcheck="false"></label>
-          <label class="sync-row"><span>브랜치</span><input id="sync-branch" type="text" placeholder="main" autocomplete="off" spellcheck="false"></label>
-          <label class="sync-row"><span>토큰</span><input id="sync-token" type="password" placeholder="ghp_… (repo 권한)" autocomplete="off" spellcheck="false"></label>
+          <label class="sync-row"><span>토큰</span><input id="sync-token" type="password" placeholder="ghp_… (gist 권한)" autocomplete="off" spellcheck="false"></label>
           <label class="sync-toggle"><input id="sync-enabled" type="checkbox"> 동기화 켜기</label>
         </div>
         <p id="sync-status" class="hint sync-status">—</p>
