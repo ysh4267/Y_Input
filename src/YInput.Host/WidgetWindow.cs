@@ -29,12 +29,9 @@ internal sealed class WidgetWindow : Form
     private struct WinCompAttrData { public int Attribute; public IntPtr Data; public int SizeOfData; }
     [DllImport("user32.dll")] private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WinCompAttrData data);
     private const int WCA_ACCENT_POLICY = 19;
-    private const int ACCENT_DISABLED = 0;
-    private const int ACCENT_ENABLE_BLURBEHIND = 3; // 아크릴(4)은 이동/크기조절 시 심한 지연 → 부드러운 블러(3)
-    private const int WM_ENTERSIZEMOVE = 0x0231;
-    private const int WM_EXITSIZEMOVE = 0x0232;
+    private const int ACCENT_ENABLE_BLURBEHIND = 3; // 아크릴(4)은 이동/크기조절 시 심한 지연 → 가벼운 블러(3, 상시)
 
-    private const int FixedHeight = 94;
+    private const int FixedHeight = 104;
     private const int CornerRadius = 9;
     private static readonly Color Bg = Color.FromArgb(21, 25, 33);
 
@@ -42,7 +39,6 @@ internal sealed class WidgetWindow : Form
     private readonly string _url;
     private readonly string _userDataFolder;
     private readonly Action<string>? _onError;
-    private bool _opaqueMove; // 이동/크기조절 중에는 불투명(블러 끔)으로 그려 랙 방지
     public string MacroId { get; }
 
     public WidgetWindow(string macroId, string url, string userDataFolder, Point location, Action<string>? onError = null)
@@ -68,25 +64,16 @@ internal sealed class WidgetWindow : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        try { SetBlur(true); } catch { /* 블러 미지원 시 무시(단색 배경으로 동작) */ }
+        try { EnableBlur(); } catch { /* 블러 미지원 시 무시(단색 배경으로 동작) */ }
         UpdateRegion();
     }
-    protected override void OnSizeChanged(EventArgs e) { base.OnSizeChanged(e); UpdateRegion(); }
 
-    // 배경을 칠하지 않아야 DWM 블러가 클라이언트에 보인다(투명 WebView2가 그 위에 콘텐츠만 렌더).
-    // 단, 이동/크기조절 중에는 블러를 꺼서 랙을 없애므로 이때만 불투명 배경을 칠해 깜빡임을 막는다.
-    protected override void OnPaintBackground(PaintEventArgs e)
+    // 크기가 바뀔 때마다 블러 재적용 + 둥근 영역 갱신 → 새로 늘어난 영역도 기존과 균일하게 보이도록.
+    protected override void OnSizeChanged(EventArgs e)
     {
-        if (_opaqueMove) e.Graphics.Clear(Bg);
-        // else: 그리지 않음 → 블러가 보임
-    }
-
-    // 이동/크기조절 중에는 블러를 잠깐 꺼서 지연(랙) 제거 → 끝나면 다시 켬.
-    protected override void WndProc(ref Message m)
-    {
-        if (m.Msg == WM_ENTERSIZEMOVE) { _opaqueMove = true; try { SetBlur(false); } catch { /* 무시 */ } Invalidate(); }
-        else if (m.Msg == WM_EXITSIZEMOVE) { _opaqueMove = false; try { SetBlur(true); } catch { /* 무시 */ } Invalidate(); }
-        base.WndProc(ref m);
+        base.OnSizeChanged(e);
+        UpdateRegion();
+        try { EnableBlur(); } catch { /* 무시 */ }
     }
 
     private void UpdateRegion()
@@ -97,10 +84,10 @@ internal sealed class WidgetWindow : Form
         DeleteObject(h);
     }
 
-    private void SetBlur(bool on)
+    private void EnableBlur()
     {
         if (!IsHandleCreated) return;
-        var accent = new AccentPolicy { AccentState = on ? ACCENT_ENABLE_BLURBEHIND : ACCENT_DISABLED, GradientColor = 0 };
+        var accent = new AccentPolicy { AccentState = ACCENT_ENABLE_BLURBEHIND, GradientColor = 0 };
         int size = Marshal.SizeOf(accent);
         IntPtr ptr = Marshal.AllocHGlobal(size);
         try

@@ -6,16 +6,20 @@ body.widget-body {
   background: transparent; color: var(--text);
   overflow: hidden; user-select: none; cursor: default;
   display: flex; flex-direction: column; gap: 2px;
-  padding: 8px 12px 9px;
+  padding: 9px 13px 14px; /* 아래 여백 넉넉히(진행도 인디케이터가 바닥에 붙지 않게) */
   border: 1.5px solid rgba(255,255,255,.16); border-radius: 10px; /* 색은 상태에 따라 JS가 지정 */
 }
 .w-head { display: flex; align-items: center; gap: 8px; cursor: move; flex: 0 0 auto; }
-.w-name { flex: 1; min-width: 0; font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px rgba(0,0,0,.55); }
+.w-name { flex: 1; min-width: 0; font-weight: 700; font-size: 13px; color: #f3f5f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
 .w-close { flex: 0 0 auto; width: 20px; height: 20px; border: none; background: transparent; color: var(--muted); border-radius: 6px; cursor: pointer; font-size: 13px; line-height: 1; }
 .w-close:hover { background: rgba(255,255,255,.14); color: var(--text); }
-/* 인디케이터는 아래로 붙임(위쪽에 남는 여백) */
+/* 인디케이터는 아래로 붙이되, 위 여백(margin-top:auto) + 아래 여백(padding-bottom)으로 가운데 아래쯤 */
 .widget-body > .macro-prog { flex: 0 0 auto; margin-top: auto; }
-.widget-body > .macro-prog-bar { flex: 0 0 auto; margin-top: 4px; }
+.widget-body > .macro-prog-bar { flex: 0 0 auto; margin-top: 5px; }
+/* 반투명 배경 위 대비 향상: 대기(미진행) 점·선을 밝게, 진행바 트랙 또렷하게(진행/반복 색은 그대로) */
+.widget-body .tl-dot:not(.done):not(.active):not(.tl-loop-pt) { background: rgba(232,236,245,.4); }
+.widget-body .tl-line:not(.done):not(.active) { background: rgba(232,236,245,.32); }
+.widget-body .macro-prog-bar { background: rgba(255,255,255,.15); }
 /* 오른쪽 가장자리 = 폭 조절 그립(높이는 고정) */
 .w-grip { position: absolute; right: 0; top: 26px; bottom: 8px; width: 8px; cursor: ew-resize; }
 .w-grip::after { content: ''; position: absolute; right: 2px; top: 50%; transform: translateY(-50%); height: 16px; border-left: 2px dotted var(--muted); opacity: .55; }
