@@ -690,7 +690,11 @@ function confirmDeleteInline(li, id) {
   const close = () => { li.classList.remove('confirming'); ov.remove(); };
   ov.querySelector('.ov-yes').onclick = async (e) => {
     e.stopPropagation();
-    try { await api.deleteMacro(id); if (editor.current()?.id === id) editor.close(); await loadMacros(); }
+    try {
+      if (editor.current()?.id === id) editor.abandon(); // 편집 중이면 자동 저장 취소(삭제가 되살아나지 않게)
+      await api.deleteMacro(id);
+      await loadMacros();
+    }
     catch (err) { log('error', err.message); close(); }
   };
   ov.querySelector('.ov-no').onclick = (e) => { e.stopPropagation(); close(); };
@@ -950,6 +954,7 @@ function wire() {
     const ok = await confirmDialog(`저장된 매크로 ${n}개를 모두 삭제할까요? 휴지통으로 이동되며, 되돌리려면 휴지통에서 복원해야 합니다.`, { title: '매크로 모두 초기화', ok: '모두 삭제', cancel: '취소' });
     if (!ok) return;
     try {
+      if (editor.current()?.id) editor.abandon(); // 편집 중 저장된 매크로도 초기화 대상 — 자동 저장이 되살리지 않게
       const r = await api.resetMacros();
       await loadMacros();
       log('warn', `매크로 ${r?.deleted ?? n}개를 모두 초기화했습니다(휴지통 이동).`);

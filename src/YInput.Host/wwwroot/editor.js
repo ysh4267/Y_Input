@@ -74,20 +74,29 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
   }
 
   function open(macro) {
+    flushPendingSave();     // 이전 매크로의 대기 중 편집 저장(전환/닫기 전)
     abortActiveRecording(); // 녹화 중 닫기/전환 시 고아 타이머·서버 녹화 정리
     editing = structuredClone(macro || blank());
     editing.steps ||= [];
     ensureUids();
     selected = new Set(); lastUid = null;
     undoStack.length = 0; redoStack.length = 0;
+    autosaveArmed = false; saveQueued = false; // 새로 연 매크로는 편집 전까지 자동 저장 안 함
     $('empty-state').hidden = true;
     $('editor').hidden = false;
     $('ed-name').value = editing.name || '';
+    const as = $('ed-autosave'); if (as) as.classList.remove('show');
     renderSteps();
     onStatus(getStatus());
   }
 
-  function close() { open(null); } // 닫기=현재 비우고 새 매크로 모드
+  function close() { open(null); } // 닫기=현재 비우고 새 매크로 모드(대기 중 편집은 자동 저장)
+  // 저장하지 않고 비우기 — 삭제/초기화로 사라질 매크로를 자동 저장이 되살리지 않게
+  function abandon() {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    autosaveArmed = false; saveQueued = false;
+    open(null);
+  }
   function isOpen() { return editing !== null; }
   function current() { return editing; }
 
@@ -120,10 +129,11 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
     undoStack.push(snapshot());
     if (undoStack.length > 50) undoStack.shift();
     redoStack.length = 0;
+    markEdited(); // 편집 발생 → 자동 저장 예약
   }
   function restore(s) { editing.steps = s.steps; selected = new Set(s.sel); lastUid = null; renderSteps(); }
-  function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); }
-  function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); }
+  function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); markEdited(); }
+  function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); markEdited(); }
 
   // ---------- 렌더 ----------
   function renderSteps() {
@@ -143,6 +153,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
     applySel();
     updateStats();
     syncRecordButtons(getStatus());
+    if (autosaveArmed) scheduleSave(); // 편집으로 재렌더될 때 자동 저장 예약(캡처·undo 등 inline 아닌 변경 포함)
   }
 
   function applyLoopStyles() {
@@ -690,9 +701,11 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
     if (!clipboard.length) return;
     pushUndo();
     const added = tagUids(clipboard.map((s) => ({ delayBeforeMs: s.delayBeforeMs || 0, event: structuredClone(s.event) })));
-    editing.steps.push(...added); // 항상 맨 아래에 순서 유지
+    const at = selected.size ? Math.max(...selIdxs()) + 1 : editing.steps.length; // 선택 항목 바로 아래(없으면 맨 끝)
+    editing.steps.splice(at, 0, ...added);
+    selected = new Set(added.map((s) => s._uid)); lastUid = added[added.length - 1]._uid; // 붙여넣은 항목을 선택(연속 붙여넣기 시 아래로 쌓임)
     renderSteps();
-    log('info', `${added.length}개 맨 아래에 붙여넣기`);
+    log('info', `${added.length}개 붙여넣기`);
   }
 
   // ---------- FLIP 애니메이션 ----------
@@ -888,22 +901,62 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
   }
 
   // ---------- 저장/재생 ----------
-  function collect() {
-    editing.name = $('ed-name').value.trim() || '제목 없음';
+  function collect(src = editing) {
+    src.name = $('ed-name').value.trim() || '제목 없음';
     // 반복/속도/트리거는 편집기에서 제거 — 실행 페이지에서 관리(editing의 기존 값 유지).
     // 휴머나이즈는 각 '지연' 블록(event.randomizePercent)에 개별 저장.
     // _uid는 직렬화에서 제외, 녹화하기 카드(record)는 저장 대상 아님.
-    return { ...editing, steps: editing.steps.filter((s) => s.event['$type'] !== 'record').map((s) => ({ delayBeforeMs: s.delayBeforeMs || 0, event: s.event })) };
+    return { ...src, steps: src.steps.filter((s) => s.event['$type'] !== 'record').map((s) => ({ delayBeforeMs: s.delayBeforeMs || 0, event: s.event })) };
   }
-  async function save() {
+  async function save(opts = {}) {
+    const target = editing; // 저장 대상 고정 — 저장 도중 다른 매크로로 전환돼도 엉뚱한 곳에 id를 쓰지 않게
+    if (!target) return null;
     try {
-      const m = collect();
+      const m = collect(target);
       const saved = m.id ? await api.updateMacro(m.id, m) : await api.createMacro(m);
-      editing.id = saved.id;
-      log('info', `저장됨: ${saved.name}`);
+      target.id = saved.id;
+      if (!opts.quiet) log('info', `저장됨: ${saved.name}`);
       onSaved && onSaved();
       return saved;
-    } catch (e) { log('error', e.message); return null; }
+    } catch (e) { log('error', '저장 실패: ' + e.message); return null; }
+  }
+
+  // ---------- 자동 저장(디바운스) — 저장 버튼을 누르지 않아도 편집 후 잠시 뒤 자동 반영 ----------
+  let saveTimer = null;        // 디바운스 타이머
+  let autosaveArmed = false;   // 실제 편집이 있었는가(빈 새 매크로를 열기만 했을 땐 저장 안 함)
+  let saving = false;          // 저장 진행 중(동시 저장 방지)
+  let saveQueued = false;      // 진행 중 추가 편집 → 끝나고 한 번 더
+  function markEdited() { autosaveArmed = true; scheduleSave(); }
+  function scheduleSave() {
+    if (!autosaveArmed) return;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { saveTimer = null; saveNow({ quiet: true }); }, 700);
+  }
+  async function saveNow(opts = {}) {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    if (!editing) return null;
+    if (saving) { saveQueued = true; return null; } // 진행 중이면 끝난 뒤 재시도(마지막 편집 보장)
+    saving = true;
+    let res = null;
+    try { res = await save(opts); }
+    finally {
+      saving = false;
+      if (saveQueued) { saveQueued = false; scheduleSave(); }
+    }
+    if (res && opts.quiet) flashAutosaved();
+    return res;
+  }
+  // 다른 매크로로 전환/닫기 직전, 대기 중이던 편집을 즉시 저장(collect()가 동기로 현재 editing을 포착).
+  function flushPendingSave() {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    if (autosaveArmed && editing) saveNow({ quiet: true });
+  }
+  function flashAutosaved() {
+    const el = $('ed-autosave'); if (!el) return;
+    el.textContent = '자동 저장됨';
+    el.classList.add('show');
+    clearTimeout(flashAutosaved._t);
+    flashAutosaved._t = setTimeout(() => el.classList.remove('show'), 1400);
   }
   // 재생은 트리거 핫키로만 — 편집기 재생 버튼 없음.
   function onStatus(st) {
@@ -912,9 +965,11 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
   }
 
   // ---------- 와이어링 ----------
-  $('ed-name').oninput = () => { if (editing) editing.name = $('ed-name').value; };
-  $('btn-save').onclick = save;
+  $('ed-name').oninput = () => { if (!editing) return; editing.name = $('ed-name').value; markEdited(); };
+  $('btn-save').onclick = () => saveNow({});
   $('btn-cancel').onclick = close;
+  // 탭이 숨겨질 때(다른 탭 전환·최소화) 대기 중 편집을 즉시 저장 — 유실 최소화
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flushPendingSave(); });
   // 동작 팔레트: 클릭=추가, 드래그=원하는 위치(행/끝)에 드롭(HTML5)
   document.querySelectorAll('#palette .pal-item').forEach((el) => {
     const type = el.dataset.type;
@@ -940,9 +995,14 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
   document.addEventListener('keydown', (e) => {
     if (!editing || $('editor').hidden) return;
     if (e.target.closest('input,textarea,select,[contenteditable="true"]')) return;
+    const k = (e.key || '').toLowerCase();
+    // Delete/Backspace: 드래그(마퀴)로 선택한 항목 포함, 선택된 스텝 모두 삭제
+    if (k === 'delete' || k === 'backspace') {
+      if (selected.size) { e.preventDefault(); deleteSel(); }
+      return;
+    }
     const ctrl = e.ctrlKey || e.metaKey;
     if (!ctrl) return;
-    const k = (e.key || '').toLowerCase();
     if (k === 'c') { e.preventDefault(); copySel(); }
     else if (k === 'x') { e.preventDefault(); cutSel(); }
     else if (k === 'v') { e.preventDefault(); pasteClipboard(); }
@@ -956,5 +1016,5 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
     if (stepCapture && data.trigger?.gamepad) { stepCapture(data.trigger.gamepad); return; }
   }
 
-  return { open, close, isOpen, current, onStatus, onInputDetected, onRecordedStep };
+  return { open, close, abandon, isOpen, current, onStatus, onInputDetected, onRecordedStep };
 }
