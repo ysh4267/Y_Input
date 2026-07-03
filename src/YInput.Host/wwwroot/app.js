@@ -1007,18 +1007,26 @@ async function onUpdateCheck() {
     else $('update-status').textContent = `최신 상태 (현재 ${cur})`;
   } catch (e) { $('update-status').textContent = '확인 실패: ' + e.message; }
 }
-// 다운로드 — 교체/재시작 대신, 최신 릴리즈 빌드의 다운로드 링크를 열어 브라우저 다운로드 폴더에 받는다.
-async function onUpdateDownload() {
-  $('update-status').textContent = '다운로드 링크 확인 중…';
+// 지금 업데이트 — 앱이 새 exe를 내려받아 실행 파일을 교체하고 자동으로 재시작한다(브라우저 다운로드 아님).
+async function onUpdateApply() {
+  const st = $('update-status');
+  st.textContent = '업데이트 확인 중…';
   try {
-    const r = await api.updateCheck();
-    const url = (r && r.downloadUrl) || (r && r.pageUrl);
-    if (!url) { $('update-status').textContent = '다운로드 링크를 찾을 수 없습니다: ' + ((r && r.message) || ''); return; }
-    window.open(url, '_blank', 'noopener'); // 브라우저가 다운로드 폴더에 저장
-    $('update-status').textContent = r.downloadUrl
-      ? `${r.latest || '최신 버전'} 다운로드를 시작했습니다 — 브라우저 다운로드 폴더를 확인하세요.`
-      : '릴리즈 페이지를 열었습니다.';
-  } catch (e) { $('update-status').textContent = '다운로드 실패: ' + e.message; }
+    const chk = await api.updateCheck();
+    if (!chk.ok) { st.textContent = '확인 실패: ' + (chk.message || ''); return; }
+    if (!chk.updateAvailable) { st.textContent = `이미 최신 상태입니다 (현재 ${chk.current || '개발 빌드'}).`; return; }
+    const ok = await confirmDialog(
+      `새 버전 ${chk.latest}(으)로 지금 업데이트할까요? 앱이 새 실행 파일을 내려받아 교체하고 자동으로 재시작합니다.`,
+      { title: '업데이트', ok: '지금 업데이트', cancel: '취소' });
+    if (!ok) { st.textContent = ''; return; }
+    st.textContent = `${chk.latest} 다운로드 중… (수십 MB — 완료되면 자동으로 교체·재시작)`;
+    const r = await api.updateApply();
+    if (r && r.ok === false) { st.textContent = '업데이트 실패: ' + (r.message || ''); return; }
+    st.textContent = '교체 후 재시작 중… 잠시 후 자동으로 다시 연결됩니다.';
+  } catch (e) {
+    // 재시작으로 서버 연결이 끊겨 요청이 실패할 수 있음 — 정상 흐름(자동 재연결)
+    st.textContent = '재시작 중… 잠시만 기다려 주세요(자동 재연결).';
+  }
 }
 
 // ---------- 와이어링 ----------
@@ -1028,7 +1036,7 @@ function wire() {
   $('settings-close').onclick = closeSettings;
   $('settings-overlay').onclick = (e) => { if (e.target === $('settings-overlay')) closeSettings(); };
   $('btn-update-check').onclick = onUpdateCheck;
-  $('btn-update-apply').onclick = onUpdateDownload;
+  $('btn-update-apply').onclick = onUpdateApply;
   $('btn-reload').onclick = () => location.reload(); // 화면 새로고침(잠금으로 키보드 단축키가 막혀 있어 버튼 제공)
   $('btn-sync-save').onclick = onSyncSave;
   $('btn-sync-now').onclick = onSyncNow;

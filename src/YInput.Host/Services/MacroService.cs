@@ -39,6 +39,10 @@ public sealed class MacroService
     /// <summary>앱 종료 요청 콜백(트레이가 설정). /api/app/quit에서 호출.</summary>
     public Action? QuitRequested { get; set; }
 
+    /// <summary>업데이트 교체로 인한 재시작 중인지 — 종료 시 'shutdown' 방송을 억제해 열린 탭이 새 인스턴스로 재연결하게 한다.</summary>
+    public bool IsUpdating { get; private set; }
+    public void MarkUpdating() => IsUpdating = true;
+
     /// <summary>로컬 매크로 변경 후 호출(Program이 GitHubSync.SchedulePush로 연결) — 동기화 푸시 예약.</summary>
     public Action? MacrosChanged { get; set; }
 

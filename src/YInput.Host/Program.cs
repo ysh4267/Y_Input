@@ -67,7 +67,9 @@ internal static class Program
         // 트레이 + 드라이버 부트스트랩(백그라운드)
         var tray = new TrayAppContext(service);
         service.QuitRequested = tray.RequestExit; // /api/app/quit → 그레이스풀 종료
-        tray.OpenUi(); // 실행 즉시 기본 브라우저로 편집 UI 열기
+        // 업데이트 재시작(--updated)이면 기존 탭이 새 인스턴스로 재연결하므로 새 탭을 열지 않는다.
+        var isUpdated = Environment.GetCommandLineArgs().Contains("--updated");
+        if (!isUpdated) tray.OpenUi(); // 실행 즉시 기본 브라우저로 편집 UI 열기
         RunBootstrap(service, tray);
         widgets.RestoreSaved(); // 지난 세션에 열린 위젯 복원(메시지 루프 시작되면 생성)
 
@@ -76,8 +78,10 @@ internal static class Program
 
         try { widgets.CloseAll(); } catch { /* ignore */ } // 위젯 창 정리
 
-        // 기본 브라우저로 열린(앱 모드가 아닌) 페이지에 종료 신호 → 페이지가 스스로 닫힘 처리
-        try { hub.Broadcast("shutdown", new { }); Thread.Sleep(150); } catch { /* ignore */ }
+        // 기본 브라우저로 열린 페이지에 종료 신호 → 페이지가 스스로 닫힘 처리.
+        // 단, 업데이트 재시작 중이면 방송하지 않는다(열린 탭이 재연결을 포기하지 않고 새 인스턴스로 붙게).
+        if (!service.IsUpdating)
+            try { hub.Broadcast("shutdown", new { }); Thread.Sleep(150); } catch { /* ignore */ }
 
         // 정리
         try { app.StopAsync().Wait(3000); } catch { /* ignore */ }

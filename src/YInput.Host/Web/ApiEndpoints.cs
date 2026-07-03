@@ -230,6 +230,17 @@ public static class ApiEndpoints
             var r = await Task.Run(AppUpdater.Check);
             return Results.Json(new { ok = r.Ok, updateAvailable = r.UpdateAvailable, current = r.Current, latest = r.Latest, message = r.Message, downloadUrl = r.DownloadUrl, pageUrl = r.PageUrl });
         }));
+        // 인앱 자동 교체: 새 exe 다운로드 → 교체 스크립트 분리 실행 → 앱 종료(스크립트가 교체 후 새 버전 실행)
+        app.MapPost("/api/app/update", () => Guard(async () =>
+        {
+            var r = await Task.Run(AppUpdater.StartSelfUpdate);
+            if (r.Ok)
+            {
+                service.MarkUpdating(); // 종료 시 'shutdown' 억제 → 열린 탭이 새 인스턴스로 재연결
+                _ = Task.Run(async () => { await Task.Delay(800); service.RequestQuit(); }); // 응답 전송 뒤 그레이스풀 종료
+            }
+            return Results.Json(new { ok = r.Ok, message = r.Message });
+        }));
 
         // ---- GitHub 비공개 저장소 동기화 ----
         app.MapGet("/api/sync/config", () => Results.Json(sync.StatusData())); // 토큰은 존재 여부만 반환
