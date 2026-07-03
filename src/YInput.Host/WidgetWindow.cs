@@ -8,10 +8,11 @@ using Microsoft.Web.WebView2.WinForms;
 namespace YInput.Host;
 
 /// <summary>
-/// 보더리스·항상 위·작업표시줄 미표시 위젯 창(둥근 모서리 + 아크릴 반투명 블러). 안에 WebView2로
+/// 보더리스·항상 위·작업표시줄 미표시 위젯 창(둥근 모서리 + 반투명 블러). 안에 WebView2로
 /// <c>/widget.html?id=…</c>를 띄운다. 높이는 고정, 폭만 조절. 페이지가 상태(대기/켜짐/재생)에 맞는
-/// 배경 틴트를 <c>window.chrome.webview.postMessage('tint:AABBGGRR')</c>로 보내면 창의 아크릴 색이 바뀐다.
-/// 이동은 'drag', 크기조절(폭)은 'resize', 닫기는 'close' 메시지.
+/// 배경 틴트를 <c>window.chrome.webview.postMessage('tint:AABBGGRR')</c>로 보내면 창 색이 바뀐다.
+/// 모서리 둥글기는 Win11이면 DWM 네이티브(안티에일리어싱), 그 외엔 GDI 리전으로 처리한다.
+/// 이동은 'drag', 크기조절(폭)은 'resize', 닫기는 'close', 더블클릭 편집은 'edit' 메시지.
 /// </summary>
 internal sealed class WidgetWindow : Form
 {
@@ -24,6 +25,11 @@ internal sealed class WidgetWindow : Form
     [DllImport("gdi32.dll")] private static extern IntPtr CreateRoundRectRgn(int l, int t, int r, int b, int we, int he);
     [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr h);
 
+    [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int val, int size);
+    private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;      // Win11: 창 모서리 둥글게(네이티브)
+    private const int DWMWCP_ROUND = 2;                         // 표준 둥근 모서리
+    private static readonly bool IsWin11 = Environment.OSVersion.Version.Build >= 22000;
+
     [StructLayout(LayoutKind.Sequential)]
     private struct AccentPolicy { public int AccentState; public int AccentFlags; public uint GradientColor; public int AnimationId; }
     [StructLayout(LayoutKind.Sequential)]
@@ -32,7 +38,7 @@ internal sealed class WidgetWindow : Form
     private const int WCA_ACCENT_POLICY = 19;
     private const int ACCENT_DISABLED = 0;
     private const int ACCENT_ENABLE_BLURBEHIND = 3;         // 가벼운 블러(아크릴은 렉 때문에 제외)
-    private uint _tint = 0xB82C231F;                          // 배경 색+알파(ABGR). 페이지가 'tint:'로 지정. DWM이 창 전체에 균일 적용.
+    private uint _tint = 0xE016110E;                          // 기본 대기색(어두운 검정 계열, ABGR). 페이지가 'tint:'로 갱신. DWM이 창 전체에 균일 적용.
 
     private const int FixedHeight = 104;
     private const int CornerRadius = 9;
@@ -42,11 +48,12 @@ internal sealed class WidgetWindow : Form
     private readonly string _url;
     private readonly string _userDataFolder;
     private readonly Action<string>? _onError;
+    private readonly Action<string>? _onEdit;
     public string MacroId { get; }
 
-    public WidgetWindow(string macroId, string url, string userDataFolder, Point location, Action<string>? onError = null)
+    public WidgetWindow(string macroId, string url, string userDataFolder, Point location, Action<string>? onError = null, Action<string>? onEdit = null)
     {
-        MacroId = macroId; _url = url; _userDataFolder = userDataFolder; _onError = onError;
+        MacroId = macroId; _url = url; _userDataFolder = userDataFolder; _onError = onError; _onEdit = onEdit;
 
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
@@ -85,6 +92,15 @@ internal sealed class WidgetWindow : Form
     private void UpdateRegion()
     {
         if (Width <= 0 || Height <= 0) return;
+        if (IsWin11)
+        {
+            // Win11: DWM이 네이티브로(안티에일리어싱) 모서리를 깎는다 — GDI 리전은 블러와 겹치면 계단 현상이 나서 안 씀.
+            Region = null;
+            int pref = DWMWCP_ROUND;
+            try { DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref pref, sizeof(int)); } catch { /* 구버전 미지원 */ }
+            return;
+        }
+        // Win10 이하: GDI 라운드 리전으로 모서리 클립
         var h = CreateRoundRectRgn(0, 0, Width + 1, Height + 1, CornerRadius * 2, CornerRadius * 2);
         Region = System.Drawing.Region.FromHrgn(h);
         DeleteObject(h);
@@ -131,8 +147,9 @@ internal sealed class WidgetWindow : Form
     {
         string msg; try { msg = e.TryGetWebMessageAsString() ?? ""; } catch { return; }
         if (msg == "close") Close();
+        else if (msg == "edit") _onEdit?.Invoke(MacroId); // 더블클릭 → 메인 편집 페이지 열기
         else if (msg == "drag" && !IsDisposed) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, HTCAPTION, IntPtr.Zero); }
-        else if (msg == "resize" && !IsDisposed) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, HTRIGHT, IntPtr.Zero); } // 폭만(색/불투명도는 페이지 CSS가 담당)
+        else if (msg == "resize" && !IsDisposed) { ReleaseCapture(); SendMessage(Handle, WM_NCLBUTTONDOWN, HTRIGHT, IntPtr.Zero); } // 폭만
         else if (msg.StartsWith("tint:", StringComparison.Ordinal) // 배경 색+알파(ABGR 8자리 hex)
             && uint.TryParse(msg.AsSpan(5), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var abgr))
         {

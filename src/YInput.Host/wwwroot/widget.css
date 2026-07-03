@@ -7,7 +7,7 @@ body.widget-body {
   overflow: hidden; user-select: none; cursor: default;
   display: flex; flex-direction: column; gap: 2px;
   padding: 9px 13px 14px; /* 아래 여백 넉넉히(진행도 인디케이터가 바닥에 붙지 않게) */
-  border: 1.5px solid rgba(255,255,255,.16); border-radius: 10px; /* 색은 상태에 따라 JS가 지정 */
+  border: 2.5px solid rgba(255,255,255,.24); border-radius: 9px; /* 두께 고정, 색은 상태에 따라 JS가 지정 */
 }
 .w-head { display: flex; align-items: center; gap: 8px; cursor: move; flex: 0 0 auto; }
 .w-name { flex: 1; min-width: 0; font-weight: 700; font-size: 13px; color: #f3f5f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px rgba(0,0,0,.6); }

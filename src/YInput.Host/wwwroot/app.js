@@ -43,35 +43,6 @@ function openSettings() {
   requestAnimationFrame(() => ov.classList.add('open'));
   loadVersion();
   loadSyncConfig();
-  loadWidgetConfig();
-}
-
-// ---------- 위젯 모양(상태별 색/불투명도) ----------
-const WIDGET_ROWS = [
-  ['wc-idle', 'wo-idle', 'wov-idle', 'idleColor', 'idleAlpha', '#1f232c'],
-  ['wc-on', 'wo-on', 'wov-on', 'onColor', 'onAlpha', '#243650'],
-  ['wc-play', 'wo-play', 'wov-play', 'playColor', 'playAlpha', '#1f3d34'],
-];
-async function loadWidgetConfig() {
-  try {
-    const c = await api.widgetGetConfig();
-    for (const [cid, oid, vid, ck, ak, def] of WIDGET_ROWS) {
-      if ($(cid)) $(cid).value = c[ck] || def;
-      const a = c[ak] ?? 72;
-      if ($(oid)) { $(oid).value = a; $(vid).textContent = a + '%'; }
-    }
-  } catch { /* 무시 */ }
-}
-let widgetCfgTimer = null;
-function saveWidgetConfig() {
-  const cfg = {};
-  for (const [cid, oid, , ck, ak] of WIDGET_ROWS) {
-    cfg[ck] = $(cid).value;
-    const v = parseInt($(oid).value, 10);
-    cfg[ak] = Number.isFinite(v) ? v : 72; // 0도 유효(|| 쓰면 0%가 튀는 버그)
-  }
-  clearTimeout(widgetCfgTimer);
-  widgetCfgTimer = setTimeout(() => api.widgetSetConfig(cfg).catch((e) => log('error', e.message)), 140);
 }
 
 // ---------- 동기화(GitHub 비공개 저장소) ----------
@@ -1049,10 +1020,6 @@ function wire() {
   $('btn-reload').onclick = () => location.reload(); // 화면 새로고침(잠금으로 키보드 단축키가 막혀 있어 버튼 제공)
   $('btn-sync-save').onclick = onSyncSave;
   $('btn-sync-now').onclick = onSyncNow;
-  WIDGET_ROWS.forEach(([cid, oid, vid]) => {
-    $(cid).oninput = saveWidgetConfig;
-    $(oid).oninput = () => { $(vid).textContent = $(oid).value + '%'; saveWidgetConfig(); };
-  });
   $('btn-new').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-new-run').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-import').onclick = () => $('file-import').click();
@@ -1094,7 +1061,16 @@ async function init() {
   try { renderStatus(await api.status()); } catch (e) { log('error', e.message); }
   await loadMacros();
   loadPinned(); // 열려 있는 위젯 창 목록 → 핀 버튼 상태
-  editor.open(null); // 기본: 새 매크로 추가 모드로 시작
+  // 위젯 더블클릭 등으로 /?edit=id 로 들어오면 해당 매크로 편집을 바로 연다.
+  const editId = new URLSearchParams(location.search).get('edit');
+  const editMacro = editId && state.macros.find((m) => m.id === editId);
+  if (editMacro) {
+    try { editor.open(await api.getMacro(editId)); switchTab('edit'); }
+    catch { editor.open(null); }
+    try { history.replaceState(null, '', location.pathname); } catch { /* 무시 */ } // 새로고침 시 재오픈 방지
+  } else {
+    editor.open(null); // 기본: 새 매크로 추가 모드로 시작
+  }
   log('info', 'Y Input UI 준비됨.');
 }
 

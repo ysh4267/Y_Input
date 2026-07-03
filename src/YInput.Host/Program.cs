@@ -45,7 +45,8 @@ internal static class Program
         using var progress = new ProgressBroadcaster(hub); // 진행 보고 ~60Hz 코얼레싱(종료 시 타이머 정리)
         var service = new MacroService(backend, library, player, recorder, hotkeys, rawInput, hub, progress);
         using var sync = new GitHubSync(library, service, dataRoot); // GitHub 비공개 저장소 동기화
-        service.MacrosChanged = sync.SchedulePush; // 로컬 매크로 변경 → 동기화 푸시 예약(디바운스)
+        // 로컬 매크로 변경 → 위젯/웹 UI 실시간 방송(위젯이 편집 즉시 갱신) + 동기화 푸시 예약(디바운스)
+        service.MacrosChanged = () => { service.BroadcastMacrosChanged(); sync.SchedulePush(); };
 
         // 로컬 웹서버 (127.0.0.1 전용)
         int port = FindFreePort(PreferredPort);

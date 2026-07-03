@@ -5,25 +5,25 @@ const MREDUCE = window.matchMedia && window.matchMedia('(prefers-reduced-motion:
 const MID = new URLSearchParams(location.search).get('id') || '';
 const toNative = (m) => { try { window.chrome.webview.postMessage(m); } catch { /* WebView2 밖에서 열림 */ } };
 
-// ---------- 모양: 상태별(대기/켜짐/재생) 배경색 + 알파(각각 지정). 상태 테두리색은 고정(회색/파랑/녹색). ----------
-let cfg = { idleColor: '#1f232c', idleAlpha: 72, onColor: '#243650', onAlpha: 72, playColor: '#1f3d34', playAlpha: 72 };
+// ---------- 모양: 상태별(대기/켜짐/재생) 배경색 + 알파 — 고정값(설정 제거). 검정 계열로 어둡게 = 내부 컴포넌트 대비 확보. ----------
+const STATE_STYLE = {
+  idle: { color: '#0e1116', alpha: 88, border: 'rgba(255,255,255,.24)' }, // 대기: 거의 검정
+  on: { color: '#0d1a2e', alpha: 88, border: 'rgba(79,140,255,.9)' },     // 켜짐: 아주 어두운 파랑
+  play: { color: '#0b2019', alpha: 88, border: 'rgba(52,211,153,.95)' },  // 재생: 아주 어두운 녹색
+};
 let enabled = false, playing = false;
 function hex2rgb(h) {
-  const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); if (!m) return [31, 35, 44];
+  const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); if (!m) return [14, 17, 22];
   const n = parseInt(m[1], 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 function applyAppearance() {
-  let color, alpha, border;
-  if (playing) { color = cfg.playColor; alpha = cfg.playAlpha; border = 'rgba(52,211,153,.85)'; }
-  else if (enabled) { color = cfg.onColor; alpha = cfg.onAlpha; border = 'rgba(79,140,255,.75)'; }
-  else { color = cfg.idleColor; alpha = cfg.idleAlpha; border = 'rgba(255,255,255,.16)'; }
-  const [r, g, b] = hex2rgb(color);
-  const av = Math.round(Math.max(0, Math.min(100, alpha ?? 72)) / 100 * 255); // 0=완전 투명(블러만)
+  const s = playing ? STATE_STYLE.play : enabled ? STATE_STYLE.on : STATE_STYLE.idle;
+  const [r, g, b] = hex2rgb(s.color);
+  const av = Math.round(Math.max(0, Math.min(100, s.alpha)) / 100 * 255);
   const abgr = (((av << 24) | (b << 16) | (g << 8) | r) >>> 0).toString(16).padStart(8, '0');
   toNative('tint:' + abgr); // 색+알파를 네이티브(DWM)가 창 전체에 균일 적용 → 폭 늘려도 안 갈라짐(페이지 배경은 안 씀)
-  document.body.style.borderColor = border;
+  document.body.style.borderColor = s.border;
 }
-async function loadConfig() { try { cfg = Object.assign(cfg, (await fetch('/api/widget/config').then((r) => r.json())) || {}); } catch { /* 기본값 */ } applyAppearance(); }
 
 // ---------- 인디케이터 (app.js buildTimeline/updateOneTimeline 등과 동일) ----------
 function buildTimeline(container, shape) {
@@ -185,14 +185,13 @@ function connectWs() {
     if (msg.type === 'progress') showProgress(msg.data);
     else if (msg.type === 'status') onStatus(msg.data);
     else if (msg.type === 'macrosChanged') loadMacro(); // 이름/켜짐/모양 갱신(삭제 시 창 닫힘)
-    else if (msg.type === 'widgetConfig') { cfg = Object.assign(cfg, msg.data || {}); applyAppearance(); } // 설정 패널에서 색/불투명도 변경
     else if (msg.type === 'shutdown') toNative('close');
   };
   ws.onclose = () => setTimeout(connectWs, 1200);
   ws.onerror = () => { try { ws.close(); } catch { /* */ } };
 }
 
-// ---------- 창 조작(드래그/닫기) ----------
+// ---------- 창 조작(드래그/닫기/더블클릭 편집) ----------
 $('w-close').onclick = () => toNative('close');
 $('w-head').addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || (e.target.closest && e.target.closest('.w-close'))) return;
@@ -203,9 +202,14 @@ $('w-grip').addEventListener('pointerdown', (e) => {
   e.preventDefault();
   toNative('resize'); // 네이티브가 우측 폭 조절 시작(Min/Max 존중)
 });
+// 더블클릭(닫기/그립 제외) → 메인 편집 페이지 열기(네이티브가 기본 브라우저로 /?edit=id 를 엶)
+document.body.addEventListener('dblclick', (e) => {
+  if (e.target.closest && (e.target.closest('.w-close') || e.target.closest('.w-grip'))) return;
+  toNative('edit');
+});
 // 폭 바뀌면 테두리 다시 적용(배경 색/알파는 네이티브 DWM이 창 전체에 균일 적용하므로 갈라짐 없음)
 window.addEventListener('resize', applyAppearance);
 
-loadConfig();
+applyAppearance(); // 초기 대기 상태 모양(데이터 로드 전에도 테두리/틴트 표시)
 loadMacro();
 connectWs();

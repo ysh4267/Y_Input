@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing;
 using System.Text.Json;
 using System.Windows.Forms;
@@ -21,57 +22,13 @@ public sealed class WidgetManager
     private readonly object _gate = new();
     private int _cascade;
 
-    // 위젯 모양(대기 상태 배경색 + 불투명도). 켜짐=파랑/재생=녹색은 위젯 페이지가 상태로 결정.
-    private readonly string _appearancePath;
-    private string _idleColor = "#1f232c"; private int _idleAlpha = 72; // 대기: 회색(card2)
-    private string _onColor = "#243650"; private int _onAlpha = 72;     // 켜짐: 어두운 파랑
-    private string _playColor = "#1f3d34"; private int _playAlpha = 72; // 재생: 어두운 녹색
-
     public WidgetManager(SynchronizationContext ui, string baseUrl, string dataRoot, MacroService service)
     {
         _ui = ui;
         _baseUrl = baseUrl.TrimEnd('/');
         _userDataFolder = Path.Combine(dataRoot, "webview2");
         _statePath = Path.Combine(dataRoot, "widgets.json");
-        _appearancePath = Path.Combine(dataRoot, "widget-config.json");
         _service = service;
-        LoadAppearance();
-    }
-
-    // ---- 모양 설정: 상태별(대기/켜짐/재생) 배경색 + 알파(0=완전 투명=블러만) ----
-    public object Appearance() => new
-    {
-        idleColor = _idleColor, idleAlpha = _idleAlpha,
-        onColor = _onColor, onAlpha = _onAlpha,
-        playColor = _playColor, playAlpha = _playAlpha,
-    };
-
-    public void SetAppearance(string? idleColor, int? idleAlpha, string? onColor, int? onAlpha, string? playColor, int? playAlpha)
-    {
-        if (!string.IsNullOrWhiteSpace(idleColor)) _idleColor = idleColor!.Trim();
-        if (idleAlpha is int ia) _idleAlpha = Math.Clamp(ia, 0, 100);
-        if (!string.IsNullOrWhiteSpace(onColor)) _onColor = onColor!.Trim();
-        if (onAlpha is int oa) _onAlpha = Math.Clamp(oa, 0, 100);
-        if (!string.IsNullOrWhiteSpace(playColor)) _playColor = playColor!.Trim();
-        if (playAlpha is int pa) _playAlpha = Math.Clamp(pa, 0, 100);
-        try { File.WriteAllText(_appearancePath, JsonSerializer.Serialize(Appearance())); } catch { /* 무시 */ }
-        _service.BroadcastWidgetConfig(Appearance()); // 열린 위젯들 실시간 갱신
-    }
-
-    private void LoadAppearance()
-    {
-        try
-        {
-            if (!File.Exists(_appearancePath)) return;
-            using var doc = JsonDocument.Parse(File.ReadAllText(_appearancePath));
-            var r = doc.RootElement;
-            string Str(string k, string d) => r.TryGetProperty(k, out var v) && v.GetString() is { Length: > 0 } s ? s : d;
-            int Int(string k, int d) => r.TryGetProperty(k, out var v) && v.TryGetInt32(out var n) ? Math.Clamp(n, 0, 100) : d;
-            _idleColor = Str("idleColor", _idleColor); _idleAlpha = Int("idleAlpha", _idleAlpha);
-            _onColor = Str("onColor", _onColor); _onAlpha = Int("onAlpha", _onAlpha);
-            _playColor = Str("playColor", _playColor); _playAlpha = Int("playAlpha", _playAlpha);
-        }
-        catch { /* 기본값 유지 */ }
     }
 
     public IReadOnlyList<string> OpenIds() { lock (_gate) return _windows.Keys.ToArray(); }
@@ -122,7 +79,7 @@ public sealed class WidgetManager
         {
             var loc = new Point(90 + (_cascade % 6) * 30, 90 + (_cascade % 6) * 26); _cascade++;
             var url = $"{_baseUrl}/widget.html?id={Uri.EscapeDataString(id)}";
-            var w = new WidgetWindow(id, url, _userDataFolder, loc, msg => _service.Log("error", msg));
+            var w = new WidgetWindow(id, url, _userDataFolder, loc, msg => _service.Log("error", msg), OpenEditor);
             w.FormClosed += (_, _) => { lock (_gate) _windows.Remove(id); Persist(); Broadcast(); };
             lock (_gate) _windows[id] = w;
             w.Show();
@@ -133,6 +90,13 @@ public sealed class WidgetManager
         {
             _service.Log("error", "위젯 창 열기 실패(WebView2 런타임을 확인하세요): " + ex.Message);
         }
+    }
+
+    /// <summary>위젯 더블클릭 → 기본 브라우저로 메인 편집 페이지(<c>/?edit=id</c>)를 연다.</summary>
+    private void OpenEditor(string id)
+    {
+        try { Process.Start(new ProcessStartInfo($"{_baseUrl}/?edit={Uri.EscapeDataString(id)}") { UseShellExecute = true }); }
+        catch (Exception ex) { _service.Log("error", "편집 페이지 열기 실패: " + ex.Message); }
     }
 
     private void Persist()
