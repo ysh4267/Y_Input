@@ -16,6 +16,12 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
+        // 업데이트 마무리 역할: 새로 내려받은 exe가 --apply-update 로 실행되면 정식 앱을 띄우지 않고(뮤텍스도 안 잡음)
+        // 옛 프로세스 종료를 기다렸다 실행 파일을 교체하고 정식 이름으로 재실행한다.
+        var cmdArgs = Environment.GetCommandLineArgs();
+        int applyIdx = Array.IndexOf(cmdArgs, "--apply-update");
+        if (applyIdx >= 0) { UpdateFinalizer.Run(cmdArgs, applyIdx); return; }
+
         using var mutex = new Mutex(true, "Global\\YInput_SingleInstance_2F1B", out bool created);
         if (!created)
         {
@@ -28,6 +34,8 @@ internal static class Program
 
         System.Windows.Forms.Application.EnableVisualStyles();
         System.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
+
+        TryCleanStage(); // 지난 업데이트에서 남은 스테이지 exe(YInput.stage.exe) 정리
 
         // 데이터 폴더: %APPDATA%\YInput\macros
         var dataRoot = Path.Combine(
@@ -68,7 +76,7 @@ internal static class Program
         var tray = new TrayAppContext(service);
         service.QuitRequested = tray.RequestExit; // /api/app/quit → 그레이스풀 종료
         // 업데이트 재시작(--updated)이면 기존 탭이 새 인스턴스로 재연결하므로 새 탭을 열지 않는다.
-        var isUpdated = Environment.GetCommandLineArgs().Contains("--updated");
+        var isUpdated = cmdArgs.Contains("--updated");
         if (!isUpdated) tray.OpenUi(); // 실행 즉시 기본 브라우저로 편집 UI 열기
         RunBootstrap(service, tray);
         widgets.RestoreSaved(); // 지난 세션에 열린 위젯 복원(메시지 루프 시작되면 생성)
@@ -86,6 +94,19 @@ internal static class Program
         // 정리
         try { app.StopAsync().Wait(3000); } catch { /* ignore */ }
         try { (app as IDisposable)?.Dispose(); } catch { /* ignore */ }
+    }
+
+    /// <summary>지난 업데이트에서 남은 스테이지 exe(YInput.stage.exe)를 정리(있으면). 잠겨 있으면 다음 실행에 다시 시도.</summary>
+    private static void TryCleanStage()
+    {
+        try
+        {
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(exe)) return;
+            var stage = Path.Combine(Path.GetDirectoryName(exe)!, "YInput.stage.exe");
+            if (File.Exists(stage)) File.Delete(stage);
+        }
+        catch { /* 잠김 등 — 무시(다음 실행/업데이트에서 정리) */ }
     }
 
     private static WebApplication BuildWebApp(MacroService service, SocketHub hub, GitHubSync sync, WidgetManager widgets, string url)

@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Reflection;
-using System.Text;
 using System.Text.Json;
 
 namespace YInput.Host.Services;
@@ -116,9 +115,10 @@ public static class AppUpdater
     }
 
     /// <summary>
-    /// 최신 릴리즈 exe를 실행 파일 옆에 내려받고, "이 프로세스가 죽으면 실행 파일을 새 것으로 교체하고 다시 실행"하는
-    /// 교체 스크립트(.cmd)를 분리 실행한다. 성공(Ok=true)하면 호출측이 앱을 <b>종료</b>해야 교체가 진행된다.
-    /// 앱이 관리자 권한이면 스크립트·새 프로세스도 권한을 물려받아 UAC 재확인 없이 매끄럽게 재시작된다.
+    /// 최신 릴리즈 exe를 실행 파일 옆에 <c>YInput.stage.exe</c>로 내려받고, 그 <b>새 exe를 곧바로 실행</b>한다
+    /// (<c>--apply-update &lt;내PID&gt; "&lt;정식경로&gt;"</c>). 그러면 호출측(옛 프로세스)이 스스로 종료해 비켜주고,
+    /// 새 프로세스가 옛 프로세스 종료를 기다렸다 실행 파일을 교체하고 정식 이름으로 재실행한다(<see cref="UpdateFinalizer"/>).
+    /// 성공(Ok=true)하면 호출측이 앱을 <b>종료</b>해야 교체가 마무리된다. 관리자 권한은 자식 프로세스로 상속된다.
     /// </summary>
     public static UpdateStart StartSelfUpdate()
     {
@@ -130,63 +130,39 @@ public static class AppUpdater
         var exe = Environment.ProcessPath;
         if (string.IsNullOrEmpty(exe) || !File.Exists(exe)) return new(false, "현재 실행 파일 경로를 확인할 수 없습니다.");
         var dir = Path.GetDirectoryName(exe)!;
-        var newExe = Path.Combine(dir, "YInput.update.exe");
+        var stage = Path.Combine(dir, "YInput.stage.exe");
 
         // 1) 새 exe 스트리밍 다운로드(실행 파일과 같은 폴더 — 관리자 권한이라 Program Files라도 쓰기 가능)
         try
         {
             using var resp = Http.GetAsync(chk.DownloadUrl, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
             if (!resp.IsSuccessStatusCode) { return new(false, $"다운로드 실패(HTTP {(int)resp.StatusCode})"); }
-            using var fs = new FileStream(newExe, FileMode.Create, FileAccess.Write, FileShare.None);
+            using var fs = new FileStream(stage, FileMode.Create, FileAccess.Write, FileShare.None);
             resp.Content.CopyToAsync(fs).GetAwaiter().GetResult();
         }
-        catch (Exception ex) { TryDelete(newExe); return new(false, "다운로드 오류: " + ex.Message); }
+        catch (Exception ex) { TryDelete(stage); return new(false, "다운로드 오류: " + ex.Message); }
 
         // 2) 손상 방지 — 단일 파일 exe는 수십 MB. 비정상적으로 작으면 중단.
-        try { if (new FileInfo(newExe).Length < 1_000_000) { TryDelete(newExe); return new(false, "받은 파일이 비정상적으로 작습니다(손상)."); } }
+        try { if (new FileInfo(stage).Length < 1_000_000) { TryDelete(stage); return new(false, "받은 파일이 비정상적으로 작습니다(손상)."); } }
         catch { /* 크기 확인 실패는 무시 */ }
 
-        // 3) 교체 스크립트 작성 후 분리 실행(경로/PID는 스크립트에 그대로 박아 인자 따옴표 문제를 피함)
+        // 3) 내려받은 새 exe를 '업데이트 마무리' 모드로 실행 → 옛 프로세스(이 프로세스)가 종료되면 교체·정식 실행.
         try
         {
-            var pid = Environment.ProcessId;
-            var script = Path.Combine(Path.GetTempPath(), $"yinput-update-{pid}.cmd");
-            File.WriteAllText(script, BuildSwapScript(pid, exe, newExe), new UTF8Encoding(false)); // ASCII/UTF-8 no BOM
+            UpdateFinalizer.Log($"start-self-update: {chk.Latest} 다운로드 완료, 스테이지 실행(--apply-update pid={Environment.ProcessId})");
             Process.Start(new ProcessStartInfo
             {
-                FileName = "cmd.exe",
-                Arguments = $"/c \"{script}\"",
-                UseShellExecute = false,
+                FileName = stage,
+                Arguments = $"--apply-update {Environment.ProcessId} \"{exe}\"",
+                UseShellExecute = false, // 관리자 토큰 상속(UAC 재확인 없음)
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden,
             });
         }
         catch (Exception ex) { return new(false, "업데이트 실행 오류: " + ex.Message); }
 
-        return new(true, $"{chk.Latest} 내려받음 — 교체 후 재시작합니다.");
+        return new(true, $"{chk.Latest} 내려받음 — 새 버전으로 교체·재시작합니다.");
     }
 
     private static void TryDelete(string path) { try { if (File.Exists(path)) File.Delete(path); } catch { /* 무시 */ } }
-
-    /// <summary>PID 종료 대기 → 실행 파일 교체(잠겨 있으면 옆으로 밀어내고 교체) → 새 버전(--updated) 실행 → 임시 파일·자기 자신 삭제.</summary>
-    private static string BuildSwapScript(int pid, string exe, string newExe)
-    {
-        static string E(string s) => s.Replace("%", "%%"); // 경로 내 % 방어(드묾)
-        return string.Join("\r\n",
-            "@echo off",
-            "setlocal enableextensions",
-            $"set \"PID={pid}\"",
-            $"set \"EXE={E(exe)}\"",
-            $"set \"NEW={E(newExe)}\"",
-            ":wait",
-            "tasklist /nh /fi \"PID eq %PID%\" | find \"%PID%\" >nul 2>nul",
-            "if %errorlevel%==0 ( ping -n 2 127.0.0.1 >nul & goto wait )",
-            "copy /y \"%NEW%\" \"%EXE%\" >nul 2>nul",
-            "if errorlevel 1 ( move /y \"%EXE%\" \"%EXE%.old\" >nul 2>nul & copy /y \"%NEW%\" \"%EXE%\" >nul 2>nul )",
-            "start \"\" \"%EXE%\" --updated",
-            "del /q \"%NEW%\" >nul 2>nul",
-            "del /q \"%EXE%.old\" >nul 2>nul",
-            "del /q \"%~f0\" >nul 2>nul",
-            "") ;
-    }
 }
