@@ -14,6 +14,10 @@ namespace YInput.Host.Services;
 public sealed class SocketHub
 {
     private readonly ConcurrentDictionary<Guid, Client> _clients = new();
+    private int _mainClients; // 위젯이 아닌 웹 UI(브라우저 탭) 연결 수 — 단일 개체(중복 탭 방지) 판단용
+
+    /// <summary>브라우저 웹 UI(위젯 제외)가 하나라도 연결돼 있는가.</summary>
+    public bool HasMainClient => Volatile.Read(ref _mainClients) > 0;
 
     /// <summary>한 WebSocket 연결: 소켓 + 송신 채널. 송신은 펌프 1개가 전담한다.</summary>
     private sealed class Client
@@ -36,11 +40,12 @@ public sealed class SocketHub
         }
     }
 
-    public async Task HandleAsync(WebSocket socket, CancellationToken appStopping)
+    public async Task HandleAsync(WebSocket socket, CancellationToken appStopping, bool isWidget = false)
     {
         var id = Guid.NewGuid();
         var client = new Client(socket);
         _clients[id] = client;
+        if (!isWidget) Interlocked.Increment(ref _mainClients);
 
         // 송신 펌프: 이 소켓에서 SendAsync를 호출하는 유일한 경로.
         var pump = Task.Run(() => PumpAsync(client, appStopping));
@@ -61,6 +66,7 @@ public sealed class SocketHub
         finally
         {
             _clients.TryRemove(id, out _);
+            if (!isWidget) Interlocked.Decrement(ref _mainClients);
             client.Outbox.Writer.TryComplete();                  // 펌프 ReadAllAsync 종료 → 펌프 자연 종료
             try { await pump.ConfigureAwait(false); } catch { }   // 펌프 완료까지 대기(소켓이 펌프보다 먼저 dispose되지 않게)
             // socket.Dispose()는 호출하지 않는다 — /ws 엔드포인트의 `using var socket`이 소유(이중 Dispose 회피).

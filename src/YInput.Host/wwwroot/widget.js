@@ -179,7 +179,7 @@ function onStatus(s) {
   applyAppearance(); // 재생=녹색 / 정지 시 원래색
 }
 function connectWs() {
-  const ws = new WebSocket(`ws://${location.host}/ws`);
+  const ws = new WebSocket(`ws://${location.host}/ws?widget=1`); // 위젯 표시 → 서버가 '메인 UI' 수에서 제외
   ws.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'progress') showProgress(msg.data);

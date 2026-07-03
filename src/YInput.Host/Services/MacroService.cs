@@ -61,6 +61,12 @@ public sealed class MacroService
     /// <summary>로컬 매크로 변경을 웹 UI·위젯 창에 방송(목록/위젯 실시간 새로고침). 핫키·동기화 푸시는 각 변경 지점이 처리.</summary>
     public void BroadcastMacrosChanged() => _hub.Broadcast("macrosChanged", new { });
 
+    /// <summary>브라우저 웹 UI(위젯 제외)가 하나라도 연결돼 있는가 — 단일 개체(중복 탭 방지) 판단용.</summary>
+    public bool HasWebUiClient => _hub.HasMainClient;
+
+    /// <summary>열린 웹 UI에게 특정 매크로 편집을 열라고 알린다(새 탭 없이 기존 창 그 자리에서).</summary>
+    public void BroadcastOpenEditor(string id) => _hub.Broadcast("openEditor", new { id });
+
     /// <summary>웹/스크립트에서 앱 종료를 요청한다(그레이스풀).</summary>
     public void RequestQuit()
     {

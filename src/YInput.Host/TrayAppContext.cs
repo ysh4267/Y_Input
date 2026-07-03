@@ -61,6 +61,9 @@ internal sealed class TrayAppContext : ApplicationContext
 
     public void OpenUi()
     {
+        // 이미 열린 웹 UI가 있으면 새 탭을 열지 않고 그 창을 앞으로 가져온다(단일 개체).
+        // 창을 못 찾으면(백그라운드 탭 등) 폴백으로 새로 연다.
+        if (_service.HasWebUiClient && BrowserFocus.BringToFront()) return;
         try
         {
             // 기본 브라우저(보통 크롬) 일반 창/탭으로 연다.

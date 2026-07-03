@@ -92,9 +92,16 @@ public sealed class WidgetManager
         }
     }
 
-    /// <summary>위젯 더블클릭 → 기본 브라우저로 메인 편집 페이지(<c>/?edit=id</c>)를 연다.</summary>
+    /// <summary>위젯 더블클릭 → 메인 편집 페이지를 연다. 이미 열린 웹 UI가 있으면 새 탭을 만들지 않고
+    /// 그 창에서 편집을 열고(WS) 창을 앞으로 가져온다(단일 개체). 없으면 새 탭으로 <c>/?edit=id</c>를 연다.</summary>
     private void OpenEditor(string id)
     {
+        if (_service.HasWebUiClient)
+        {
+            _service.BroadcastOpenEditor(id); // 기존 탭이 그 자리에서 편집 열기(중복 탭 없음)
+            BrowserFocus.BringToFront();       // 그 브라우저 창을 앞으로(활성 탭이면 성공)
+            return;
+        }
         try { Process.Start(new ProcessStartInfo($"{_baseUrl}/?edit={Uri.EscapeDataString(id)}") { UseShellExecute = true }); }
         catch (Exception ex) { _service.Log("error", "편집 페이지 열기 실패: " + ex.Message); }
     }

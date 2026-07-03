@@ -171,6 +171,17 @@ async function loadMacros() {
   reflectPins(); // 목록 다시 그린 뒤 핀 버튼 상태 반영
 }
 
+// 위젯 더블클릭이 서버를 통해(WS) 이 창에 편집을 열도록 요청 — 새 탭을 만들지 않고 여기서 편집기를 연다.
+async function openEditorFromWidget(id) {
+  if (!id) return;
+  try {
+    const m = await api.getMacro(id);
+    switchTab('edit');
+    editor.open(m);
+    try { window.focus(); } catch { /* 백그라운드 탭이면 브라우저가 막을 수 있음 */ }
+  } catch (e) { log('error', '편집 열기 실패: ' + e.message); }
+}
+
 // ---------- 고정(핀) 위젯 — 클릭하면 별도의 보더리스 창(WebView2)으로 띄움. 상태는 서버가 관리 ----------
 let pinnedIds = []; // 현재 열려 있는 위젯 창의 macroId들(서버 기준)
 const isPinned = (id) => pinnedIds.includes(id);
@@ -930,6 +941,7 @@ function connectWs() {
       case 'inputDetected': if (capTrigId) onTriggerGamepad(msg.data); else editor.onInputDetected(msg.data); break;
       case 'inputMonitor': log('monitor', `[${msg.data.source}] ${msg.data.label}`, msg.data.time); break;
       case 'macrosChanged': loadMacros(); break; // 동기화로 원격 변경 반영(목록 새로고침)
+      case 'openEditor': openEditorFromWidget(msg.data.id); break; // 위젯 더블클릭 → 기존 창에서 편집 열기(중복 탭 방지)
       case 'syncStatus': if (!$('settings-overlay').hidden) renderSyncStatus(msg.data); break; // 동기화 진행/결과 실시간
       case 'widgets': setPinned(msg.data.ids); break; // 열린 위젯 창 목록 → 핀 버튼 상태 동기화
       case 'shutdown': handleShutdown(); break;

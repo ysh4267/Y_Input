@@ -258,10 +258,11 @@ public static class ApiEndpoints
                 ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
                 return;
             }
+            var isWidget = ctx.Request.Query["widget"] == "1"; // 위젯 창은 '메인 UI' 수에서 제외
             using var socket = await ctx.WebSockets.AcceptWebSocketAsync();
             // 연결 직후 현재 상태 1회 푸시
             service.BroadcastStatus();
-            await hub.HandleAsync(socket, ctx.RequestAborted);
+            await hub.HandleAsync(socket, ctx.RequestAborted, isWidget);
         });
     }
 
