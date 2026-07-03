@@ -11,6 +11,8 @@ body.widget-body {
 }
 .w-head { display: flex; align-items: center; gap: 8px; cursor: move; flex: 0 0 auto; }
 .w-name { flex: 1; min-width: 0; font-weight: 700; font-size: 13px; color: #f3f5f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+/* 남은 시간 / 최대 시간(재생 중 남은·총 초). 대기 시엔 '최대 N초'. */
+.w-time { flex: 0 0 auto; font-size: 11px; font-weight: 600; color: #cfd4de; font-variant-numeric: tabular-nums; white-space: nowrap; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
 .w-close { flex: 0 0 auto; width: 20px; height: 20px; border: none; background: transparent; color: var(--muted); border-radius: 6px; cursor: pointer; font-size: 13px; line-height: 1; }
 .w-close:hover { background: rgba(255,255,255,.14); color: var(--text); }
 /* 인디케이터는 아래로 붙이되, 위 여백(margin-top:auto) + 아래 여백(padding-bottom)으로 가운데 아래쯤 */

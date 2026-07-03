@@ -38,7 +38,7 @@ internal sealed class WidgetWindow : Form
     private const int WCA_ACCENT_POLICY = 19;
     private const int ACCENT_DISABLED = 0;
     private const int ACCENT_ENABLE_BLURBEHIND = 3;         // 가벼운 블러(아크릴은 렉 때문에 제외)
-    private uint _tint = 0xE016110E;                          // 기본 대기색(어두운 검정 계열, ABGR). 페이지가 'tint:'로 갱신. DWM이 창 전체에 균일 적용.
+    private uint _tint = 0xF0130E0C;                          // 기본 대기색(검정 계열·높은 알파, ABGR). 페이지가 'tint:'로 갱신. DWM이 창 전체에 균일 적용.
 
     private const int FixedHeight = 104;
     private const int CornerRadius = 9;
