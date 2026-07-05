@@ -32,11 +32,19 @@ internal static class Program
         using var mutex = new Mutex(true, "Global\\YInput_SingleInstance_2F1B", out bool created);
         if (!created)
         {
-            System.Windows.Forms.MessageBox.Show(
-                "Y_Input이 이미 실행 중입니다. 작업 표시줄 오른쪽 트레이 아이콘을 확인하세요.",
-                "Y_Input", System.Windows.Forms.MessageBoxButtons.OK,
-                System.Windows.Forms.MessageBoxIcon.Information);
-            return;
+            // 이미 실행 중 — 기존 프로세스를 종료시키고 이어받는다(새로 실행한 쪽이 이김).
+            TakeOverRunningInstance();
+            bool acquired;
+            try { acquired = mutex.WaitOne(TimeSpan.FromSeconds(8)); }
+            catch (AbandonedMutexException) { acquired = true; } // 이전 소유자가 죽으며 버려짐 → 우리가 획득
+            if (!acquired)
+            {
+                System.Windows.Forms.MessageBox.Show(
+                    "실행 중인 Y_Input을 종료하지 못했습니다. 잠시 후 다시 시도하세요.",
+                    "Y_Input", System.Windows.Forms.MessageBoxButtons.OK,
+                    System.Windows.Forms.MessageBoxIcon.Warning);
+                return;
+            }
         }
 
         TryCleanStage(); // 지난 업데이트에서 남은 스테이지 exe(YInput.stage.exe) 정리
@@ -98,6 +106,37 @@ internal static class Program
         // 정리
         try { app.StopAsync().Wait(3000); } catch { /* ignore */ }
         try { (app as IDisposable)?.Dispose(); } catch { /* ignore */ }
+    }
+
+    /// <summary>이미 실행 중인 Y_Input을 종료시킨다 — 먼저 그레이스풀 종료(/api/app/quit, 눌린 입력 떼기)를 요청하고,
+    /// 그래도 남아 있으면 강제 종료. 스테이지(업데이트 마무리) 프로세스는 건드리지 않는다.</summary>
+    private static void TakeOverRunningInstance()
+    {
+        int self = Environment.ProcessId;
+
+        // 1) 그레이스풀 종료 요청(기본 포트) — 실패해도 아래 강제 종료로 처리
+        try
+        {
+            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            http.PostAsync($"http://127.0.0.1:{PreferredPort}/api/app/quit", null).GetAwaiter().GetResult();
+        }
+        catch { /* 포트 다름/무응답 — 강제 종료로 */ }
+
+        // 2) 남은 YInput 프로세스 종료(자기 자신·업데이트 스테이지 제외)
+        foreach (var p in System.Diagnostics.Process.GetProcesses())
+        {
+            try
+            {
+                var name = p.ProcessName;
+                if (p.Id == self
+                    || !name.StartsWith("YInput", StringComparison.OrdinalIgnoreCase)
+                    || name.Contains("stage", StringComparison.OrdinalIgnoreCase)) // 업데이트 마무리 프로세스는 보호
+                { p.Dispose(); continue; }
+                if (!p.WaitForExit(3000)) { try { p.Kill(); } catch { /* 이미 종료 등 */ } }
+                p.Dispose();
+            }
+            catch { try { p.Dispose(); } catch { /* 무시 */ } }
+        }
     }
 
     /// <summary>지난 업데이트에서 남은 스테이지 exe(YInput.stage.exe)를 정리(있으면). 잠겨 있으면 다음 실행에 다시 시도.</summary>
