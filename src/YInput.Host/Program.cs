@@ -22,6 +22,9 @@ internal static class Program
         int applyIdx = Array.IndexOf(cmdArgs, "--apply-update");
         if (applyIdx >= 0) { UpdateFinalizer.Run(cmdArgs, applyIdx); return; }
 
+        // 자체 설치: 설치 폴더가 아닌 곳에서 실행되면 설치 폴더로 복사 후 그쪽을 실행하고 이 인스턴스는 종료(뮤텍스 잡기 전).
+        if (Installer.EnsureInstalled(cmdArgs)) return;
+
         using var mutex = new Mutex(true, "Global\\YInput_SingleInstance_2F1B", out bool created);
         if (!created)
         {

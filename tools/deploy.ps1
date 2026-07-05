@@ -44,7 +44,8 @@ $ok = (Get-FileHash $Src).Hash -eq (Get-FileHash $Dst).Hash
 Write-Output ("Build up-to-date: " + $ok)
 
 # 5) Launch new build (requireAdministrator manifest -> UAC consent dialog may appear)
+#    --portable: dev build runs in place (Build\) instead of self-installing to %LOCALAPPDATA%\Programs\YInput.
 if (-not $NoLaunch) {
-  Start-Process $Dst
-  Write-Output "launched new build"
+  Start-Process $Dst -ArgumentList '--portable'
+  Write-Output "launched new build (--portable)"
 }
