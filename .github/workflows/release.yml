@@ -74,7 +74,28 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $notes = @'
+          # Y_Input — 드라이버급 입력 매크로
+
+          키보드·마우스·게임패드 입력을 **드라이버 레벨**에서 발생시키는 매크로 프로그램입니다.
+          일반 `SendInput`과 달리 OS 입력 스택 하위에 주입하므로 `injected` 플래그가 붙지 않아,
+          합성 입력을 무시하는 일부 응용에서도 동작합니다.
+
+          - 키보드·마우스: Interception 드라이버 / 게임패드: ViGEmBus 가상 Xbox360
+          - 시스템 트레이 상주 + 기본 브라우저(localhost) 웹 UI로 제어
+          - 녹화·재생, 전역 핫키 트리거, 인앱 자동 업데이트 지원
+
+          ## 다운로드
+
+          | 파일 | 설명 |
+          | --- | --- |
+          | `YInput.exe` | **설치본** — 첫 실행 시 자동 설치 + 시작 메뉴 등록 |
+          | `YInput-Portable.exe` | **포터블** — 제자리 실행, 설치 안 함 |
+
+          두 파일 모두 관리자 권한이 필요합니다(커널 드라이버 설치·사용).
+          '@
+          Set-Content -Path notes.md -Value $notes -Encoding utf8
           gh release create ${{ steps.ver.outputs.tag }} publish/YInput.exe publish/YInput-Portable.exe `
             --title "Y_Input ${{ steps.ver.outputs.tag }}" `
             --target ${{ github.sha }} `
-            --notes "자동 릴리즈. YInput.exe = 설치본(첫 실행 시 %LOCALAPPDATA%\Programs\YInput 로 자동 설치 + 시작 메뉴 등록). YInput-Portable.exe = 포터블(제자리 실행, 설치 안 함). 둘 다 관리자 권한 필요. (${{ github.sha }})"
+            --notes-file notes.md
