@@ -34,25 +34,33 @@ internal static class UpdateFinalizer
                 return;
             }
 
-            // 1) 옛 프로세스가 스스로 종료(비켜주기)하길 기다림 — 실행 파일 잠금·단일 인스턴스 뮤텍스가 풀린다.
+            // 1) 옛 프로세스가 스스로 종료(비켜주기)하길 기다림 — 안 나가면 강제 종료해 실행 파일 잠금을 푼다.
             if (oldPid > 0)
             {
-                try { using var op = Process.GetProcessById(oldPid); if (!op.WaitForExit(20000)) Log("경고: 옛 프로세스가 20초 후에도 살아있음"); }
+                try
+                {
+                    using var op = Process.GetProcessById(oldPid);
+                    if (!op.WaitForExit(15000))
+                    {
+                        Log("옛 프로세스가 15초 후에도 살아있음 → 강제 종료");
+                        try { op.Kill(); op.WaitForExit(4000); } catch (Exception ex) { Log("강제 종료 실패: " + ex.Message); }
+                    }
+                }
                 catch { /* 이미 종료됨 */ }
             }
             Thread.Sleep(400); // 이미지 잠금/뮤텍스가 완전히 풀리도록 약간 더 대기
 
-            // 2) 자기 자신(새 버전)을 정식 경로로 덮어쓰기 — 아직 잠겨 있을 수 있어 재시도.
-            bool copied = false;
-            for (int i = 0; i < 20 && !copied; i++)
+            // 2) 자기 자신(새 버전)을 정식 경로로 덮어쓰기 — 아직 잠겨 있을 수 있어 재시도(약 7.5초).
+            bool copied = false; Exception? lastErr = null;
+            for (int i = 0; i < 25 && !copied; i++)
             {
                 try { File.Copy(stage, canonical, overwrite: true); copied = true; }
-                catch (Exception ex) { if (i == 0) Log("교체 재시도: " + ex.Message); Thread.Sleep(300); }
+                catch (Exception ex) { lastErr = ex; Thread.Sleep(300); }
             }
             if (!copied)
             {
-                Log("교체 실패 — 중단");
-                ShowError("업데이트 교체에 실패했습니다(실행 파일이 잠겨 있음). 앱을 완전히 종료한 뒤 다시 시도해 주세요.");
+                Log("교체 실패: " + (lastErr?.Message ?? "알 수 없음"));
+                ShowError("업데이트 교체에 실패했습니다: " + (lastErr?.Message ?? "실행 파일 잠김") + "\n앱을 완전히 종료한 뒤 다시 시도해 주세요.");
                 return;
             }
             Log("교체 완료(스테이지 → 정식)");

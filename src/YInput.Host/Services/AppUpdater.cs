@@ -143,25 +143,35 @@ public static class AppUpdater
         if (string.IsNullOrEmpty(exe) || !File.Exists(exe)) return new(false, "현재 실행 파일 경로를 확인할 수 없습니다.");
         var dir = Path.GetDirectoryName(exe)!;
         var stage = Path.Combine(dir, "YInput.stage.exe");
+        UpdateFinalizer.Log($"self-update 시작: exe='{exe}' stage='{stage}' asset={CurrentAssetName()} {chk.Latest}");
+
+        // 이전 시도에서 남은 스테이지 프로세스/파일이 잠그고 있으면 정리 — 안 그러면 다운로드가 '사용 중'으로 실패한다.
+        KillStaleStage();
+        TryDelete(stage);
 
         // 1) 새 exe 스트리밍 다운로드(실행 파일과 같은 폴더 — 관리자 권한이라 Program Files라도 쓰기 가능)
         try
         {
             using var resp = Http.GetAsync(chk.DownloadUrl, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
-            if (!resp.IsSuccessStatusCode) { return new(false, $"다운로드 실패(HTTP {(int)resp.StatusCode})"); }
+            if (!resp.IsSuccessStatusCode) { UpdateFinalizer.Log($"다운로드 HTTP {(int)resp.StatusCode}"); return new(false, $"다운로드 실패(HTTP {(int)resp.StatusCode})"); }
             using var fs = new FileStream(stage, FileMode.Create, FileAccess.Write, FileShare.None);
             resp.Content.CopyToAsync(fs).GetAwaiter().GetResult();
         }
-        catch (Exception ex) { TryDelete(stage); return new(false, "다운로드 오류: " + ex.Message); }
+        catch (Exception ex) { UpdateFinalizer.Log("다운로드 오류: " + ex); TryDelete(stage); return new(false, "다운로드 오류: " + ex.Message); }
 
         // 2) 손상 방지 — 단일 파일 exe는 수십 MB. 비정상적으로 작으면 중단.
-        try { if (new FileInfo(stage).Length < 1_000_000) { TryDelete(stage); return new(false, "받은 파일이 비정상적으로 작습니다(손상)."); } }
+        try
+        {
+            var len = new FileInfo(stage).Length;
+            UpdateFinalizer.Log($"다운로드 완료: {len} bytes");
+            if (len < 1_000_000) { TryDelete(stage); return new(false, "받은 파일이 비정상적으로 작습니다(손상)."); }
+        }
         catch { /* 크기 확인 실패는 무시 */ }
 
         // 3) 내려받은 새 exe를 '업데이트 마무리' 모드로 실행 → 옛 프로세스(이 프로세스)가 종료되면 교체·정식 실행.
         try
         {
-            UpdateFinalizer.Log($"start-self-update: {chk.Latest} 다운로드 완료, 스테이지 실행(--apply-update pid={Environment.ProcessId})");
+            UpdateFinalizer.Log($"스테이지 실행(--apply-update pid={Environment.ProcessId})");
             Process.Start(new ProcessStartInfo
             {
                 FileName = stage,
@@ -171,10 +181,29 @@ public static class AppUpdater
                 WindowStyle = ProcessWindowStyle.Hidden,
             });
         }
-        catch (Exception ex) { return new(false, "업데이트 실행 오류: " + ex.Message); }
+        catch (Exception ex) { UpdateFinalizer.Log("스테이지 실행 오류: " + ex); return new(false, "업데이트 실행 오류: " + ex.Message); }
 
         return new(true, $"{chk.Latest} 내려받음 — 새 버전으로 교체·재시작합니다.");
     }
 
     private static void TryDelete(string path) { try { if (File.Exists(path)) File.Delete(path); } catch { /* 무시 */ } }
+
+    /// <summary>이전 업데이트에서 멈춘 스테이지(YInput.stage.exe) 프로세스를 종료해 다운로드 대상 파일 잠금을 푼다.</summary>
+    private static void KillStaleStage()
+    {
+        try
+        {
+            foreach (var p in Process.GetProcesses())
+            {
+                try
+                {
+                    if (p.ProcessName.StartsWith("YInput.stage", StringComparison.OrdinalIgnoreCase))
+                    { UpdateFinalizer.Log($"잔존 스테이지 종료 pid={p.Id}"); try { p.Kill(); p.WaitForExit(2000); } catch { /* 이미 종료 등 */ } }
+                    p.Dispose();
+                }
+                catch { try { p.Dispose(); } catch { /* 무시 */ } }
+            }
+        }
+        catch { /* 무시 */ }
+    }
 }
