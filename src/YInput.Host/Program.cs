@@ -16,6 +16,10 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
+        // 비주얼 스타일은 어떤 창(설치 대화상자·메시지박스)보다 먼저 설정해야 한다.
+        System.Windows.Forms.Application.EnableVisualStyles();
+        System.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
+
         // 업데이트 마무리 역할: 새로 내려받은 exe가 --apply-update 로 실행되면 정식 앱을 띄우지 않고(뮤텍스도 안 잡음)
         // 옛 프로세스 종료를 기다렸다 실행 파일을 교체하고 정식 이름으로 재실행한다.
         var cmdArgs = Environment.GetCommandLineArgs();
@@ -34,9 +38,6 @@ internal static class Program
                 System.Windows.Forms.MessageBoxIcon.Information);
             return;
         }
-
-        System.Windows.Forms.Application.EnableVisualStyles();
-        System.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
 
         TryCleanStage(); // 지난 업데이트에서 남은 스테이지 exe(YInput.stage.exe) 정리
 
