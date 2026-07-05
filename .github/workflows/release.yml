@@ -66,13 +66,15 @@ jobs:
             -p:InformationalVersion=${{ steps.ver.outputs.tag }} `
             -o publish --nologo -v minimal
           if (-not (Test-Path publish/YInput.exe)) { throw "publish/YInput.exe not found" }
+          # 포터블 배포본(설치본과 동일 바이너리, 파일명만 다름 → 앱이 파일명으로 포터블/설치 구분).
+          Copy-Item publish/YInput.exe publish/YInput-Portable.exe -Force
 
       - name: Create GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create ${{ steps.ver.outputs.tag }} publish/YInput.exe `
+          gh release create ${{ steps.ver.outputs.tag }} publish/YInput.exe publish/YInput-Portable.exe `
             --title "Y_Input ${{ steps.ver.outputs.tag }}" `
             --target ${{ github.sha }} `
-            --notes "Auto release from ${{ github.sha }}"
+            --notes "자동 릴리즈. YInput.exe = 설치본(첫 실행 시 %LOCALAPPDATA%\Programs\YInput 로 자동 설치 + 시작 메뉴 등록). YInput-Portable.exe = 포터블(제자리 실행, 설치 안 함). 둘 다 관리자 권한 필요. (${{ github.sha }})"

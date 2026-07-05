@@ -5,7 +5,8 @@ namespace YInput.Host;
 /// <summary>
 /// 간단한 "앱 자체 설치". 설치 폴더(<see cref="InstallExe"/>)가 아닌 곳에서 실행되면, 자기 자신을 설치 폴더로
 /// 복사하고 시작 메뉴 바로가기를 만든 뒤 그쪽을 실행하고 이 인스턴스는 종료한다. 설치 폴더에서 실행 중이거나
-/// 업데이트/포터블 모드면 아무것도 하지 않는다. 이미 관리자 권한이라 자식 실행이 권한을 물려받아 UAC 재확인이 없다.
+/// 업데이트/포터블 모드(<c>--portable</c> 또는 파일명에 'portable')면 아무것도 하지 않는다(제자리 실행).
+/// 즉 릴리즈의 <c>YInput.exe</c>=설치본, <c>YInput-Portable.exe</c>=포터블. 이미 관리자 권한이라 자식 실행이 권한을 물려받아 UAC 재확인이 없다.
 /// 설치 뒤에는 실행 파일이 설치 폴더에 있으므로 인앱 업데이트도 자동으로 그 폴더에서 이뤄진다.
 /// </summary>
 internal static class Installer
@@ -27,6 +28,8 @@ internal static class Installer
             // 이미 설치 위치이거나, 업데이트 재시작/포터블(개발)이면 설치하지 않는다.
             if (PathEquals(cur, InstallExe)) return false;
             if (args.Contains("--updated") || args.Contains("--apply-update") || args.Contains("--portable")) return false;
+            // 파일명에 'portable'이 들어간 배포본(YInput-Portable.exe)은 제자리 실행 — 설치 안 함.
+            if (Path.GetFileNameWithoutExtension(cur).Contains("portable", StringComparison.OrdinalIgnoreCase)) return false;
 
             bool installed;
             try
