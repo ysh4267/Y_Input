@@ -18,8 +18,8 @@ public static class AppUpdater
     private const string PortableAssetName = "YInput-Portable.exe"; // 포터블본
     private static readonly string LatestApi = $"https://api.github.com/repos/{Owner}/{Repo}/releases/latest";
 
-    /// <summary>현재 실행 파일이 포터블(파일명에 'portable')인가 — 다운로드할 릴리즈 자산 선택에 사용.</summary>
-    private static bool IsPortable()
+    /// <summary>현재 실행 파일이 포터블(파일명에 'portable')인가 — 자산 선택 + 업데이트 방식(포터블=다운로드만 / 설치본=자동 교체) 결정.</summary>
+    public static bool IsPortable()
     {
         var p = Environment.ProcessPath;
         return !string.IsNullOrEmpty(p) && Path.GetFileNameWithoutExtension(p).Contains("portable", StringComparison.OrdinalIgnoreCase);

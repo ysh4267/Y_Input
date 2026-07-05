@@ -223,12 +223,12 @@ public static class ApiEndpoints
         app.MapGet("/api/app/version", () => Guard(async () =>
         {
             var v = await Task.Run(AppUpdater.Version);
-            return Results.Json(new { current = v.Current, currentDate = v.CurrentDate, release = v.Release, releaseDate = v.ReleaseDate });
+            return Results.Json(new { current = v.Current, currentDate = v.CurrentDate, release = v.Release, releaseDate = v.ReleaseDate, portable = AppUpdater.IsPortable() });
         }));
         app.MapGet("/api/app/update/check", () => Guard(async () =>
         {
             var r = await Task.Run(AppUpdater.Check);
-            return Results.Json(new { ok = r.Ok, updateAvailable = r.UpdateAvailable, current = r.Current, latest = r.Latest, message = r.Message, downloadUrl = r.DownloadUrl, pageUrl = r.PageUrl });
+            return Results.Json(new { ok = r.Ok, updateAvailable = r.UpdateAvailable, current = r.Current, latest = r.Latest, message = r.Message, downloadUrl = r.DownloadUrl, pageUrl = r.PageUrl, portable = AppUpdater.IsPortable() });
         }));
         // 인앱 자동 교체: 새 exe 다운로드 → 교체 스크립트 분리 실행 → 앱 종료(스크립트가 교체 후 새 버전 실행)
         app.MapPost("/api/app/update", () => Guard(async () =>

@@ -98,6 +98,11 @@ async function loadVersion() {
     $('ver-current').textContent = v.current ? `${v.current}${v.currentDate ? ` (${v.currentDate})` : ''}` : '개발 빌드';
     $('ver-release').textContent = v.release || '—';
     $('ver-date').textContent = v.releaseDate || '—';
+    // 종류에 따라 업데이트 버튼/설명: 포터블=다운로드 링크 / 설치본=자동 교체·재시작
+    const ab = $('btn-update-apply'); if (ab) ab.textContent = v.portable ? '새 버전 다운로드' : '지금 업데이트';
+    const us = $('update-status'); if (us) us.textContent = v.portable
+      ? '포터블은 새 exe 다운로드 링크를 엽니다 — 받은 파일로 기존 exe를 직접 교체하세요.'
+      : '설치본은 앱을 종료하고 새 exe로 교체한 뒤 자동으로 재시작합니다.';
   } catch {
     $('ver-current').textContent = $('ver-release').textContent = $('ver-date').textContent = '—';
   }
@@ -1015,6 +1020,15 @@ async function onUpdateApply() {
     const chk = await api.updateCheck();
     if (!chk.ok) { st.textContent = '확인 실패: ' + (chk.message || ''); return; }
     if (!chk.updateAvailable) { st.textContent = `이미 최신 상태입니다 (현재 ${chk.current || '개발 빌드'}).`; return; }
+    // 포터블: 자동 교체 없이 새 exe 다운로드 링크만 연다(사용자가 직접 교체).
+    if (chk.portable) {
+      const url = chk.downloadUrl || chk.pageUrl;
+      if (!url) { st.textContent = '다운로드 링크를 찾을 수 없습니다: ' + (chk.message || ''); return; }
+      window.open(url, '_blank', 'noopener');
+      st.textContent = `${chk.latest} 다운로드를 시작했습니다 — 받은 파일로 기존 exe를 교체하세요.`;
+      return;
+    }
+    // 설치본: 프로세스 종료 → exe 교체 → 재시작
     const ok = await confirmDialog(
       `새 버전 ${chk.latest}(으)로 지금 업데이트할까요? 앱이 새 실행 파일을 내려받아 교체하고 자동으로 재시작합니다.`,
       { title: '업데이트', ok: '지금 업데이트', cancel: '취소' });
