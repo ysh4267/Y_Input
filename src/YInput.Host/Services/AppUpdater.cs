@@ -14,8 +14,19 @@ public static class AppUpdater
 {
     private const string Owner = "ysh4267";
     private const string Repo = "Y_Input";
-    private const string AssetName = "YInput.exe";
+    private const string DefaultAssetName = "YInput.exe";           // 설치본
+    private const string PortableAssetName = "YInput-Portable.exe"; // 포터블본
     private static readonly string LatestApi = $"https://api.github.com/repos/{Owner}/{Repo}/releases/latest";
+
+    /// <summary>현재 실행 파일이 포터블(파일명에 'portable')인가 — 다운로드할 릴리즈 자산 선택에 사용.</summary>
+    private static bool IsPortable()
+    {
+        var p = Environment.ProcessPath;
+        return !string.IsNullOrEmpty(p) && Path.GetFileNameWithoutExtension(p).Contains("portable", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>내려받을 자산 이름 — 포터블이면 YInput-Portable.exe, 아니면 YInput.exe. 같은 종류로 자기 자신을 교체한다.</summary>
+    private static string CurrentAssetName() => IsPortable() ? PortableAssetName : DefaultAssetName;
 
     private static readonly HttpClient Http = CreateHttp();
     private static HttpClient CreateHttp()
@@ -68,7 +79,7 @@ public static class AppUpdater
         if (!ok) return new CheckResult(false, false, cur, "", "릴리즈 확인 실패: " + err, "", "");
         if (string.IsNullOrEmpty(latest.Tag)) return new CheckResult(false, false, cur, "", "릴리즈를 찾을 수 없습니다.", "", "");
         if (string.IsNullOrEmpty(latest.AssetUrl))
-            return new CheckResult(false, false, cur, latest.Tag, $"{latest.Tag} 릴리즈에 {AssetName} 파일이 없습니다.", "", latest.HtmlUrl);
+            return new CheckResult(false, false, cur, latest.Tag, $"{latest.Tag} 릴리즈에 {CurrentAssetName()} 파일이 없습니다.", "", latest.HtmlUrl);
 
         // 임베드 버전과 최신 태그가 정확히 같으면 최신. (개발 빌드 등 cur="" 이면 업데이트 가능으로 안내)
         var upToDate = !string.IsNullOrEmpty(cur) && string.Equals(cur, latest.Tag, StringComparison.OrdinalIgnoreCase);
@@ -92,20 +103,21 @@ public static class AppUpdater
             if (root.TryGetProperty("published_at", out var pa) && pa.GetString() is { Length: >= 10 } ds)
                 date = ds[..10];
 
-            var assetUrl = "";
+            // 종류(포터블/설치본)에 맞는 자산을 우선 선택하고, 없으면 기본 YInput.exe로 폴백(구 릴리즈 호환).
+            var want = CurrentAssetName();
+            string wantUrl = "", fallbackUrl = "";
             if (root.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
             {
                 foreach (var a in assets.EnumerateArray())
                 {
-                    if (a.TryGetProperty("name", out var n)
-                        && string.Equals(n.GetString(), AssetName, StringComparison.OrdinalIgnoreCase)
-                        && a.TryGetProperty("browser_download_url", out var u))
-                    {
-                        assetUrl = u.GetString() ?? "";
-                        break;
-                    }
+                    if (!a.TryGetProperty("name", out var n) || !a.TryGetProperty("browser_download_url", out var u)) continue;
+                    var name = n.GetString() ?? "";
+                    var url = u.GetString() ?? "";
+                    if (string.Equals(name, want, StringComparison.OrdinalIgnoreCase)) wantUrl = url;
+                    else if (string.Equals(name, DefaultAssetName, StringComparison.OrdinalIgnoreCase)) fallbackUrl = url;
                 }
             }
+            var assetUrl = wantUrl.Length > 0 ? wantUrl : fallbackUrl;
             return (true, new LatestRelease(tag, date, assetUrl, htmlUrl), "");
         }
         catch (Exception ex)
@@ -125,7 +137,7 @@ public static class AppUpdater
         var chk = Check();
         if (!chk.Ok) return new(false, chk.Message);
         if (!chk.UpdateAvailable) return new(false, "이미 최신 버전입니다.");
-        if (string.IsNullOrEmpty(chk.DownloadUrl)) return new(false, $"{chk.Latest} 릴리즈에 {AssetName}이(가) 없습니다.");
+        if (string.IsNullOrEmpty(chk.DownloadUrl)) return new(false, $"{chk.Latest} 릴리즈에 {CurrentAssetName()}이(가) 없습니다.");
 
         var exe = Environment.ProcessPath;
         if (string.IsNullOrEmpty(exe) || !File.Exists(exe)) return new(false, "현재 실행 파일 경로를 확인할 수 없습니다.");
