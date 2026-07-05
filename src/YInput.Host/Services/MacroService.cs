@@ -624,6 +624,8 @@ public sealed class MacroService
 
     private void OnHotkey(string macroId)
     {
+        // 트리거/입력 캡처 중(listen)에는 매크로를 시작하지 않는다 — 캡처하려고 누른 키가 매크로를 켜지 않게.
+        if (_listenActive) return;
         // 저수준 훅 콜백을 막지 않도록 백그라운드에서. Play()가 토글 처리:
         // 그 매크로가 재생 중이면 정지, 아니면 시작(다른 매크로와 동시 재생).
         _ = Task.Run(() =>

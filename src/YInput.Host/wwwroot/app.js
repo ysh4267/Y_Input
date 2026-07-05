@@ -159,6 +159,8 @@ function renderStatus(s) {
   editor.onStatus(s);
   // 동시 재생: 재생 중이 아닌 매크로의 인디케이터는 초기화하고, 표시 중인 매크로가 재생 아니면 하이라이트 해제
   const playingSet = new Set(s.playingIds || []);
+  // 종료된 매크로는 대기 중(rAF 큐)인 progress 프레임까지 버린다 → 리셋 직후 마지막 프레임이 되살리는 경쟁 방지.
+  for (const id of [...pendingProgress.keys()]) if (!playingSet.has(id)) pendingProgress.delete(id);
   document.querySelectorAll('.macro-prog').forEach((el) => {
     if (!playingSet.has(el.dataset.id)) { resetMacroTimeline(el); delayAnims.delete(el.dataset.id); }
   });
@@ -444,7 +446,7 @@ function beginTriggerCapture(id, name, btn) {
     return all.length ? all.join('+') : '대기…';
   };
   const onKey = (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); endTriggerCapture(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); finishTrigger(null); return; } // Esc = 트리거 해제(초기화)
     mods = { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey };
     const vk = km.eventToVk(e);
     if (vk == null) { if (valEl) valEl.textContent = liveLabel(); return; } // 순수 모디파이어: 플래그만
@@ -469,7 +471,7 @@ function beginTriggerCapture(id, name, btn) {
     finishTrigger({ ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, win: e.metaKey, virtualKey: 0, keys: [], mouse: mb, gamepad: null });
   };
   const onCtx = (e) => e.preventDefault();
-  log('info', `'${name}' 트리거 입력 대기… 키(여러 개 동시 가능)·마우스·패드를 누르고 떼면 확정 (Esc 취소)`);
+  log('info', `'${name}' 트리거 입력 대기… 키(여러 개 동시 가능)·마우스·패드를 누르고 떼면 확정 (Esc = 트리거 해제)`);
   setTimeout(() => {
     if (capTrigId !== id) return;
     window.addEventListener('keydown', onKey, true);
@@ -495,7 +497,7 @@ function onTriggerGamepad(data) {
 async function finishTrigger(trigger) {
   const id = capTrigId; endTriggerCapture();
   if (!id) return;
-  try { await api.setTrigger(id, trigger); await loadMacros(); log('info', '트리거 설정됨.'); }
+  try { await api.setTrigger(id, trigger); await loadMacros(); log('info', trigger ? '트리거 설정됨.' : '트리거 해제됨.'); }
   catch (e) { log('error', e.message); }
 }
 function endTriggerCapture() {
