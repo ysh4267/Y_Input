@@ -23,7 +23,6 @@ public sealed class MacroService
     private readonly ProgressBroadcaster _progress;
 
     private readonly object _gate = new();
-    private readonly Dictionary<int, string> _hotkeyToMacro = new();
     private readonly List<(string macroId, GamepadControl control)> _gamepadTriggers = new();
 
     // 동시 재생: macroId → 그 매크로의 재생 Player. 여러 매크로가 동시에 재생될 수 있다.
@@ -522,37 +521,46 @@ public sealed class MacroService
     public void ReloadHotkeys()
     {
         _hotkeys.UnregisterAll();
-        _hotkeyToMacro.Clear();
         lock (_gate) _gamepadTriggers.Clear();
+        // 같은 트리거(키/마우스)를 여러 매크로가 공유하면 하나의 그룹으로 묶어 한 번만 등록한다.
+        // 각 매크로가 개별 토글되면 재생 상태가 어긋났을 때(한쪽만 먼저 끝난 경우 등)
+        // 끄기 입력이 꺼진 쪽을 되살리므로, 그룹 단위로 함께 켜고 함께 끈다.
+        var groups = new Dictionary<string, (Hotkey hk, List<string> ids, List<string> names)>();
         foreach (var m in _library.LoadAll())
         {
-            if (m.Enabled && m.Trigger is { IsEmpty: false } hk)
+            if (!(m.Enabled && m.Trigger is { IsEmpty: false } hk)) continue;
+            if (hk.IsGamepad)
             {
-                try
-                {
-                    string macroId = m.Id;
-                    if (hk.IsGamepad)
-                    {
-                        lock (_gate) _gamepadTriggers.Add((macroId, hk.Gamepad!.Value));
-                    }
-                    else
-                    {
-                        // 마우스는 마우스 훅, 키보드는 단일/조합 모두 저수준 키보드 훅으로 감지.
-                        // (RegisterHotKey는 게임/전체화면·풀스크린 포커스에서 누락되거나 다른 앱과 충돌해 등록 실패할 수 있어
-                        //  저수준 훅이 더 안정적이며, 트리거 키를 가로채지 않고 통과시킨다.)
-                        int id = hk.IsMouse
-                            ? _hotkeys.RegisterMouse(hk, () => OnHotkey(macroId))
-                            : _hotkeys.RegisterKeyChord(hk, () => OnHotkey(macroId));
-                        _hotkeyToMacro[id] = macroId;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Log("warn", $"핫키 등록 실패 ({m.Name} / {hk}): {ex.Message}");
-                }
+                lock (_gate) _gamepadTriggers.Add((m.Id, hk.Gamepad!.Value));
+                continue;
+            }
+            var sig = TriggerSignature(hk);
+            if (!groups.TryGetValue(sig, out var g))
+                groups[sig] = g = (hk, new List<string>(), new List<string>());
+            g.ids.Add(m.Id);
+            g.names.Add(m.Name);
+        }
+        foreach (var (hk, ids, names) in groups.Values)
+        {
+            try
+            {
+                // 마우스는 마우스 훅, 키보드는 단일/조합 모두 저수준 키보드 훅으로 감지.
+                // (RegisterHotKey는 게임/전체화면·풀스크린 포커스에서 누락되거나 다른 앱과 충돌해 등록 실패할 수 있어
+                //  저수준 훅이 더 안정적이며, 트리거 키를 가로채지 않고 통과시킨다.)
+                if (hk.IsMouse) _hotkeys.RegisterMouse(hk, () => OnHotkey(ids));
+                else _hotkeys.RegisterKeyChord(hk, () => OnHotkey(ids));
+            }
+            catch (Exception ex)
+            {
+                Log("warn", $"핫키 등록 실패 ({string.Join(", ", names)} / {hk}): {ex.Message}");
             }
         }
     }
+
+    /// <summary>트리거 동일성 비교용 시그니처 — 같은 키(조합·순서 무관)·모디파이어·마우스 버튼이면 같은 그룹.</summary>
+    private static string TriggerSignature(Hotkey hk) =>
+        $"{(hk.Ctrl ? 1 : 0)}{(hk.Alt ? 1 : 0)}{(hk.Shift ? 1 : 0)}{(hk.Win ? 1 : 0)}|"
+        + (hk.IsMouse ? $"m:{hk.Mouse}" : "k:" + string.Join(",", hk.EffectiveKeys.OrderBy(k => k)));
 
     // ---------- 입력 감지(게임패드 트리거 / 아무 입력 잡기 / 입력 모니터) ----------
     private static bool IsPress(GamepadEvent e) => GamepadControls.KindOf(e.Control) switch
@@ -578,7 +586,7 @@ public sealed class MacroService
         {
             List<string> hits;
             lock (_gate) hits = _gamepadTriggers.Where(t => t.control == e.Control).Select(t => t.macroId).ToList();
-            foreach (var id in hits) OnHotkey(id);
+            if (hits.Count > 0) OnHotkey(hits); // 같은 버튼을 공유하는 매크로는 그룹으로 함께 토글
         }
     }
 
@@ -622,7 +630,7 @@ public sealed class MacroService
         BroadcastStatus();
     }
 
-    private void OnHotkey(string macroId)
+    private void OnHotkey(IReadOnlyList<string> macroIds)
     {
         // 트리거/입력 캡처 중(listen)에는 매크로를 시작하지 않는다 — 캡처하려고 누른 키가 매크로를 켜지 않게.
         if (_listenActive) return;
@@ -630,8 +638,15 @@ public sealed class MacroService
         // 그 매크로가 재생 중이면 정지, 아니면 시작(다른 매크로와 동시 재생).
         _ = Task.Run(() =>
         {
-            try { Play(macroId); }
-            catch (Exception ex) { Log("error", ex.Message); }
+            // 같은 트리거를 공유하는 매크로는 함께 켜고 함께 끈다 — 하나라도 재생 중이면
+            // '끄기' 입력으로 보고 이미 꺼진(먼저 끝난) 매크로는 되살리지 않는다.
+            bool anyRunning = macroIds.Any(_running.ContainsKey);
+            foreach (var id in macroIds)
+            {
+                if (anyRunning && !_running.ContainsKey(id)) continue;
+                try { Play(id); }
+                catch (Exception ex) { Log("error", ex.Message); }
+            }
         });
     }
 }
