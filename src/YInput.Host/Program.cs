@@ -78,7 +78,7 @@ internal static class Program
         var uiSync = new System.Windows.Forms.WindowsFormsSynchronizationContext();
         SynchronizationContext.SetSynchronizationContext(uiSync);
         var widgets = new WidgetManager(uiSync, url, dataRoot, service);
-        var overlay = new OverlayController(uiSync, url, dataRoot, hub); // 인게임 오버레이(디스코드 스타일)
+        var overlay = new OverlayController(uiSync, dataRoot, hub, service, progress); // 인게임 오버레이(GDI+ 레이어드)
 
         var app = BuildWebApp(service, hub, sync, widgets, overlay, url);
         app.StartAsync().GetAwaiter().GetResult();

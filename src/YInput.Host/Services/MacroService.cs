@@ -130,7 +130,17 @@ public sealed class MacroService
         };
     }
 
-    public void BroadcastStatus() => _hub.Broadcast("status", GetStatusData());
+    /// <summary>재생/녹화/활성 상태가 바뀔 때 발생(오버레이 등 C# 구독자용).</summary>
+    public event Action? StatusChanged;
+
+    /// <summary>현재 재생 중인 매크로 id들.</summary>
+    public IReadOnlyList<string> PlayingIds() => _running.Keys.ToArray();
+
+    public void BroadcastStatus()
+    {
+        _hub.Broadcast("status", GetStatusData());
+        try { StatusChanged?.Invoke(); } catch { /* 구독자 예외 무시 */ }
+    }
 
     private readonly object _logGate = new();
     private readonly LinkedList<object> _recentLogs = new();

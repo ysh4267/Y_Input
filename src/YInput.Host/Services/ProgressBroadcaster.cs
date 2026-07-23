@@ -42,7 +42,13 @@ public sealed class ProgressBroadcaster : IDisposable
         _dirty.TryRemove(macroId, out _);
         if (_latest.TryRemove(macroId, out var p))
             Send(macroId, p);
+        try { Ended?.Invoke(macroId); } catch { /* 구독자 예외 무시 */ }
     }
+
+    /// <summary>코얼레싱된 진행 프레임(~60Hz)마다 발생(오버레이 등 C# 구독자용).</summary>
+    public event Action<string, PlaybackProgress>? Progressed;
+    /// <summary>매크로 재생 종료 시 발생.</summary>
+    public event Action<string>? Ended;
 
     private void Flush()
     {
@@ -56,7 +62,8 @@ public sealed class ProgressBroadcaster : IDisposable
         }
     }
 
-    private void Send(string macroId, PlaybackProgress p) =>
+    private void Send(string macroId, PlaybackProgress p)
+    {
         _hub.Broadcast("progress", new
         {
             macroId,
@@ -66,6 +73,8 @@ public sealed class ProgressBroadcaster : IDisposable
             delayMs = p.DelayMs, // 현재 지연의 실제 대기(ms) — 채움 애니메이션 길이
             loops = p.Loops,     // [{ startIndex, total, remaining }] — 반복 진행
         });
+        try { Progressed?.Invoke(macroId, p); } catch { /* 구독자 예외 무시 */ }
+    }
 
     public void Dispose()
     {

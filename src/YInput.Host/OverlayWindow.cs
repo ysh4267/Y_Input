@@ -1,22 +1,26 @@
 using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.Drawing.Text;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
-using Microsoft.Web.WebView2.Core;
-using Microsoft.Web.WebView2.WinForms;
 
 namespace YInput.Host;
 
 /// <summary>대상 창 후보(프로세스명 + 대표 창 제목).</summary>
 public sealed record OverlayWindowInfo(string Process, string Title);
 
+/// <summary>오버레이에 그릴 한 매크로 행.</summary>
+public sealed record OverlayRow(string Name, string Loop, double Outer, double Inner, bool Playing);
+
 /// <summary>
-/// 디스코드 인게임 오버레이 스타일의 창. 안에 WebView2로 <c>/overlay.html</c>을 띄운다.
-/// 레이어드 창 + 컬러키(마젠타)로 투명을 낸다: 페이지가 마젠타로 둔 영역은 투명 + <b>클릭/마우스 완전 통과</b>,
-/// pill(불투명)만 보인다. <c>WS_EX_TRANSPARENT</c>까지 더해 창 전체가 마우스를 인식하지 않는다.
+/// 디스코드 인게임 오버레이 스타일 창 — <b>GDI+ 레이어드 창</b>(UpdateLayeredWindow, 픽셀 단위 알파).
+/// 배경은 완전 투명, 개별 pill(2중 원 + 이름/루프)만 보이고 그 사이는 게임이 그대로 비친다.
+/// <c>WS_EX_TRANSPARENT|WS_EX_LAYERED</c>로 <b>클릭·마우스를 완전히 무시</b>(뒤 게임으로 통과)한다.
 ///
-/// 표시 조건: (1) 웹이 무장(<c>SetArmed</c>: 활성화 매크로 있음) &amp;&amp; (2) 지정한 대상 창(프로세스)이 포그라운드일 때.
-/// 대상이 비어 있으면 아무 포그라운드 창(우리 프로세스 제외)의 왼쪽 중앙에 뜬다.
+/// 표시 조건: (1) 무장(<see cref="SetArmed"/>: 활성화 매크로 있음) &amp;&amp; (2) 대상 창(화이트리스트 or 자동감지 게임,
+/// 블랙 제외)이 포그라운드일 때. 그 창의 왼쪽 중앙에 뜬다. 게임 자동감지 시 그 프로세스를 보고(자동 화이트 추가).
 /// </summary>
 internal sealed class OverlayWindow : Form
 {
@@ -28,18 +32,13 @@ internal sealed class OverlayWindow : Form
     private const int GWL_STYLE = -16;
     private const int WS_CAPTION = 0x00C00000;
     private const uint MONITOR_DEFAULTTONEAREST = 2;
-    private static readonly IntPtr HWND_TOPMOST = new(-1);
-    private const uint SWP_NOACTIVATE = 0x10;
-    private const int LeftMargin = 8; // 대상 창 왼쪽에서 살짝 띄움(px)
-    private const uint LWA_COLORKEY = 0x1;
-    private const uint ColorKey = 0x00FF00FF;              // COLORREF 마젠타(0x00bbggrr)
-    private static readonly Color KeyColor = Color.Magenta; // 이 색 픽셀 = 투명 + 클릭통과
+    private const int LeftMargin = 8;
+    private const byte AC_SRC_OVER = 0, AC_SRC_ALPHA = 1;
+    private const int ULW_ALPHA = 2;
 
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
-    [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
-    [DllImport("user32.dll")] private static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint crKey, byte alpha, uint flags);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hWnd, int attr, out RECT val, int size);
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
@@ -50,44 +49,46 @@ internal sealed class OverlayWindow : Form
     [DllImport("user32.dll")] private static extern bool GetMonitorInfo(IntPtr hMon, ref MONITORINFO mi);
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct RECT { public int left, top, right, bottom; }
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
+    [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hdc);
+    [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+    [DllImport("gdi32.dll")] private static extern bool DeleteDC(IntPtr hdc);
+    [DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr hdc, IntPtr h);
+    [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr h);
+    [DllImport("user32.dll")] private static extern bool UpdateLayeredWindow(IntPtr hWnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize, IntPtr hdcSrc, ref POINT pptSrc, int crKey, ref BLENDFUNCTION pblend, int flags);
 
-    private readonly WebView2 _web;
-    private readonly string _url;
-    private readonly string _userDataFolder;
-    private readonly Action<string>? _onError;
-    private readonly Action<string>? _onGameDetected; // auto 모드에서 감지한 게임 프로세스명 보고
+    [StructLayout(LayoutKind.Sequential)] private struct RECT { public int left, top, right, bottom; }
+    [StructLayout(LayoutKind.Sequential)] private struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
+    [StructLayout(LayoutKind.Sequential)] private struct POINT { public int x, y; public POINT(int a, int b) { x = a; y = b; } }
+    [StructLayout(LayoutKind.Sequential)] private struct SIZE { public int cx, cy; public SIZE(int a, int b) { cx = a; cy = b; } }
+    [StructLayout(LayoutKind.Sequential)] private struct BLENDFUNCTION { public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat; }
+
+    private readonly Action<string>? _onGameDetected;
     private readonly uint _selfPid = (uint)Environment.ProcessId;
 
-    private bool _armed;                  // 웹이 표시를 원함(활성화 매크로 있음)
-    private readonly HashSet<string> _white = new(); // 표시할 프로세스명(소문자)
-    private readonly HashSet<string> _black = new(); // 제외할 프로세스명(소문자)
-    private int _contentW = 210, _contentH = 60;
+    private bool _armed;
+    private readonly HashSet<string> _white = new();
+    private readonly HashSet<string> _black = new();
+    private List<OverlayRow> _rows = new();
     private uint _fgPidCache; private string _fgProcCache = "";
+    private uint _fgGamePid; private bool _fgGameCache;
     private string _lastGameReport = "";
     private readonly System.Windows.Forms.Timer _poll;
 
-    public OverlayWindow(string url, string userDataFolder, Action<string>? onError, Action<string>? onGameDetected)
-    {
-        _url = url; _userDataFolder = userDataFolder; _onError = onError; _onGameDetected = onGameDetected;
+    // 폰트(픽셀 단위로 DPI 영향 최소화)
+    private static readonly Font NameFont = new("Segoe UI", 12.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private static readonly Font LoopFont = new("Segoe UI", 11f, FontStyle.Regular, GraphicsUnit.Pixel);
 
+    public OverlayWindow(Action<string>? onGameDetected)
+    {
+        _onGameDetected = onGameDetected;
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
-        ClientSize = new Size(_contentW, _contentH);
-        BackColor = KeyColor; // 컬러키 = 창 배경(가려지지 않은 곳은 투명)
         Text = "Y Input Overlay";
-
-        _web = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = KeyColor }; // 투명 대신 키색 → 컬러키로 통과
-        Controls.Add(_web);
-        InitAsync();
-
         _poll = new System.Windows.Forms.Timer { Interval = 250 };
-        _poll.Tick += (_, _) => Evaluate();
+        _poll.Tick += (_, _) => Refresh2();
     }
 
     protected override bool ShowWithoutActivation => true;
@@ -97,17 +98,9 @@ internal sealed class OverlayWindow : Form
         get
         {
             var cp = base.CreateParams;
-            // 레이어드(컬러키 투명) + 클릭/마우스 완전 통과 + 툴윈도우 + 비활성
             cp.ExStyle |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT;
             return cp;
         }
-    }
-
-    protected override void OnHandleCreated(EventArgs e)
-    {
-        base.OnHandleCreated(e);
-        // 마젠타 픽셀을 투명+클릭통과로. (레이어드 창을 보이게 만드는 호출이기도 함)
-        try { SetLayeredWindowAttributes(Handle, ColorKey, 0, LWA_COLORKEY); } catch { /* 무시 */ }
     }
 
     // ---------- 컨트롤러가 호출(모두 UI 스레드) ----------
@@ -115,42 +108,42 @@ internal sealed class OverlayWindow : Form
     {
         if (_armed == armed) return;
         _armed = armed;
-        if (armed) { _poll.Start(); Evaluate(); }
+        if (armed) { _poll.Start(); Refresh2(); }
         else { _poll.Stop(); if (Visible) Hide(); }
     }
 
-    /// <summary>표시(화이트)·제외(블랙) 프로세스 목록을 갱신한다.</summary>
+    public void SetRows(List<OverlayRow> rows)
+    {
+        _rows = rows ?? new();
+        if (_armed) Refresh2();
+    }
+
     public void SetLists(IEnumerable<string> white, IEnumerable<string> black)
     {
         _white.Clear(); foreach (var w in white) { var n = Normalize(w); if (n.Length > 0) _white.Add(n); }
         _black.Clear(); foreach (var b in black) { var n = Normalize(b); if (n.Length > 0) _black.Add(n); }
-        if (_armed) Evaluate();
+        if (_armed) Refresh2();
     }
 
-    /// <summary>포그라운드 창의 프로세스가 화이트리스트(또는 자동 감지된 게임)면 그 창 왼쪽 중앙에 표시, 아니면 숨김.</summary>
-    private void Evaluate()
+    // ---------- 표시 판단 + 렌더 ----------
+    private void Refresh2()
     {
         if (!IsHandleCreated || !_armed) return;
         IntPtr fg = GetForegroundWindow();
-        if (fg == IntPtr.Zero) { if (Visible) Hide(); return; }
-        if (fg == Handle) return; // 우리 창이 포그라운드면 상태 유지
+        if (fg == IntPtr.Zero || fg == Handle) return;
 
         var info = ForegroundInfo(fg, out uint pid);
-        if (pid == _selfPid) return; // 우리 프로세스 창 → 상태 유지
+        if (pid == _selfPid) return;
         string proc = info.proc;
         if (proc.Length == 0) { if (Visible) Hide(); return; }
 
         bool show;
-        if (_black.Contains(proc)) show = false;              // 제외됨
-        else if (_white.Contains(proc)) show = true;          // 표시 목록
-        else if (info.isGame)                                 // 미지정인데 게임 같으면 → 화이트리스트에 자동 추가
-        {
-            show = true;
-            if (proc != _lastGameReport) { _lastGameReport = proc; _onGameDetected?.Invoke(proc); }
-        }
+        if (_black.Contains(proc)) show = false;
+        else if (_white.Contains(proc)) show = true;
+        else if (info.isGame) { show = true; if (proc != _lastGameReport) { _lastGameReport = proc; _onGameDetected?.Invoke(proc); } }
         else show = false;
 
-        if (!show) { if (Visible) Hide(); return; }
+        if (!show || _rows.Count == 0) { if (Visible) Hide(); return; }
 
         if (DwmGetWindowAttribute(fg, DWMWA_EXTENDED_FRAME_BOUNDS, out var r, Marshal.SizeOf<RECT>()) != 0)
         {
@@ -158,28 +151,139 @@ internal sealed class OverlayWindow : Form
         }
         int gh = r.bottom - r.top;
         if (r.right - r.left <= 0 || gh <= 0) return;
+
+        using var bmp = BuildBitmap();
         int x = r.left + LeftMargin;
-        int y = r.top + (gh - _contentH) / 2;
+        int y = r.top + (gh - bmp.Height) / 2;
         if (!Visible) Show();
-        SetWindowPos(Handle, HWND_TOPMOST, x, y, _contentW, _contentH, SWP_NOACTIVATE);
+        PushBitmap(bmp, x, y);
     }
 
-    // 포그라운드 프로세스명 + 게임 여부. pid가 바뀔 때만 계산해 캐시(모듈 검사 비용 절감).
-    private uint _fgIsGamePid; private bool _fgIsGameCache;
+    private void PushBitmap(Bitmap bmp, int x, int y)
+    {
+        IntPtr screen = GetDC(IntPtr.Zero);
+        IntPtr mem = CreateCompatibleDC(screen);
+        IntPtr hbmp = bmp.GetHbitmap(Color.FromArgb(0));
+        IntPtr old = SelectObject(mem, hbmp);
+        var size = new SIZE(bmp.Width, bmp.Height);
+        var src = new POINT(0, 0);
+        var dst = new POINT(x, y);
+        var blend = new BLENDFUNCTION { BlendOp = AC_SRC_OVER, BlendFlags = 0, SourceConstantAlpha = 255, AlphaFormat = AC_SRC_ALPHA };
+        UpdateLayeredWindow(Handle, screen, ref dst, ref size, mem, ref src, 0, ref blend, ULW_ALPHA);
+        SelectObject(mem, old);
+        DeleteObject(hbmp);
+        DeleteDC(mem);
+        ReleaseDC(IntPtr.Zero, screen);
+    }
+
+    // ---------- 레이아웃/그리기 ----------
+    private const int M = 3;            // 바깥 여백
+    private const int RingD = 30, RingStroke = 3, InnerStroke = 3;
+    private const int PadL = 6, PadR = 13, PadV = 6, Gap = 9, RowGap = 7;
+
+    private Bitmap BuildBitmap()
+    {
+        using var probe = new Bitmap(1, 1);
+        using (var pg = Graphics.FromImage(probe)) { pg.TextRenderingHint = TextRenderingHint.AntiAlias; }
+        int pillH = RingD + PadV * 2;
+
+        // 각 행 폭 계산
+        var widths = new int[_rows.Count];
+        int maxW = 0;
+        using (var g0 = Graphics.FromImage(probe))
+        {
+            foreach (var (row, i) in _rows.Select((r, i) => (r, i)))
+            {
+                int tw = (int)Math.Ceiling(Math.Max(
+                    g0.MeasureString(row.Name, NameFont).Width,
+                    g0.MeasureString(row.Loop, LoopFont).Width));
+                int w = PadL + RingD + Gap + tw + PadR;
+                widths[i] = w; if (w > maxW) maxW = w;
+            }
+        }
+        int W = maxW + M * 2;
+        int H = _rows.Count * pillH + Math.Max(0, _rows.Count - 1) * RowGap + M * 2;
+        W = Math.Max(W, 40); H = Math.Max(H, 40);
+
+        var bmp = new Bitmap(W, H, PixelFormat.Format32bppArgb);
+        using var g = Graphics.FromImage(bmp);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.TextRenderingHint = TextRenderingHint.AntiAlias;
+        g.Clear(Color.Transparent);
+
+        int y = M;
+        for (int i = 0; i < _rows.Count; i++)
+        {
+            var row = _rows[i];
+            bool on = row.Playing;
+            var pill = new Rectangle(M, y, widths[i], pillH);
+            using (var path = Rounded(pill, pillH / 2))
+            {
+                using var fill = new SolidBrush(Color.FromArgb(on ? 175 : 120, 10, 13, 20));
+                g.FillPath(fill, path);
+                using var border = new Pen(Color.FromArgb(on ? 46 : 30, 255, 255, 255), 1f);
+                g.DrawPath(border, path);
+            }
+            int cx = M + PadL + RingD / 2;
+            int cy = y + pillH / 2;
+            DrawRing(g, cx, cy, RingD / 2, RingStroke, Color.FromArgb(52, 211, 153), row.Outer, on);           // 외부 = 전체 진행
+            DrawRing(g, cx, cy, RingD / 2 - 5, InnerStroke, Color.FromArgb(79, 140, 255), row.Inner, on);       // 내부 = 딜레이 진행
+
+            int tx = M + PadL + RingD + Gap;
+            float nameH = NameFont.GetHeight(g), loopH = LoopFont.GetHeight(g);
+            float th = nameH + loopH;
+            float ty = y + (pillH - th) / 2f;
+            using var nameBrush = new SolidBrush(Color.FromArgb(on ? 255 : 190, 238, 242, 248));
+            using var loopBrush = new SolidBrush(Color.FromArgb(on ? 235 : 160, 181, 190, 205));
+            g.DrawString(row.Name, NameFont, nameBrush, tx, ty);
+            g.DrawString(row.Loop, LoopFont, loopBrush, tx, ty + nameH);
+
+            y += pillH + RowGap;
+        }
+        return bmp;
+    }
+
+    private static void DrawRing(Graphics g, int cx, int cy, int r, int stroke, Color prog, double frac, bool on)
+    {
+        var rect = new Rectangle(cx - r, cy - r, r * 2, r * 2);
+        using (var track = new Pen(Color.FromArgb(on ? 46 : 34, 255, 255, 255), stroke) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            g.DrawEllipse(track, rect);
+        double f = Math.Max(0, Math.Min(1, frac));
+        if (f > 0.001)
+        {
+            using var pen = new Pen(Color.FromArgb(on ? 255 : 150, prog), stroke) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            g.DrawArc(pen, rect, -90f, (float)(f * 360));
+        }
+    }
+
+    private static GraphicsPath Rounded(Rectangle r, int rad)
+    {
+        int d = rad * 2;
+        var p = new GraphicsPath();
+        if (d <= 0) { p.AddRectangle(r); return p; }
+        d = Math.Min(d, Math.Min(r.Width, r.Height));
+        p.AddArc(r.X, r.Y, d, d, 180, 90);
+        p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+        p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+        p.CloseFigure();
+        return p;
+    }
+
+    // ---------- 포그라운드/게임 판정 ----------
     private (string proc, bool isGame) ForegroundInfo(IntPtr fg, out uint pid)
     {
         GetWindowThreadProcessId(fg, out pid);
-        if (pid == _fgPidCache && pid == _fgIsGamePid) return (_fgProcCache, _fgIsGameCache);
+        if (pid == _fgPidCache && pid == _fgGamePid) return (_fgProcCache, _fgGameCache);
         string name = "";
         try { using var p = System.Diagnostics.Process.GetProcessById((int)pid); name = p.ProcessName.ToLowerInvariant(); }
-        catch { /* 접근 불가 등 */ }
+        catch { }
         bool isGame = name.Length > 0 && !NonGame.Contains(name) && (IsFullscreen(fg) || HasGraphicsModule(pid));
         _fgPidCache = pid; _fgProcCache = name;
-        _fgIsGamePid = pid; _fgIsGameCache = isGame;
+        _fgGamePid = pid; _fgGameCache = isGame;
         return (name, isGame);
     }
 
-    // 풀스크린/보더리스: 캡션 없이 모니터 전체를 덮음.
     private static bool IsFullscreen(IntPtr hWnd)
     {
         if (!GetWindowRect(hWnd, out var wr)) return false;
@@ -187,13 +291,11 @@ internal sealed class OverlayWindow : Form
         var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
         if (!GetMonitorInfo(mon, ref mi)) return false;
         var m = mi.rcMonitor;
-        bool coversMonitor = wr.left <= m.left && wr.top <= m.top && wr.right >= m.right && wr.bottom >= m.bottom;
-        if (!coversMonitor) return false;
-        int style = GetWindowLong(hWnd, GWL_STYLE);
-        return (style & WS_CAPTION) != WS_CAPTION; // 캡션 없음 = 보더리스/풀스크린
+        bool covers = wr.left <= m.left && wr.top <= m.top && wr.right >= m.right && wr.bottom >= m.bottom;
+        if (!covers) return false;
+        return (GetWindowLong(hWnd, GWL_STYLE) & WS_CAPTION) != WS_CAPTION;
     }
 
-    // 게임이 아닌 흔한 GPU 가속 앱(브라우저·Electron·셸 등) — 그래픽 DLL을 써도 게임으로 보지 않음.
     private static readonly HashSet<string> NonGame = new(StringComparer.OrdinalIgnoreCase)
     {
         "chrome", "msedge", "firefox", "opera", "opera_gx", "brave", "whale", "vivaldi", "iexplore",
@@ -204,8 +306,6 @@ internal sealed class OverlayWindow : Form
         "devenv", "rider64", "idea64", "pycharm64", "webstorm64", "yinput", "widgets", "lockapp", "logonui",
         "nvcontainer", "onedrive", "acrobat", "acrord32", "winword", "excel", "powerpnt", "outlook",
     };
-
-    // 창모드 게임 감지: 대상 프로세스가 그래픽 API DLL을 로드했는지(로드 모듈 검사).
     private static readonly string[] GfxDlls = { "d3d9.dll", "d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "opengl32.dll", "vulkan-1.dll", "d3d8.dll" };
     private static bool HasGraphicsModule(uint pid)
     {
@@ -218,7 +318,7 @@ internal sealed class OverlayWindow : Form
                 if (Array.IndexOf(GfxDlls, n) >= 0) return true;
             }
         }
-        catch { /* 32/64 불일치·접근 불가 → 풀스크린 판정으로만 */ }
+        catch { }
         return false;
     }
 
@@ -229,55 +329,11 @@ internal sealed class OverlayWindow : Form
         return t;
     }
 
-    private async void InitAsync()
-    {
-        try
-        {
-            // --disable-gpu: GPU/DirectComposition 대신 소프트웨어 합성 → 레이어드 창 컬러키(마젠타 투명)가 먹게 함.
-            var opts = new CoreWebView2EnvironmentOptions { AdditionalBrowserArguments = "--disable-gpu" };
-            var env = await CoreWebView2Environment.CreateAsync(null, _userDataFolder, opts);
-            await _web.EnsureCoreWebView2Async(env);
-            var s = _web.CoreWebView2.Settings;
-            s.AreDefaultContextMenusEnabled = false;
-            s.IsZoomControlEnabled = false;
-            s.AreBrowserAcceleratorKeysEnabled = false;
-            s.IsStatusBarEnabled = false;
-            s.AreDevToolsEnabled = false;
-            _web.CoreWebView2.WebMessageReceived += OnWebMessage;
-            _web.CoreWebView2.Navigate(_url);
-        }
-        catch (Exception ex)
-        {
-            _onError?.Invoke("오버레이 WebView2 초기화 실패(런타임 확인): " + ex.Message);
-        }
-    }
-
-    private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
-    {
-        string msg; try { msg = e.TryGetWebMessageAsString() ?? ""; } catch { return; }
-        if (msg == "overlay:show") SetArmed(true);
-        else if (msg == "overlay:hide") SetArmed(false);
-        else if (msg.StartsWith("size:", StringComparison.Ordinal)) ApplySize(msg.AsSpan(5));
-    }
-
-    private void ApplySize(ReadOnlySpan<char> wh)
-    {
-        int xi = wh.IndexOf('x');
-        if (xi <= 0) return;
-        if (!int.TryParse(wh[..xi], out int w) || !int.TryParse(wh[(xi + 1)..], out int h)) return;
-        w = Math.Clamp(w, 90, 560);
-        h = Math.Clamp(h, 34, 1000);
-        if (w == _contentW && h == _contentH) return;
-        _contentW = w; _contentH = h;
-        ClientSize = new Size(w, h);
-        if (_armed) Evaluate();
-    }
-
     // ---------- 대상 창 후보 열거(설정 UI용) ----------
     public static List<OverlayWindowInfo> EnumerateWindows()
     {
         uint self = (uint)Environment.ProcessId;
-        var byProc = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // proc -> 대표 제목(가장 긴)
+        var byProc = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         EnumWindows((h, _) =>
         {
             if (!IsWindowVisible(h)) return true;
@@ -301,7 +357,7 @@ internal sealed class OverlayWindow : Form
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { try { _poll.Dispose(); } catch { } try { _web.Dispose(); } catch { } }
+        if (disposing) { try { _poll.Dispose(); } catch { } }
         base.Dispose(disposing);
     }
 }
