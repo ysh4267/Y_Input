@@ -2,13 +2,13 @@
 <assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
   <assemblyIdentity version="1.0.0.0" name="YInput.Host.app" />
 
-  <!-- 실행 시 UAC 프롬프트 없이 시작(asInvoker). 드라이버 설치엔 관리자가 필요하지만 최초 1회만이고,
-       설치 이후 트리거 후킹·입력 주입은 비관리자에서도 동작한다. (관리자로 실행되는 안티치트 게임 등
-       상위 무결성 프로세스엔 입력이 안 갈 수 있음 — 그 경우에만 관리자 실행 필요.) -->
+  <!-- 관리자 권한 필요: 게임/안티치트가 상위 무결성(관리자)으로 실행되면, 비관리자 프로세스는 UIPI로
+       그 창에서 저수준 훅 입력 수신·입력 주입이 막힌다(게임에서 매크로가 안 됨). 따라서 관리자로 실행한다.
+       (UAC 매번 안 뜨게 하려면 예약 작업(highest)으로 실행 — tools/deploy.ps1 / setup-task.ps1 참고.) -->
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>
       <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
-        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
       </requestedPrivileges>
     </security>
   </trustInfo>

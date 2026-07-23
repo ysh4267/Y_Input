@@ -1,5 +1,7 @@
 # Post-build redeploy: stop running YInput -> install new build to the installed location -> launch it.
-# App manifest is asInvoker, so launching does NOT show a UAC prompt.
+# App manifest is requireAdministrator (needed so macros work in elevated/anti-cheat games). To avoid a UAC
+# prompt on every launch, we launch via an elevated scheduled task 'YInputDevRun' when it exists.
+# One-time setup for prompt-free launches: run tools\setup-task.ps1 elevated once (accept the single UAC).
 # Usage: powershell -File tools\deploy.ps1   (after publish creates artifacts\single\YInput.exe)
 param(
   [string]$Src = "N:\Projects\Y_Input\artifacts\single\YInput.exe",
@@ -39,8 +41,9 @@ $marker = Join-Path $InstallDir '.yinput_install'
 if (-not (Test-Path $marker)) { Set-Content -Path $marker -Value 'Y Input install marker' -Encoding utf8 }
 Write-Output ("installed: " + $Dst + " (" + (Get-Item $Dst).Length + " bytes)")
 
-# 3) Launch installed build (asInvoker -> no UAC prompt)
+# 3) Launch installed build. Prefer the elevated scheduled task (no UAC prompt); else Start-Process (UAC each time).
 if (-not $NoLaunch) {
-  Start-Process $Dst
-  Write-Output "launched installed build"
+  $task = Get-ScheduledTask -TaskName 'YInputDevRun' -ErrorAction SilentlyContinue
+  if ($task) { Start-ScheduledTask -TaskName 'YInputDevRun'; Write-Output 'launched via scheduled task (elevated, no UAC)' }
+  else { Start-Process $Dst; Write-Output 'launched (UAC prompt) - run tools\setup-task.ps1 once for prompt-free launches' }
 }
