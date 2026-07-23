@@ -1,4 +1,4 @@
-/* 인게임 오버레이 — 창 자체가 DWM 블러+다크 틴트로 반투명. 페이지 배경은 투명(창 배경이 보이게). */
+/* 인게임 오버레이 — 창 배경은 완전 투명(per-pixel). 개별 pill만 보이고 그 사이는 게임이 그대로 비친다. */
 * { box-sizing: border-box; }
 html, body {
   margin: 0; padding: 0; background: transparent; overflow: hidden;
@@ -8,30 +8,28 @@ html, body {
 }
 
 /* 콘텐츠 크기에 맞춰 창을 줄이려고 fit-content로 잰다(overlay.js가 size:WxH 전송). */
-#panel { width: max-content; min-width: 88px; padding: 7px 10px; }
+#panel { width: max-content; }
+#rows { display: flex; flex-direction: column; gap: 8px; padding: 3px; align-items: flex-start; }
 
-#rows { display: flex; flex-direction: column; gap: 7px; }
-
-.row { display: flex; align-items: center; gap: 9px; }
+/* 개별 pill — 얕은 검은 반투명 배경 위에 2중 원 + 이름/루프 */
+.row {
+  display: flex; align-items: center; gap: 9px;
+  padding: 5px 12px 5px 6px;
+  background: rgba(10, 13, 20, .62);
+  border: 1px solid rgba(255, 255, 255, .09);
+  border-radius: 999px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
+}
 
 /* 2중 원 진행 인디케이터 */
 .ring { width: 34px; height: 34px; flex: 0 0 auto; display: block; }
-.ring .track { fill: none; stroke: rgba(255,255,255,.14); }
+.ring .track { fill: none; stroke: rgba(255,255,255,.16); }
 .ring .arc { fill: none; stroke-linecap: round; transform: rotate(-90deg); transform-origin: 20px 20px; transition: stroke-dashoffset .08s linear; }
 .ring .outer { stroke: #34d399; }  /* 외부 = 전체(스텝) 진행 */
 .ring .inner { stroke: #4f8cff; }  /* 내부 = 현재 딜레이 진행 */
 
 .meta { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
 .name { font-size: 12.5px; font-weight: 700; letter-spacing: .1px;
-  max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  text-shadow: 0 1px 2px rgba(0,0,0,.6); }
-.loop { font-size: 11px; font-weight: 600; color: #a9b4c6; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
-
-/* 드래그 핸들 — 핸들 모드에서만 */
-#handle {
-  display: none; cursor: move; font-size: 10.5px; font-weight: 700; color: #cdd6e6;
-  padding: 3px 6px 5px; margin: -2px -4px 5px; text-align: center; letter-spacing: 1px;
-  border-bottom: 1px solid rgba(255,255,255,.12);
-}
-body.handle #handle { display: block; }
-body.handle #panel { outline: 1px dashed rgba(120,170,255,.65); outline-offset: -1px; border-radius: 10px; }
+  max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0,0,0,.7); }
+.loop { font-size: 11px; font-weight: 600; color: #b3bdcd; text-shadow: 0 1px 2px rgba(0,0,0,.7); }

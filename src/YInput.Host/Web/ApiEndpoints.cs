@@ -263,11 +263,7 @@ public static class ApiEndpoints
 
         // ---- 인게임 오버레이 설정(켜기·핸들·위치 비율) ----
         app.MapGet("/api/overlay", () => Results.Json(overlay.Get()));
-        app.MapPost("/api/overlay", (OverlayBody? b) =>
-        {
-            var s = overlay.Set(b?.Enabled, b?.HandleOn, b?.X, b?.Y);
-            return Results.Json(s);
-        });
+        app.MapPost("/api/overlay", (OverlayBody? b) => Results.Json(overlay.Set(b?.Enabled)));
 
         // ---- WebSocket ----
         app.Map("/ws", async (HttpContext ctx) =>
@@ -410,7 +406,7 @@ public static class ApiEndpoints
     // 동기화 설정(gist). Token=null이면 기존 토큰 유지(빈 문자열이면 지움).
     private sealed record SyncConfigBody(bool Enabled = false, string? Token = null);
     private sealed record WidgetBody(string? Id = null);
-    private sealed record OverlayBody(bool? Enabled = null, bool? HandleOn = null, double? X = null, double? Y = null);
+    private sealed record OverlayBody(bool? Enabled = null);
     private sealed record RecordStartBody(
         bool Keyboard = true,
         bool MouseButtons = true,

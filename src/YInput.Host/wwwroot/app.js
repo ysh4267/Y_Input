@@ -50,18 +50,13 @@ function openSettings() {
 function renderOverlayConfig(s) {
   if (!s) return;
   const e = $('ov-enabled'); if (e) e.checked = !!s.enabled;
-  const h = $('ov-handle'); if (h) h.checked = !!s.handleOn;
 }
 async function loadOverlayConfig() {
   try { renderOverlayConfig(await api.getOverlay()); } catch { /* 무시 */ }
 }
 async function onOverlayChange() {
-  try {
-    renderOverlayConfig(await api.setOverlay({
-      enabled: $('ov-enabled').checked,
-      handleOn: $('ov-handle').checked,
-    }));
-  } catch (e) { log('error', e.message); }
+  try { renderOverlayConfig(await api.setOverlay({ enabled: $('ov-enabled').checked })); }
+  catch (e) { log('error', e.message); }
 }
 
 // ---------- 동기화(GitHub 비공개 저장소) ----------
@@ -1077,7 +1072,6 @@ function wire() {
   $('btn-sync-save').onclick = onSyncSave;
   $('btn-sync-now').onclick = onSyncNow;
   $('ov-enabled').onchange = onOverlayChange;
-  $('ov-handle').onchange = onOverlayChange;
   $('btn-new').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-new-run').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-import').onclick = () => $('file-import').click();

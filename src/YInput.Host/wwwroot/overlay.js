@@ -1,19 +1,18 @@
 // 인게임 오버레이 페이지. 서버 WS로 재생 상태/진행을 받아 매크로마다 2중 원 + 이름/루프를 세로로 쌓는다.
-// 창(네이티브)은 클릭 통과·반투명·게임 추적을 담당하고, 이 페이지는 "표시 의도(overlay:show/hide)"와
-// "콘텐츠 크기(size:WxH)"만 네이티브에 알린다. 핸들 모드(handle:on/off)면 드래그 핸들을 노출한다.
+// 창(네이티브)은 클릭 통과·투명·게임 추적(왼쪽 중앙 고정)을 담당하고, 이 페이지는 "표시 의도
+// (overlay:show/hide)"와 "콘텐츠 크기(size:WxH)"만 네이티브에 알린다.
 const $ = (id) => document.getElementById(id);
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
 const toNative = (m) => { try { window.chrome.webview.postMessage(m); } catch { /* WebView2 밖 */ } };
 
 const rowsEl = $('rows');
 
-let settings = { enabled: true, handleOn: false, x: 0.03, y: 0.35 };
+let settings = { enabled: true };
 let macroMeta = new Map();            // id -> { name, loopCount }
 let playing = [];                     // 재생 중 macroId 배열(순서 유지)
 const progressById = new Map();       // id -> 최신 progress
 const delayAnim = new Map();          // id -> { start, dur, stepIndex }
 const rows = new Map();               // id -> { el, outer, inner, nameEl, loopEl }
-let handleMode = false;
 let lastShow = null, lastW = 0, lastH = 0;
 
 // ---------- 2중 원 ----------
@@ -30,21 +29,11 @@ function ringSvg() {
 const setArc = (circle, C, frac) => { circle.style.strokeDashoffset = (C * (1 - clamp01(frac))).toFixed(2); };
 
 // ---------- 렌더(행 구성) ----------
-function idsToShow() {
-  if (playing.length) return playing;
-  if (handleMode) return ['__sample__']; // 재생 없어도 위치 조정용 샘플 1행
-  return [];
-}
-function metaOf(id) {
-  if (id === '__sample__') return { name: '위치 조정', loopCount: 1 };
-  return macroMeta.get(id) || { name: '매크로', loopCount: 1 };
-}
 function renderRows() {
-  const ids = idsToShow();
-  const want = new Set(ids);
+  const want = new Set(playing);
   for (const [id, r] of rows) if (!want.has(id)) { r.el.remove(); rows.delete(id); }
 
-  for (const id of ids) {
+  for (const id of playing) {
     let r = rows.get(id);
     if (!r) {
       const el = document.createElement('div');
@@ -59,6 +48,7 @@ function renderRows() {
   }
   reportSize();
 }
+function metaOf(id) { return macroMeta.get(id) || { name: '매크로', loopCount: 1 }; }
 function loopText(loopCount, loop) {
   const cur = (loop || 0) + 1;
   return (loopCount == null || loopCount <= 0) ? `${cur} ↻` : `${cur}/${loopCount}`;
@@ -68,7 +58,6 @@ function paintRow(id, r) {
   r.nameEl.textContent = m.name;
   r.nameEl.title = m.name;
   const p = progressById.get(id);
-  if (id === '__sample__') { setArc(r.outer, C_OUT, 0.62); setArc(r.inner, C_IN, 0.4); r.loopEl.textContent = '1/1'; return; }
   const outFrac = p && p.stepCount > 0 ? p.stepIndex / p.stepCount : 0;
   setArc(r.outer, C_OUT, outFrac);
   setArc(r.inner, C_IN, innerFrac(id));
@@ -108,7 +97,6 @@ function onStatus(s) {
   const next = Array.isArray(s.playingIds) ? s.playingIds : [];
   const changed = next.length !== playing.length || next.some((v, i) => v !== playing[i]);
   playing = next;
-  // 종료된 매크로의 잔여 상태 정리
   const live = new Set(playing);
   for (const id of [...progressById.keys()]) if (!live.has(id)) progressById.delete(id);
   for (const id of [...delayAnim.keys()]) if (!live.has(id)) delayAnim.delete(id);
@@ -132,7 +120,6 @@ function reportSize() {
 // ---------- 설정/메타 로드 ----------
 async function loadSettings() {
   try { settings = await fetch('/api/overlay').then((r) => r.json()); } catch { /* 서버 준비 전 */ }
-  applyHandle(!!settings.handleOn);
   updateShowIntent();
 }
 async function loadMacros() {
@@ -142,23 +129,6 @@ async function loadMacros() {
     for (const [id, r] of rows) paintRow(id, r);
   } catch { /* 무시 */ }
 }
-function applyHandle(on) {
-  handleMode = on;
-  document.body.classList.toggle('handle', on);
-  renderRows(); // 샘플 행 표시/제거
-}
-
-// ---------- 네이티브 → 웹 메시지(handle:on/off) ----------
-try {
-  window.chrome.webview.addEventListener('message', (e) => {
-    const m = typeof e.data === 'string' ? e.data : '';
-    if (m === 'handle:on') applyHandle(true);
-    else if (m === 'handle:off') applyHandle(false);
-  });
-} catch { /* WebView2 밖 */ }
-
-// 드래그 핸들 → 네이티브가 창 이동 시작
-$('handle').addEventListener('pointerdown', (e) => { if (e.button === 0) { e.preventDefault(); toNative('drag'); } });
 
 // ---------- WebSocket ----------
 function connectWs() {
@@ -168,8 +138,7 @@ function connectWs() {
     if (msg.type === 'progress') onProgress(msg.data);
     else if (msg.type === 'status') onStatus(msg.data);
     else if (msg.type === 'macrosChanged') loadMacros();
-    else if (msg.type === 'overlaySettings') { settings = msg.data; applyHandle(!!settings.handleOn); updateShowIntent(); }
-    else if (msg.type === 'shutdown') { /* 창은 네이티브가 정리 */ }
+    else if (msg.type === 'overlaySettings') { settings = msg.data; updateShowIntent(); }
   };
   ws.onclose = () => setTimeout(connectWs, 1200);
   ws.onerror = () => { try { ws.close(); } catch { /* */ } };
