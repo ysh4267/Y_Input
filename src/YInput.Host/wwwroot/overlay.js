@@ -1,4 +1,5 @@
-// 인게임 오버레이 페이지. 서버 WS로 재생 상태/진행을 받아 매크로마다 2중 원 + 이름/루프를 세로로 쌓는다.
+// 인게임 오버레이 페이지. 현재 활성화(트리거 켜짐)된 매크로를 전부 세로로 쌓아 2중 원 + 이름/루프로 보여준다.
+// 재생 중이 아니어도 표시하고(원 비어 있음/대기), 재생되면 그 매크로 원이 채워진다.
 // 창(네이티브)은 클릭 통과·투명·게임 추적(왼쪽 중앙 고정)을 담당하고, 이 페이지는 "표시 의도
 // (overlay:show/hide)"와 "콘텐츠 크기(size:WxH)"만 네이티브에 알린다.
 const $ = (id) => document.getElementById(id);
@@ -8,8 +9,10 @@ const toNative = (m) => { try { window.chrome.webview.postMessage(m); } catch { 
 const rowsEl = $('rows');
 
 let settings = { enabled: true };
-let macroMeta = new Map();            // id -> { name, loopCount }
-let playing = [];                     // 재생 중 macroId 배열(순서 유지)
+let macroList = [];                   // /api/macros 전체
+let enabledIds = [];                  // 활성화된 매크로 id(order 정렬)
+const macroMeta = new Map();          // id -> { name, loopCount }
+let playing = new Set();              // 재생 중 macroId
 const progressById = new Map();       // id -> 최신 progress
 const delayAnim = new Map();          // id -> { start, dur, stepIndex }
 const rows = new Map();               // id -> { el, outer, inner, nameEl, loopEl }
@@ -28,12 +31,15 @@ function ringSvg() {
 }
 const setArc = (circle, C, frac) => { circle.style.strokeDashoffset = (C * (1 - clamp01(frac))).toFixed(2); };
 
-// ---------- 렌더(행 구성) ----------
+// ---------- 렌더(행 구성: 활성화된 매크로 전부) ----------
+function computeEnabled() {
+  enabledIds = macroList.filter((m) => m.enabled).sort((a, b) => (a.order || 0) - (b.order || 0)).map((m) => m.id);
+}
 function renderRows() {
-  const want = new Set(playing);
+  const want = new Set(enabledIds);
   for (const [id, r] of rows) if (!want.has(id)) { r.el.remove(); rows.delete(id); }
 
-  for (const id of playing) {
+  for (const id of enabledIds) {
     let r = rows.get(id);
     if (!r) {
       const el = document.createElement('div');
@@ -43,25 +49,28 @@ function renderRows() {
       r = { el, outer, inner, nameEl: el.querySelector('.name'), loopEl: el.querySelector('.loop') };
       rows.set(id, r);
     }
-    rowsEl.appendChild(r.el); // 재생 순서대로 재배치
+    rowsEl.appendChild(r.el); // order 순서대로 재배치
     paintRow(id, r);
   }
   reportSize();
 }
 function metaOf(id) { return macroMeta.get(id) || { name: '매크로', loopCount: 1 }; }
-function loopText(loopCount, loop) {
+function loopText(loopCount, loop, isPlaying) {
+  if (!isPlaying) return (loopCount == null || loopCount <= 0) ? '↻' : `×${loopCount}`; // 대기 상태: 총 반복만
   const cur = (loop || 0) + 1;
   return (loopCount == null || loopCount <= 0) ? `${cur} ↻` : `${cur}/${loopCount}`;
 }
 function paintRow(id, r) {
   const m = metaOf(id);
+  const isPlaying = playing.has(id);
+  r.el.classList.toggle('idle', !isPlaying);
   r.nameEl.textContent = m.name;
   r.nameEl.title = m.name;
-  const p = progressById.get(id);
+  const p = isPlaying ? progressById.get(id) : null;
   const outFrac = p && p.stepCount > 0 ? p.stepIndex / p.stepCount : 0;
   setArc(r.outer, C_OUT, outFrac);
-  setArc(r.inner, C_IN, innerFrac(id));
-  r.loopEl.textContent = loopText(m.loopCount, p ? p.loop : 0);
+  setArc(r.inner, C_IN, isPlaying ? innerFrac(id) : 0);
+  r.loopEl.textContent = loopText(m.loopCount, p ? p.loop : 0, isPlaying);
 }
 
 // ---------- 딜레이 채움 애니메이션 ----------
@@ -88,23 +97,21 @@ const kick = () => { if (!raf) raf = requestAnimationFrame(tick); };
 function onProgress(p) {
   progressById.set(p.macroId, p);
   const r = rows.get(p.macroId);
-  if (!r) return; // 아직 status로 행이 안 생김 → 다음 렌더에서
+  if (!r || !playing.has(p.macroId)) return;
   if (p.delayMs > 0) { delayAnim.set(p.macroId, { start: performance.now(), dur: p.delayMs, stepIndex: p.stepIndex }); kick(); }
   else delayAnim.delete(p.macroId);
   paintRow(p.macroId, r);
 }
 function onStatus(s) {
-  const next = Array.isArray(s.playingIds) ? s.playingIds : [];
-  const changed = next.length !== playing.length || next.some((v, i) => v !== playing[i]);
+  const next = new Set(Array.isArray(s.playingIds) ? s.playingIds : []);
   playing = next;
-  const live = new Set(playing);
-  for (const id of [...progressById.keys()]) if (!live.has(id)) progressById.delete(id);
-  for (const id of [...delayAnim.keys()]) if (!live.has(id)) delayAnim.delete(id);
-  if (changed) renderRows();
+  for (const id of [...progressById.keys()]) if (!next.has(id)) progressById.delete(id);
+  for (const id of [...delayAnim.keys()]) if (!next.has(id)) delayAnim.delete(id);
+  for (const [id, r] of rows) paintRow(id, r); // 재생/대기 상태 반영
   updateShowIntent();
 }
 function updateShowIntent() {
-  const show = !!settings.enabled && playing.length > 0;
+  const show = !!settings.enabled && enabledIds.length > 0;
   if (show !== lastShow) { lastShow = show; toNative(show ? 'overlay:show' : 'overlay:hide'); }
 }
 
@@ -117,16 +124,19 @@ function reportSize() {
   });
 }
 
-// ---------- 설정/메타 로드 ----------
+// ---------- 설정/매크로 로드 ----------
 async function loadSettings() {
   try { settings = await fetch('/api/overlay').then((r) => r.json()); } catch { /* 서버 준비 전 */ }
   updateShowIntent();
 }
 async function loadMacros() {
   try {
-    const list = await fetch('/api/macros').then((r) => r.json());
-    macroMeta = new Map(list.map((m) => [m.id, { name: m.name, loopCount: m.loopCount }]));
-    for (const [id, r] of rows) paintRow(id, r);
+    macroList = await fetch('/api/macros').then((r) => r.json());
+    macroMeta.clear();
+    for (const m of macroList) macroMeta.set(m.id, { name: m.name, loopCount: m.loopCount });
+    computeEnabled();
+    renderRows();
+    updateShowIntent();
   } catch { /* 무시 */ }
 }
 
@@ -137,7 +147,7 @@ function connectWs() {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'progress') onProgress(msg.data);
     else if (msg.type === 'status') onStatus(msg.data);
-    else if (msg.type === 'macrosChanged') loadMacros();
+    else if (msg.type === 'macrosChanged') loadMacros(); // 활성화/이름/반복 변경 반영
     else if (msg.type === 'overlaySettings') { settings = msg.data; updateShowIntent(); }
   };
   ws.onclose = () => setTimeout(connectWs, 1200);
