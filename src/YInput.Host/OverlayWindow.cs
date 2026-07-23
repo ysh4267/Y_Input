@@ -17,10 +17,8 @@ namespace YInput.Host;
 /// </summary>
 internal sealed class OverlayWindow : Form
 {
-    private const int GWL_EXSTYLE = -20;
     private const int WS_EX_TRANSPARENT = 0x20;
     private const int WS_EX_TOOLWINDOW = 0x80;
-    private const int WS_EX_LAYERED = 0x00080000;
     private const int WS_EX_NOACTIVATE = 0x08000000;
     private const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
     private static readonly IntPtr HWND_TOPMOST = new(-1);
@@ -32,9 +30,12 @@ internal sealed class OverlayWindow : Form
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
     [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hWnd, int attr, out RECT val, int size);
+    [DllImport("dwmapi.dll")] private static extern int DwmExtendFrameIntoClientArea(IntPtr hWnd, ref MARGINS m);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT { public int left, top, right, bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MARGINS { public int l, t, r, b; }
 
     private readonly WebView2 _web;
     private readonly string _url;
@@ -77,10 +78,19 @@ internal sealed class OverlayWindow : Form
         get
         {
             var cp = base.CreateParams;
-            // 항상 클릭 통과(입력 완전 무시) + 툴윈도우 + 비활성 + 레이어드(투명 합성)
-            cp.ExStyle |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT;
+            // 항상 클릭 통과(입력 완전 무시) + 툴윈도우 + 비활성. (레이어드는 WebView2 windowed 렌더를
+            // 합성 못 해 창이 통째로 안 보이므로 쓰지 않고, 투명은 DWM sheet-of-glass로 낸다.)
+            cp.ExStyle |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT;
             return cp;
         }
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        // sheet-of-glass: 프레임을 클라이언트 전체로 확장 → 그리지 않은(투명) 영역이 뒤로 뚫린다.
+        try { var m = new MARGINS { l = -1, t = -1, r = -1, b = -1 }; DwmExtendFrameIntoClientArea(Handle, ref m); }
+        catch { /* DWM 미지원 시 불투명 배경으로 동작 */ }
     }
 
     // 폼 배경 미도색 → WebView2가 투명하게 둔 영역이 그대로 뒤(게임)로 뚫림

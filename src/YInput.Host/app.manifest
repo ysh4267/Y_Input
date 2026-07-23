@@ -2,11 +2,13 @@
 <assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
   <assemblyIdentity version="1.0.0.0" name="YInput.Host.app" />
 
-  <!-- 커널 드라이버(Interception/ViGEmBus) 설치·사용에는 관리자 권한이 필요하다. -->
+  <!-- 실행 시 UAC 프롬프트 없이 시작(asInvoker). 드라이버 설치엔 관리자가 필요하지만 최초 1회만이고,
+       설치 이후 트리거 후킹·입력 주입은 비관리자에서도 동작한다. (관리자로 실행되는 안티치트 게임 등
+       상위 무결성 프로세스엔 입력이 안 갈 수 있음 — 그 경우에만 관리자 실행 필요.) -->
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>
       <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
-        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
       </requestedPrivileges>
     </security>
   </trustInfo>
