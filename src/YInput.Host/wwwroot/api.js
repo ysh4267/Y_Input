@@ -60,6 +60,9 @@ export const api = {
   syncSave: (cfg) => request('POST', '/api/sync/config', cfg),
   syncNow: () => request('POST', '/api/sync/now'),
 
+  getOverlay: () => request('GET', '/api/overlay'),
+  setOverlay: (p) => request('POST', '/api/overlay', p),
+
   widgetList: () => request('GET', '/api/widget/list'),
   widgetOpen: (id) => request('POST', '/api/widget/open', { id }),
   widgetClose: (id) => request('POST', '/api/widget/close', { id }),

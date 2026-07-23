@@ -78,8 +78,9 @@ internal static class Program
         var uiSync = new System.Windows.Forms.WindowsFormsSynchronizationContext();
         SynchronizationContext.SetSynchronizationContext(uiSync);
         var widgets = new WidgetManager(uiSync, url, dataRoot, service);
+        var overlay = new OverlayController(uiSync, url, dataRoot, hub); // 인게임 오버레이(디스코드 스타일)
 
-        var app = BuildWebApp(service, hub, sync, widgets, url);
+        var app = BuildWebApp(service, hub, sync, widgets, overlay, url);
         app.StartAsync().GetAwaiter().GetResult();
 
         sync.Start(); // 시작 시 원격에서 내려받기(설정돼 있으면) + 주기 동기화 타이머
@@ -92,11 +93,13 @@ internal static class Program
         if (!isUpdated) tray.OpenUi(); // 실행 즉시 기본 브라우저로 편집 UI 열기
         RunBootstrap(service, tray);
         widgets.RestoreSaved(); // 지난 세션에 열린 위젯 복원(메시지 루프 시작되면 생성)
+        overlay.Start();        // 인게임 오버레이 창 생성(숨김 상태로 대기)
 
         // 메시지 루프(블로킹) — 종료 시까지
         System.Windows.Forms.Application.Run(tray);
 
         try { widgets.CloseAll(); } catch { /* ignore */ } // 위젯 창 정리
+        try { overlay.Close(); } catch { /* ignore */ }   // 오버레이 창 정리
 
         // 기본 브라우저로 열린 페이지에 종료 신호 → 페이지가 스스로 닫힘 처리.
         // 단, 업데이트 재시작 중이면 방송하지 않는다(열린 탭이 재연결을 포기하지 않고 새 인스턴스로 붙게).
@@ -152,7 +155,7 @@ internal static class Program
         catch { /* 잠김 등 — 무시(다음 실행/업데이트에서 정리) */ }
     }
 
-    private static WebApplication BuildWebApp(MacroService service, SocketHub hub, GitHubSync sync, WidgetManager widgets, string url)
+    private static WebApplication BuildWebApp(MacroService service, SocketHub hub, GitHubSync sync, WidgetManager widgets, OverlayController overlay, string url)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
@@ -177,7 +180,7 @@ internal static class Program
             OnPrepareResponse = ctx => ctx.Context.Response.Headers["Cache-Control"] = "no-cache, must-revalidate",
         });
 
-        app.MapApi(service, hub, sync, widgets);
+        app.MapApi(service, hub, sync, widgets, overlay);
         return app;
     }
 

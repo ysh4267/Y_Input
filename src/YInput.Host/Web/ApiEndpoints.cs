@@ -11,7 +11,7 @@ namespace YInput.Host.Web;
 /// <summary>REST API + WebSocket 엔드포인트 매핑.</summary>
 public static class ApiEndpoints
 {
-    public static void MapApi(this WebApplication app, MacroService service, SocketHub hub, GitHubSync sync, WidgetManager widgets)
+    public static void MapApi(this WebApplication app, MacroService service, SocketHub hub, GitHubSync sync, WidgetManager widgets, OverlayController overlay)
     {
         // ---- 상태 ----
         app.MapGet("/api/status", () => Results.Json(service.GetStatusData()));
@@ -261,6 +261,14 @@ public static class ApiEndpoints
         app.MapPost("/api/widget/open", (WidgetBody? b) => { if (!string.IsNullOrWhiteSpace(b?.Id)) widgets.Open(b!.Id); return Results.Ok(new { ok = true }); });
         app.MapPost("/api/widget/close", (WidgetBody? b) => { if (!string.IsNullOrWhiteSpace(b?.Id)) widgets.Close(b!.Id); return Results.Ok(new { ok = true }); });
 
+        // ---- 인게임 오버레이 설정(켜기·핸들·위치 비율) ----
+        app.MapGet("/api/overlay", () => Results.Json(overlay.Get()));
+        app.MapPost("/api/overlay", (OverlayBody? b) =>
+        {
+            var s = overlay.Set(b?.Enabled, b?.HandleOn, b?.X, b?.Y);
+            return Results.Json(s);
+        });
+
         // ---- WebSocket ----
         app.Map("/ws", async (HttpContext ctx) =>
         {
@@ -402,6 +410,7 @@ public static class ApiEndpoints
     // 동기화 설정(gist). Token=null이면 기존 토큰 유지(빈 문자열이면 지움).
     private sealed record SyncConfigBody(bool Enabled = false, string? Token = null);
     private sealed record WidgetBody(string? Id = null);
+    private sealed record OverlayBody(bool? Enabled = null, bool? HandleOn = null, double? X = null, double? Y = null);
     private sealed record RecordStartBody(
         bool Keyboard = true,
         bool MouseButtons = true,

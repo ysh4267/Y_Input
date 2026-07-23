@@ -43,6 +43,25 @@ function openSettings() {
   requestAnimationFrame(() => ov.classList.add('open'));
   loadVersion();
   loadSyncConfig();
+  loadOverlayConfig();
+}
+
+// ---------- 게임 오버레이 설정 ----------
+function renderOverlayConfig(s) {
+  if (!s) return;
+  const e = $('ov-enabled'); if (e) e.checked = !!s.enabled;
+  const h = $('ov-handle'); if (h) h.checked = !!s.handleOn;
+}
+async function loadOverlayConfig() {
+  try { renderOverlayConfig(await api.getOverlay()); } catch { /* 무시 */ }
+}
+async function onOverlayChange() {
+  try {
+    renderOverlayConfig(await api.setOverlay({
+      enabled: $('ov-enabled').checked,
+      handleOn: $('ov-handle').checked,
+    }));
+  } catch (e) { log('error', e.message); }
 }
 
 // ---------- 동기화(GitHub 비공개 저장소) ----------
@@ -950,6 +969,7 @@ function connectWs() {
       case 'macrosChanged': loadMacros(); break; // 동기화로 원격 변경 반영(목록 새로고침)
       case 'openEditor': openEditorFromWidget(msg.data.id); break; // 위젯 더블클릭 → 기존 창에서 편집 열기(중복 탭 방지)
       case 'syncStatus': if (!$('settings-overlay').hidden) renderSyncStatus(msg.data); break; // 동기화 진행/결과 실시간
+      case 'overlaySettings': if (!$('settings-overlay').hidden) renderOverlayConfig(msg.data); break; // 오버레이 설정 실시간 동기화
       case 'widgets': setPinned(msg.data.ids); break; // 열린 위젯 창 목록 → 핀 버튼 상태 동기화
       case 'shutdown': handleShutdown(); break;
     }
@@ -1056,6 +1076,8 @@ function wire() {
   $('btn-reload').onclick = () => location.reload(); // 화면 새로고침(잠금으로 키보드 단축키가 막혀 있어 버튼 제공)
   $('btn-sync-save').onclick = onSyncSave;
   $('btn-sync-now').onclick = onSyncNow;
+  $('ov-enabled').onchange = onOverlayChange;
+  $('ov-handle').onchange = onOverlayChange;
   $('btn-new').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-new-run').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-import').onclick = () => $('file-import').click();
