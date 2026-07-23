@@ -193,8 +193,15 @@
       </section>
       <section class="drawer-sec">
         <h3>게임 오버레이</h3>
-        <p class="hint">현재 포커스된 게임 창 <b>왼쪽 중앙</b>에 <b>활성화된 매크로 전부</b>를 반투명 pill(2중 원 + 이름/루프)로 띄웁니다. 재생 중이 아니어도 표시되고, 재생되면 그 원이 채워집니다. 클릭은 게임으로 그대로 통과됩니다.</p>
+        <p class="hint">게임 창 <b>왼쪽 중앙</b>에 <b>활성화된 매크로 전부</b>를 반투명 pill(2중 원 + 이름/루프)로 띄웁니다. 재생 중이 아니어도 표시되고, 재생되면 원이 채워집니다. 클릭·마우스는 게임으로 그대로 통과됩니다.</p>
         <label class="sync-toggle"><input id="ov-enabled" type="checkbox"> 오버레이 켜기</label>
+        <p class="hint" style="margin-top:10px">게임(풀스크린/보더리스 또는 그래픽 API 사용)으로 감지되면 <b>표시할 창</b>에 자동 추가됩니다. 목록에서 빼면 그 창에선 다시 안 뜹니다. 감지가 안 되면 아래에서 직접 추가하세요.</p>
+        <div id="ov-white" class="ov-chips"></div>
+        <div class="row">
+          <select id="ov-winlist" class="ov-select"></select>
+          <button id="ov-add" class="btn ghost sm">추가</button>
+          <button id="ov-refresh" class="btn ghost sm" title="실행 중 창 목록 새로고침">↻</button>
+        </div>
       </section>
       <section class="drawer-sec">
         <h3>화면</h3>

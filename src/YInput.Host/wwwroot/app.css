@@ -510,3 +510,12 @@ input[type=range] { accent-color: var(--accent); }
 .closed-screen { position: fixed; inset: 0; z-index: 2000; background: var(--bg); display: flex; align-items: center; justify-content: center; text-align: center; }
 .closed-screen h1 { font-size: 20px; margin: 0 0 8px; }
 .closed-screen p { color: var(--muted); margin: 0; }
+
+/* 게임 오버레이 — 표시할 창(화이트리스트) */
+.ov-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.ov-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; border: 1px solid var(--line, #2a3140); border-radius: 999px; background: rgba(255,255,255,.04); font-size: 12px; }
+.ov-chip b { font-weight: 700; }
+.ov-chip i { color: var(--muted); font-style: normal; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-chip button { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; line-height: 1; padding: 2px 4px; border-radius: 50%; }
+.ov-chip button:hover { color: #fff; background: rgba(255,255,255,.12); }
+.ov-select { flex: 1; min-width: 0; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line, #2a3140); background: var(--panel, #131722); color: var(--fg, #e8edf5); font-size: 12px; }

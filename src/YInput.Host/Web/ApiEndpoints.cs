@@ -261,9 +261,14 @@ public static class ApiEndpoints
         app.MapPost("/api/widget/open", (WidgetBody? b) => { if (!string.IsNullOrWhiteSpace(b?.Id)) widgets.Open(b!.Id); return Results.Ok(new { ok = true }); });
         app.MapPost("/api/widget/close", (WidgetBody? b) => { if (!string.IsNullOrWhiteSpace(b?.Id)) widgets.Close(b!.Id); return Results.Ok(new { ok = true }); });
 
-        // ---- 인게임 오버레이 설정(켜기·핸들·위치 비율) ----
+        // ---- 인게임 오버레이 설정(켜기 + 표시할 창 화이트/블랙리스트, 게임 자동감지) ----
         app.MapGet("/api/overlay", () => Results.Json(overlay.Get()));
-        app.MapPost("/api/overlay", (OverlayBody? b) => Results.Json(overlay.Set(b?.Enabled)));
+        app.MapGet("/api/overlay/windows", () => Results.Json(new { windows = overlay.ListWindows() }));
+        app.MapPost("/api/overlay", (OverlayBody? b) => Results.Json(b?.Enabled is bool en ? overlay.SetEnabled(en) : overlay.Get()));
+        app.MapPost("/api/overlay/whitelist/add", (OverlayTargetBody? b) =>
+            Results.Json(string.IsNullOrWhiteSpace(b?.Process) ? overlay.Get() : overlay.WhitelistAdd(b!.Process)));
+        app.MapPost("/api/overlay/whitelist/remove", (OverlayTargetBody? b) =>
+            Results.Json(string.IsNullOrWhiteSpace(b?.Process) ? overlay.Get() : overlay.WhitelistRemove(b!.Process)));
 
         // ---- WebSocket ----
         app.Map("/ws", async (HttpContext ctx) =>
@@ -407,6 +412,7 @@ public static class ApiEndpoints
     private sealed record SyncConfigBody(bool Enabled = false, string? Token = null);
     private sealed record WidgetBody(string? Id = null);
     private sealed record OverlayBody(bool? Enabled = null);
+    private sealed record OverlayTargetBody(string? Process = null);
     private sealed record RecordStartBody(
         bool Keyboard = true,
         bool MouseButtons = true,

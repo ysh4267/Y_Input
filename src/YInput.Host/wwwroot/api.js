@@ -62,6 +62,9 @@ export const api = {
 
   getOverlay: () => request('GET', '/api/overlay'),
   setOverlay: (p) => request('POST', '/api/overlay', p),
+  overlayWindows: () => request('GET', '/api/overlay/windows'),
+  overlayWhitelistAdd: (process) => request('POST', '/api/overlay/whitelist/add', { process }),
+  overlayWhitelistRemove: (process) => request('POST', '/api/overlay/whitelist/remove', { process }),
 
   widgetList: () => request('GET', '/api/widget/list'),
   widgetOpen: (id) => request('POST', '/api/widget/open', { id }),

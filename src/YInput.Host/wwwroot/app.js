@@ -47,16 +47,55 @@ function openSettings() {
 }
 
 // ---------- 게임 오버레이 설정 ----------
+let ovWindows = []; // 실행 중 창 목록 [{process,title}]
 function renderOverlayConfig(s) {
   if (!s) return;
   const e = $('ov-enabled'); if (e) e.checked = !!s.enabled;
+  renderOverlayWhitelist(s.whitelist || []);
+}
+function renderOverlayWhitelist(list) {
+  const box = $('ov-white'); if (!box) return;
+  box.innerHTML = '';
+  if (!list.length) { box.innerHTML = '<span class="hint">표시할 창이 없습니다 — 게임이 감지되면 자동 추가됩니다.</span>'; return; }
+  const titleOf = (p) => { const w = ovWindows.find((x) => x.process.toLowerCase() === p.toLowerCase()); return w ? w.title : ''; };
+  for (const p of list) {
+    const chip = document.createElement('span');
+    chip.className = 'ov-chip';
+    const t = titleOf(p);
+    chip.innerHTML = `<b>${p}</b>${t ? `<i>${t}</i>` : ''}<button title="제외">✕</button>`;
+    chip.querySelector('button').onclick = async () => {
+      try { renderOverlayConfig(await api.overlayWhitelistRemove(p)); } catch (e) { log('error', e.message); }
+    };
+    box.appendChild(chip);
+  }
+}
+function renderOverlayWindowSelect() {
+  const sel = $('ov-winlist'); if (!sel) return;
+  sel.innerHTML = '';
+  if (!ovWindows.length) { sel.innerHTML = '<option value="">(실행 중 창 없음 — ↻ 새로고침)</option>'; return; }
+  for (const w of ovWindows) {
+    const o = document.createElement('option');
+    o.value = w.process;
+    o.textContent = w.title ? `${w.title} (${w.process})` : w.process;
+    sel.appendChild(o);
+  }
+}
+async function loadOverlayWindows() {
+  try { const r = await api.overlayWindows(); ovWindows = r.windows || []; }
+  catch { ovWindows = []; }
+  renderOverlayWindowSelect();
 }
 async function loadOverlayConfig() {
+  await loadOverlayWindows();
   try { renderOverlayConfig(await api.getOverlay()); } catch { /* 무시 */ }
 }
-async function onOverlayChange() {
+async function onOverlayEnabled() {
   try { renderOverlayConfig(await api.setOverlay({ enabled: $('ov-enabled').checked })); }
   catch (e) { log('error', e.message); }
+}
+async function onOverlayAdd() {
+  const p = $('ov-winlist').value; if (!p) return;
+  try { renderOverlayConfig(await api.overlayWhitelistAdd(p)); } catch (e) { log('error', e.message); }
 }
 
 // ---------- 동기화(GitHub 비공개 저장소) ----------
@@ -1071,7 +1110,9 @@ function wire() {
   $('btn-reload').onclick = () => location.reload(); // 화면 새로고침(잠금으로 키보드 단축키가 막혀 있어 버튼 제공)
   $('btn-sync-save').onclick = onSyncSave;
   $('btn-sync-now').onclick = onSyncNow;
-  $('ov-enabled').onchange = onOverlayChange;
+  $('ov-enabled').onchange = onOverlayEnabled;
+  $('ov-add').onclick = onOverlayAdd;
+  $('ov-refresh').onclick = loadOverlayWindows;
   $('btn-new').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-new-run').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-import').onclick = () => $('file-import').click();
