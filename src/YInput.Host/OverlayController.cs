@@ -36,8 +36,8 @@ public sealed class OverlayController : IDisposable
     private readonly Dictionary<string, (int stepIndex, int stepCount, int loop)> _prog = new();
     private readonly Dictionary<string, (long startMs, double durMs)> _delay = new();
     private readonly Dictionary<string, double> _outerMono = new(); // 외부 원: run 동안 단조 증가(뒤로 안 감)
-    private readonly System.Threading.Timer _anim;
-    private volatile bool _animOn;
+    private readonly System.Threading.Timer _pump; // 재생 중 ~30fps 렌더 펌프(이벤트 코얼레싱)
+    private volatile bool _pumpOn;
 
     public OverlayController(SynchronizationContext ui, string dataRoot, SocketHub hub, MacroService service, ProgressBroadcaster progress)
     {
@@ -51,7 +51,7 @@ public sealed class OverlayController : IDisposable
         _progress.Progressed += OnProgress;
         _progress.Ended += OnEnded;
         _service.StatusChanged += OnStatus;
-        _anim = new System.Threading.Timer(_ => AnimTick(), null, Timeout.Infinite, Timeout.Infinite);
+        _pump = new System.Threading.Timer(_ => PumpTick(), null, Timeout.Infinite, Timeout.Infinite);
     }
 
     public OverlaySettings Get() { lock (_gate) return Clone(_settings); }
@@ -87,7 +87,7 @@ public sealed class OverlayController : IDisposable
         try { _progress.Progressed -= OnProgress; } catch { }
         try { _progress.Ended -= OnEnded; } catch { }
         try { _service.StatusChanged -= OnStatus; } catch { }
-        try { _anim.Dispose(); } catch { }
+        try { _pump.Dispose(); } catch { }
         try { _ui.Send(_ => { try { _window?.Close(); } catch { } _window = null; }, null); } catch { }
     }
 
@@ -146,7 +146,8 @@ public sealed class OverlayController : IDisposable
             foreach (var id in _outerMono.Keys.ToList()) if (!playing.Contains(id)) _outerMono.Remove(id);
         }
         ApplyArm();
-        PushRows();
+        EnsurePump();
+        PushRows(); // 상태 변화(재생 시작/정지)는 즉시 1회 반영
     }
 
     private void OnProgress(string id, PlaybackProgress p)
@@ -165,8 +166,7 @@ public sealed class OverlayController : IDisposable
             double raw = Math.Clamp(lc > 0 ? (p.Loop + within) / lc : within, 0, 1);
             _outerMono[id] = Math.Max(_outerMono.TryGetValue(id, out var prev) ? prev : 0, raw);
         }
-        EnsureAnim();
-        PushRows();
+        EnsurePump(); // 렌더는 펌프(~30fps)가 코얼레싱 — 진행 이벤트마다 그리지 않음
     }
 
     private void OnEnded(string id)
@@ -189,27 +189,27 @@ public sealed class OverlayController : IDisposable
         catch { /* 무시 */ }
     }
 
-    // ---------- 애니메이션(딜레이 채움) ----------
-    private void EnsureAnim()
+    // ---------- 렌더 펌프(재생 중 ~30fps로 코얼레싱) ----------
+    private void EnsurePump()
     {
-        if (_animOn) return;
-        if (!HasActiveDelay()) return;
-        _animOn = true;
-        try { _anim.Change(0, 33); } catch { }
+        if (_pumpOn) return;
+        bool playing; lock (_gate) playing = _playing.Count > 0;
+        if (!playing) return;
+        _pumpOn = true;
+        try { _pump.Change(0, 33); } catch { }
     }
 
-    private void AnimTick()
+    private void PumpTick()
     {
-        if (HasActiveDelay()) { PushRows(); return; }
-        _animOn = false;
-        try { _anim.Change(Timeout.Infinite, Timeout.Infinite); } catch { }
-        PushRows(); // 마지막 프레임(원 가득 참) 반영
-    }
-
-    private bool HasActiveDelay()
-    {
-        long now = Environment.TickCount64;
-        lock (_gate) return _delay.Values.Any(d => d.durMs > 0 && now - d.startMs < d.durMs);
+        bool playing; lock (_gate) playing = _playing.Count > 0;
+        if (!playing)
+        {
+            _pumpOn = false;
+            try { _pump.Change(Timeout.Infinite, Timeout.Infinite); } catch { }
+            PushRows(); // 마지막 프레임 반영
+            return;
+        }
+        PushRows(); // 창이 동일 프레임이면 알아서 스킵
     }
 
     // ---------- 창에 반영 ----------

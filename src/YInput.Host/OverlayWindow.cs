@@ -70,6 +70,7 @@ internal sealed class OverlayWindow : Form
     private readonly HashSet<string> _white = new();
     private readonly HashSet<string> _black = new();
     private List<OverlayRow> _rows = new();
+    private Bitmap? _bmp; private bool _bmpDirty = true; // 내용 바뀔 때만 재생성, 아니면 캐시 재사용(재배치용)
     private uint _fgPidCache; private string _fgProcCache = "";
     private uint _fgGamePid; private bool _fgGameCache;
     private string _lastGameReport = "";
@@ -114,7 +115,10 @@ internal sealed class OverlayWindow : Form
 
     public void SetRows(List<OverlayRow> rows)
     {
-        _rows = rows ?? new();
+        rows ??= new();
+        if (rows.SequenceEqual(_rows)) return; // 동일 프레임 → 스킵(위치 갱신은 250ms poll이 처리)
+        _rows = rows;
+        _bmpDirty = true;
         if (_armed) Refresh2();
     }
 
@@ -152,11 +156,11 @@ internal sealed class OverlayWindow : Form
         int gh = r.bottom - r.top;
         if (r.right - r.left <= 0 || gh <= 0) return;
 
-        using var bmp = BuildBitmap();
+        if (_bmpDirty || _bmp == null) { _bmp?.Dispose(); _bmp = BuildBitmap(); _bmpDirty = false; }
         int x = r.left + LeftMargin;
-        int y = r.top + (gh - bmp.Height) / 2;
+        int y = r.top + (gh - _bmp.Height) / 2;
         if (!Visible) Show();
-        PushBitmap(bmp, x, y);
+        PushBitmap(_bmp, x, y);
     }
 
     private void PushBitmap(Bitmap bmp, int x, int y)
@@ -357,7 +361,7 @@ internal sealed class OverlayWindow : Form
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { try { _poll.Dispose(); } catch { } }
+        if (disposing) { try { _poll.Dispose(); } catch { } try { _bmp?.Dispose(); } catch { } }
         base.Dispose(disposing);
     }
 }
