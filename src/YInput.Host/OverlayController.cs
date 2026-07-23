@@ -35,6 +35,7 @@ public sealed class OverlayController : IDisposable
     private HashSet<string> _playing = new();
     private readonly Dictionary<string, (int stepIndex, int stepCount, int loop)> _prog = new();
     private readonly Dictionary<string, (long startMs, double durMs)> _delay = new();
+    private readonly Dictionary<string, double> _outerMono = new(); // 외부 원: run 동안 단조 증가(뒤로 안 감)
     private readonly System.Threading.Timer _anim;
     private volatile bool _animOn;
 
@@ -137,9 +138,12 @@ public sealed class OverlayController : IDisposable
         var playing = new HashSet<string>(_service.PlayingIds());
         lock (_gate)
         {
+            var old = _playing;
             _playing = playing;
+            foreach (var id in playing) if (!old.Contains(id)) _outerMono[id] = 0; // 새로 시작 → 타이머 리셋
             foreach (var id in _prog.Keys.ToList()) if (!playing.Contains(id)) _prog.Remove(id);
             foreach (var id in _delay.Keys.ToList()) if (!playing.Contains(id)) _delay.Remove(id);
+            foreach (var id in _outerMono.Keys.ToList()) if (!playing.Contains(id)) _outerMono.Remove(id);
         }
         ApplyArm();
         PushRows();
@@ -152,6 +156,14 @@ public sealed class OverlayController : IDisposable
             _prog[id] = (p.StepIndex, p.StepCount, p.Loop);
             if (p.DelayMs > 0) _delay[id] = (Environment.TickCount64, p.DelayMs);
             else _delay.Remove(id);
+
+            // 외부 원 = run 전체 진행도(타이머): 앞으로만. 유한 반복이면 (loop+스텝비율)/loopCount,
+            // 무한이면 한 바퀴 기준. 반복으로 stepIndex가 되감겨도 최댓값 유지로 뒤로 가지 않는다.
+            int lc = 0;
+            foreach (var e in _enabled) if (e.id == id) { lc = e.loopCount; break; }
+            double within = p.StepCount > 0 ? (double)p.StepIndex / p.StepCount : 0;
+            double raw = Math.Clamp(lc > 0 ? (p.Loop + within) / lc : within, 0, 1);
+            _outerMono[id] = Math.Max(_outerMono.TryGetValue(id, out var prev) ? prev : 0, raw);
         }
         EnsureAnim();
         PushRows();
@@ -159,7 +171,7 @@ public sealed class OverlayController : IDisposable
 
     private void OnEnded(string id)
     {
-        lock (_gate) { _prog.Remove(id); _delay.Remove(id); }
+        lock (_gate) { _prog.Remove(id); _delay.Remove(id); _outerMono.Remove(id); }
         PushRows();
     }
 
@@ -225,7 +237,7 @@ public sealed class OverlayController : IDisposable
                 double outer = 0, inner = 0; int loop = 0;
                 if (playing && _prog.TryGetValue(id, out var pr))
                 {
-                    outer = pr.stepCount > 0 ? (double)pr.stepIndex / pr.stepCount : 0;
+                    outer = _outerMono.TryGetValue(id, out var mo) ? mo : (pr.stepCount > 0 ? (double)pr.stepIndex / pr.stepCount : 0);
                     loop = pr.loop;
                 }
                 if (playing && _delay.TryGetValue(id, out var d) && d.durMs > 0)
