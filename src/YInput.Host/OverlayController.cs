@@ -35,7 +35,8 @@ public sealed class OverlayController : IDisposable
     private HashSet<string> _playing = new();
     private readonly Dictionary<string, (int stepIndex, int stepCount, int loop)> _prog = new();
     private readonly Dictionary<string, (long startMs, double durMs)> _delay = new();
-    private readonly Dictionary<string, double> _outerMono = new(); // 외부 원: run 동안 단조 증가(뒤로 안 감)
+    private readonly Dictionary<string, double> _outerMono = new(); // 외부 원: 단조 증가(뒤로 안 감)
+    private readonly Dictionary<string, int> _lastLoop = new();     // 상위 루프 추적 → 루프 바뀌면 싱크 재정렬
     private readonly System.Threading.Timer _pump; // 재생 중 ~30fps 렌더 펌프(이벤트 코얼레싱)
     private volatile bool _pumpOn;
 
@@ -68,7 +69,7 @@ public sealed class OverlayController : IDisposable
             if (_window is not null) return;
             try
             {
-                var w = new OverlayWindow(OnGameDetected) { Location = new Point(-10000, -10000) };
+                var w = new OverlayWindow() { Location = new Point(-10000, -10000) };
                 _window = w;
                 w.Show(); w.Hide(); // 핸들 생성 후 숨김
             }
@@ -117,20 +118,6 @@ public sealed class OverlayController : IDisposable
         return snap;
     }
 
-    private void OnGameDetected(string process)
-    {
-        var p = Normalize(process);
-        if (p.Length == 0) return;
-        OverlaySettings snap;
-        lock (_gate)
-        {
-            if (_settings.Blacklist.Any(x => Normalize(x) == p) || _settings.Whitelist.Any(x => Normalize(x) == p)) return;
-            _settings.Whitelist.Add(p);
-            snap = Clone(_settings);
-        }
-        Save(snap); PushLists(); Broadcast(snap);
-    }
-
     // ---------- 데이터 이벤트 ----------
     private void OnStatus()
     {
@@ -140,10 +127,11 @@ public sealed class OverlayController : IDisposable
         {
             var old = _playing;
             _playing = playing;
-            foreach (var id in playing) if (!old.Contains(id)) _outerMono[id] = 0; // 새로 시작 → 타이머 리셋
+            foreach (var id in playing) if (!old.Contains(id)) { _outerMono[id] = 0; _lastLoop.Remove(id); } // 새로 시작 → 리셋
             foreach (var id in _prog.Keys.ToList()) if (!playing.Contains(id)) _prog.Remove(id);
             foreach (var id in _delay.Keys.ToList()) if (!playing.Contains(id)) _delay.Remove(id);
             foreach (var id in _outerMono.Keys.ToList()) if (!playing.Contains(id)) _outerMono.Remove(id);
+            foreach (var id in _lastLoop.Keys.ToList()) if (!playing.Contains(id)) _lastLoop.Remove(id);
         }
         ApplyArm();
         EnsurePump();
@@ -158,10 +146,14 @@ public sealed class OverlayController : IDisposable
             if (p.DelayMs > 0) _delay[id] = (Environment.TickCount64, p.DelayMs);
             else _delay.Remove(id);
 
-            // 외부 원 = run 전체 진행도(타이머): 앞으로만. 유한 반복이면 (loop+스텝비율)/loopCount,
-            // 무한이면 한 바퀴 기준. 반복으로 stepIndex가 되감겨도 최댓값 유지로 뒤로 가지 않는다.
+            // 외부 원 = 진행도 타이머(앞으로만). 유한 반복이면 (loop+스텝비율)/loopCount, 무한이면 한 바퀴 기준.
+            // 상위 루프가 바뀌면 싱크를 재정렬한다(유한: 그 루프 시작값으로, 무한: 0으로) — 반복이 쌓여 100%에
+            // 붙어버리는 desync를 막는다. 같은 루프 안에서는 최댓값 유지로 인라인 반복에도 뒤로 가지 않는다.
             int lc = 0;
             foreach (var e in _enabled) if (e.id == id) { lc = e.loopCount; break; }
+            if (_lastLoop.TryGetValue(id, out var ll) && ll != p.Loop)
+                _outerMono[id] = lc > 0 ? Math.Clamp((double)p.Loop / lc, 0, 1) : 0;
+            _lastLoop[id] = p.Loop;
             double within = p.StepCount > 0 ? (double)p.StepIndex / p.StepCount : 0;
             double raw = Math.Clamp(lc > 0 ? (p.Loop + within) / lc : within, 0, 1);
             _outerMono[id] = Math.Max(_outerMono.TryGetValue(id, out var prev) ? prev : 0, raw);
@@ -171,7 +163,7 @@ public sealed class OverlayController : IDisposable
 
     private void OnEnded(string id)
     {
-        lock (_gate) { _prog.Remove(id); _delay.Remove(id); _outerMono.Remove(id); }
+        lock (_gate) { _prog.Remove(id); _delay.Remove(id); _outerMono.Remove(id); _lastLoop.Remove(id); }
         PushRows();
     }
 

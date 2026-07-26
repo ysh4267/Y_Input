@@ -29,9 +29,6 @@ internal sealed class OverlayWindow : Form
     private const int WS_EX_LAYERED = 0x00080000;
     private const int WS_EX_NOACTIVATE = 0x08000000;
     private const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
-    private const int GWL_STYLE = -16;
-    private const int WS_CAPTION = 0x00C00000;
-    private const uint MONITOR_DEFAULTTONEAREST = 2;
     private const int LeftMargin = 8;
     private const byte AC_SRC_OVER = 0, AC_SRC_ALPHA = 1;
     private const int ULW_ALPHA = 2;
@@ -44,9 +41,6 @@ internal sealed class OverlayWindow : Form
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr hWnd, StringBuilder s, int max);
     [DllImport("user32.dll")] private static extern int GetWindowTextLength(IntPtr hWnd);
-    [DllImport("user32.dll")] private static extern int GetWindowLong(IntPtr hWnd, int idx);
-    [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
-    [DllImport("user32.dll")] private static extern bool GetMonitorInfo(IntPtr hMon, ref MONITORINFO mi);
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
     [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
@@ -58,31 +52,26 @@ internal sealed class OverlayWindow : Form
     [DllImport("user32.dll")] private static extern bool UpdateLayeredWindow(IntPtr hWnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize, IntPtr hdcSrc, ref POINT pptSrc, int crKey, ref BLENDFUNCTION pblend, int flags);
 
     [StructLayout(LayoutKind.Sequential)] private struct RECT { public int left, top, right, bottom; }
-    [StructLayout(LayoutKind.Sequential)] private struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
     [StructLayout(LayoutKind.Sequential)] private struct POINT { public int x, y; public POINT(int a, int b) { x = a; y = b; } }
     [StructLayout(LayoutKind.Sequential)] private struct SIZE { public int cx, cy; public SIZE(int a, int b) { cx = a; cy = b; } }
     [StructLayout(LayoutKind.Sequential)] private struct BLENDFUNCTION { public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat; }
 
-    private readonly Action<string>? _onGameDetected;
     private readonly uint _selfPid = (uint)Environment.ProcessId;
 
     private bool _armed;
-    private readonly HashSet<string> _white = new();
+    private readonly HashSet<string> _white = new(); // 표시할 프로세스명(수동 지정만)
     private readonly HashSet<string> _black = new();
     private List<OverlayRow> _rows = new();
     private Bitmap? _bmp; private bool _bmpDirty = true; // 내용 바뀔 때만 재생성, 아니면 캐시 재사용(재배치용)
     private uint _fgPidCache; private string _fgProcCache = "";
-    private uint _fgGamePid; private bool _fgGameCache;
-    private string _lastGameReport = "";
     private readonly System.Windows.Forms.Timer _poll;
 
     // 폰트(픽셀 단위로 DPI 영향 최소화)
     private static readonly Font NameFont = new("Segoe UI", 12.5f, FontStyle.Bold, GraphicsUnit.Pixel);
     private static readonly Font LoopFont = new("Segoe UI", 11f, FontStyle.Regular, GraphicsUnit.Pixel);
 
-    public OverlayWindow(Action<string>? onGameDetected)
+    public OverlayWindow()
     {
-        _onGameDetected = onGameDetected;
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         TopMost = true;
@@ -136,17 +125,12 @@ internal sealed class OverlayWindow : Form
         IntPtr fg = GetForegroundWindow();
         if (fg == IntPtr.Zero || fg == Handle) return;
 
-        var info = ForegroundInfo(fg, out uint pid);
+        string proc = ForegroundProc(fg, out uint pid);
         if (pid == _selfPid) return;
-        string proc = info.proc;
         if (proc.Length == 0) { if (Visible) Hide(); return; }
 
-        bool show;
-        if (_black.Contains(proc)) show = false;
-        else if (_white.Contains(proc)) show = true;
-        else if (info.isGame) { show = true; if (proc != _lastGameReport) { _lastGameReport = proc; _onGameDetected?.Invoke(proc); } }
-        else show = false;
-
+        // 수동 지정(화이트리스트)한 프로세스에서만 표시. 블랙리스트는 제외.
+        bool show = _white.Contains(proc) && !_black.Contains(proc);
         if (!show || _rows.Count == 0) { if (Visible) Hide(); return; }
 
         if (DwmGetWindowAttribute(fg, DWMWA_EXTENDED_FRAME_BOUNDS, out var r, Marshal.SizeOf<RECT>()) != 0)
@@ -274,56 +258,16 @@ internal sealed class OverlayWindow : Form
         return p;
     }
 
-    // ---------- 포그라운드/게임 판정 ----------
-    private (string proc, bool isGame) ForegroundInfo(IntPtr fg, out uint pid)
+    // ---------- 포그라운드 프로세스명 ----------
+    private string ForegroundProc(IntPtr fg, out uint pid)
     {
         GetWindowThreadProcessId(fg, out pid);
-        if (pid == _fgPidCache && pid == _fgGamePid) return (_fgProcCache, _fgGameCache);
+        if (pid == _fgPidCache) return _fgProcCache;
         string name = "";
         try { using var p = System.Diagnostics.Process.GetProcessById((int)pid); name = p.ProcessName.ToLowerInvariant(); }
         catch { }
-        bool isGame = name.Length > 0 && !NonGame.Contains(name) && (IsFullscreen(fg) || HasGraphicsModule(pid));
         _fgPidCache = pid; _fgProcCache = name;
-        _fgGamePid = pid; _fgGameCache = isGame;
-        return (name, isGame);
-    }
-
-    private static bool IsFullscreen(IntPtr hWnd)
-    {
-        if (!GetWindowRect(hWnd, out var wr)) return false;
-        IntPtr mon = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
-        var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
-        if (!GetMonitorInfo(mon, ref mi)) return false;
-        var m = mi.rcMonitor;
-        bool covers = wr.left <= m.left && wr.top <= m.top && wr.right >= m.right && wr.bottom >= m.bottom;
-        if (!covers) return false;
-        return (GetWindowLong(hWnd, GWL_STYLE) & WS_CAPTION) != WS_CAPTION;
-    }
-
-    private static readonly HashSet<string> NonGame = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "chrome", "msedge", "firefox", "opera", "opera_gx", "brave", "whale", "vivaldi", "iexplore",
-        "code", "electron", "discord", "slack", "teams", "msteams", "spotify", "notion", "obsidian",
-        "explorer", "dwm", "searchapp", "searchhost", "startmenuexperiencehost", "shellexperiencehost",
-        "textinputhost", "applicationframehost", "systemsettings", "taskmgr", "mmc", "sihost", "ctfmon",
-        "powershell", "pwsh", "cmd", "windowsterminal", "conhost", "notepad", "notepad++", "sublime_text",
-        "devenv", "rider64", "idea64", "pycharm64", "webstorm64", "yinput", "widgets", "lockapp", "logonui",
-        "nvcontainer", "onedrive", "acrobat", "acrord32", "winword", "excel", "powerpnt", "outlook",
-    };
-    private static readonly string[] GfxDlls = { "d3d9.dll", "d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "opengl32.dll", "vulkan-1.dll", "d3d8.dll" };
-    private static bool HasGraphicsModule(uint pid)
-    {
-        try
-        {
-            using var p = System.Diagnostics.Process.GetProcessById((int)pid);
-            foreach (System.Diagnostics.ProcessModule m in p.Modules)
-            {
-                var n = m.ModuleName?.ToLowerInvariant() ?? "";
-                if (Array.IndexOf(GfxDlls, n) >= 0) return true;
-            }
-        }
-        catch { }
-        return false;
+        return name;
     }
 
     private static string Normalize(string? t)
