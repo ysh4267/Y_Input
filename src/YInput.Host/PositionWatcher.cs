@@ -628,34 +628,41 @@ public sealed class PositionWatcher : IDisposable
                     if (attempt > 0)
                     {
                         Status("rune", "퍼즐 인식 실패 — 무입력 취소(3초)를 기다렸다 다시 발동합니다");
-                        await PreciseDelay.WaitAsync(1500, ct).ConfigureAwait(false); // 2초 창 + 1.5초 = 취소 확정
+                        await PreciseDelay.WaitAsync(1700, ct).ConfigureAwait(false); // 1.5초 창 + 1.7초 = 취소 확정
                     }
                     await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
                     await PreciseDelay.WaitAsync(150, ct).ConfigureAwait(false);
                     var winSw = Stopwatch.StartNew();
-                    while (arrows is null && winSw.ElapsedMilliseconds < 2000)
-                        arrows = await DetectArrowsAsync(s, beforeFrame, saveShot: true, ct).ConfigureAwait(false);
+                    while (arrows is null && winSw.ElapsedMilliseconds < 1500)
+                        arrows = await DetectArrowsAsync(s, beforeFrame, ct).ConfigureAwait(false);
                 }
-                if (arrows is null) { Status("fail", "룬 퍼즐 화살표를 인식하지 못했습니다 — 직접 입력해 주세요(logs\\rune-puzzle.png 확인)."); return; }
+                if (arrows is null)
+                {
+                    SaveRuneShots(); // 실패 재현용 — 시간 제약이 끝났으니 이제 저장
+                    Status("fail", "룬 퍼즐 화살표를 인식하지 못했습니다 — 직접 입력해 주세요(logs\\rune-puzzle.png 확인).");
+                    return;
+                }
 
-                var seq = string.Join(" ", arrows.Select(a => a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' }));
-                Status("rune", $"퍼즐 인식: {seq} — 입력합니다");
+                // 취소 타이머(3초) 안에 입력이 시작돼야 한다 — 인식 즉시 입력부터, 로그·저장은 뒤로
                 foreach (var a in arrows)
                 {
                     ct.ThrowIfCancellationRequested();
                     ushort code = a.Dir switch { 'L' => ScLeft, 'R' => ScRight, 'U' => ScUp, _ => ScDown };
                     await TapAsync(code, 90, ct).ConfigureAwait(false);
-                    await PreciseDelay.WaitAsync(200, ct).ConfigureAwait(false);
+                    await PreciseDelay.WaitAsync(150, ct).ConfigureAwait(false);
                 }
+                var seq = string.Join(" ", arrows.Select(a => a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' }));
+                Status("rune", $"퍼즐 인식: {seq} — 입력했습니다");
+                SaveRuneShots(); // 판정에 쓴 버스트 저장(오답 재현용)
 
                 // 입력 후 퍼즐이 사라졌는지 확인 — 남아 있으면 인식이 틀렸을 가능성
                 await PreciseDelay.WaitAsync(900, ct).ConfigureAwait(false);
-                if (await DetectArrowsAsync(s, beforeFrame, saveShot: false, ct).ConfigureAwait(false) is not null)
+                if (await DetectArrowsAsync(s, beforeFrame, ct).ConfigureAwait(false) is not null)
                     Status("fail", "퍼즐 입력 후에도 화살표가 남아 있습니다 — 인식이 틀렸을 수 있어요(logs\\rune-puzzle.png 확인).");
                 else
                     Status("done", $"룬 사용 완료 (퍼즐 {seq})");
             }
-            finally { beforeFrame?.Dispose(); }
+            finally { beforeFrame?.Dispose(); ClearRuneShots(); }
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { try { Status("fail", "룬 사용 오류: " + ex.Message); } catch { } }
@@ -671,36 +678,46 @@ public sealed class PositionWatcher : IDisposable
         return MinimapDetector.FindRuneIcon(frame, mini);
     }
 
-    /// <summary>화면에서 룬 퍼즐 화살표 4개 탐지. 주 경로: ~0.6초간 5프레임을 찍어 연속 차분의
+    private readonly List<Bitmap> _runeShots = new(); // 마지막 판정 버스트 프레임 — 진단 저장은 판정 뒤로 미룬다
+
+    /// <summary>화면에서 룬 퍼즐 화살표 4개 탐지. 주 경로: ~0.3초간 4프레임을 찍어 연속 차분의
     /// 합집합으로 '하이라이트가 쓸고 지나가는' 화살표 전체를 채운다(바·배경·배너는 정지라 배제).
-    /// 애니메이션이 없으면 발동 직전 프레임 차분으로 폴백. beforeSpace = 발동 직전 프레임
-    /// (배너 위치로 탐색 밴드 제한 겸용). saveShot이면 판정 프레임을 logs\rune-puzzle.png로 남긴다.</summary>
-    private async Task<List<RuneArrow>?> DetectArrowsAsync(WatcherSettings s, Bitmap? beforeSpace, bool saveShot, CancellationToken ct)
+    /// 애니메이션이 없으면 발동 전 프레임 차분으로 폴백. beforeSpace = 발동 직전 프레임(배너 밴드 겸용).
+    /// 퍼즐 취소 타이머(3초) 안에 끝나야 하므로 디스크 저장 등 느린 작업은 하지 않는다 —
+    /// 프레임은 _runeShots에 보관했다가 판정·입력이 끝난 뒤 <see cref="SaveRuneShots"/>로 저장.</summary>
+    private async Task<List<RuneArrow>?> DetectArrowsAsync(WatcherSettings s, Bitmap? beforeSpace, CancellationToken ct)
     {
-        var frames = new List<Bitmap>(5);
-        try
+        var frames = new List<Bitmap>(4);
+        for (int i = 0; i < 4; i++)
         {
-            for (int i = 0; i < 5; i++)
-            {
-                if (i > 0) await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
-                var f = CaptureGameFrame(s.Process, out _);
-                if (f is not null) frames.Add(f);
-            }
-            if (frames.Count == 0) return null;
-            if (saveShot)
-            {
-                // 오답·실패를 오프라인 재현할 수 있게 판정에 쓴 프레임을 항상 보존(--rune-analyze 다중 입력)
-                FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(frames[^1]));
-                for (int i = 0; i < frames.Count; i++)
-                    FileLog.SavePng($"rune-frame-{i}", ScreenCapture.ToPng(frames[i]));
-            }
-            var res = frames.Count >= 2 ? RuneArrowDetector.FindArrowsAnimated(frames, beforeSpace) : null;
-            if (res is not null) { FileLog.Write("info", "[위치보정:rune] 퍼즐 인식 경로: 애니메이션 차분"); return res; }
-            res = RuneArrowDetector.FindArrows(frames[^1], beforeSpace, beforeSpace);
-            if (res is not null) FileLog.Write("info", "[위치보정:rune] 퍼즐 인식 경로: 발동 전 차분 폴백");
-            return res;
+            if (i > 0) await PreciseDelay.WaitAsync(90, ct).ConfigureAwait(false);
+            var f = CaptureGameFrame(s.Process, out _);
+            if (f is not null) frames.Add(f);
         }
-        finally { foreach (var f in frames) f.Dispose(); }
+        ClearRuneShots();
+        _runeShots.AddRange(frames); // 소유권 이전(진단 보관)
+        if (frames.Count == 0) return null;
+        var res = frames.Count >= 2 ? RuneArrowDetector.FindArrowsAnimated(frames, beforeSpace) : null;
+        if (res is not null) { FileLog.Write("info", "[위치보정:rune] 퍼즐 인식 경로: 애니메이션 차분"); return res; }
+        res = RuneArrowDetector.FindArrows(frames[^1], beforeSpace, beforeSpace);
+        if (res is not null) FileLog.Write("info", "[위치보정:rune] 퍼즐 인식 경로: 발동 전 차분 폴백");
+        return res;
+    }
+
+    /// <summary>마지막 판정 버스트를 logs\rune-frame-N.png·rune-puzzle.png로 저장(오답·실패 재현용,
+    /// --rune-analyze 다중 입력). PNG 인코딩이 느려 반드시 판정·입력이 끝난 뒤에 호출한다.</summary>
+    private void SaveRuneShots()
+    {
+        for (int i = 0; i < _runeShots.Count; i++)
+            FileLog.SavePng($"rune-frame-{i}", ScreenCapture.ToPng(_runeShots[i]));
+        if (_runeShots.Count > 0)
+            FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(_runeShots[^1]));
+    }
+
+    private void ClearRuneShots()
+    {
+        foreach (var f in _runeShots) f.Dispose();
+        _runeShots.Clear();
     }
 
     public void Dispose()
@@ -710,6 +727,7 @@ public sealed class PositionWatcher : IDisposable
             _liveFrame?.Dispose(); _liveFrame = null;
             _lastFrame?.Dispose(); _lastFrame = null;
         }
+        ClearRuneShots();
         _sem.Dispose();
     }
 
