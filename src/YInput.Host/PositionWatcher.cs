@@ -176,12 +176,15 @@ public sealed class PositionWatcher : IDisposable
             _liveFrame = frame;
 
             var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
-            bool dotFound = MinimapDetector.TryFindPlayerDot(_liveFrame, mini, out var dot, s.DotMinR, s.DotMinG, s.DotMaxB);
+            var cands = MinimapDetector.FindDots(_liveFrame, mini, s.DotMinR, s.DotMinG, s.DotMaxB);
+            bool dotFound = cands.Count > 0;
+            var dot = dotFound ? MinimapDetector.Pick(cands).Center : PointF.Empty;
             var patch = ClampRect(AutoPatchRect(s, _liveFrame.Width, _liveFrame.Height), _liveFrame.Width, _liveFrame.Height);
             return new
             {
                 ok = true,
                 dotFound, dotX = Math.Round(dot.X, 1), dotY = Math.Round(dot.Y, 1),
+                dotCandidates = cands.Count, // 2개 이상이면 UI가 '마커가 내 캐릭터인지 확인' 경고
                 miniW = s.MiniW, miniH = s.MiniH,
                 patchW = patch.Width, patchH = patch.Height,
                 foreground = WindowLocator.IsForeground(s.Process),
@@ -334,7 +337,7 @@ public sealed class PositionWatcher : IDisposable
                     ushort key = miniDx > 0 ? ScLeft : ScRight;
                     await TapAsync(key, Math.Clamp(Math.Abs(miniDx) * msPerMini, MinTapMs, s.MaxHoldMs), ct).ConfigureAwait(false);
                     await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
-                    dot = MeasureDot(s);
+                    dot = MeasureDot(s, dot); // 직전 위치 추적 — 다른 노란 점으로 안 튀게
                     if (dot is null) { Status("fail", "보정 중 미니맵 점을 놓쳤습니다."); return; }
                     prevMiniDx = miniDx;
                     miniDx = dot.Value.X - spot.DotX;
@@ -432,13 +435,14 @@ public sealed class PositionWatcher : IDisposable
         catch { return null; }
     }
 
-    /// <summary>프레임을 찍어 미니맵의 플레이어 점(미니맵 상대, 서브픽셀)을 찾는다. 창/점 없으면 null.</summary>
-    private PointF? MeasureDot(WatcherSettings s)
+    /// <summary>프레임을 찍어 미니맵의 플레이어 점(미니맵 상대, 서브픽셀)을 찾는다. 창/점 없으면 null.
+    /// near = 직전 측정 위치 — 보정 중 추적으로, 미니맵의 다른 노란 점으로 튀는 것을 막는다.</summary>
+    private PointF? MeasureDot(WatcherSettings s, PointF? near = null)
     {
         using var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return null;
         return MinimapDetector.TryFindPlayerDot(frame, new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH), out var dot,
-                                                s.DotMinR, s.DotMinG, s.DotMaxB) ? dot : null;
+                                                s.DotMinR, s.DotMinG, s.DotMaxB, near) ? dot : null;
     }
 
     /// <summary>프레임의 패치 Y ± 밴드에서 템플릿 매칭. dx = 현재 매칭 X − 저장 X.</summary>

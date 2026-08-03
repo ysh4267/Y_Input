@@ -452,6 +452,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros, openMinimapPi
         } else marker.hidden = true;
         stat.textContent = live.dotFound
           ? `현재 미니맵 위치 (${live.dotX}, ${live.dotY}) — 게임에서 캐릭터를 움직여 자리를 잡고 확정하세요`
+            + (live.dotCandidates > 1 ? ` · ⚠ 노란 점 후보 ${live.dotCandidates}개 — 미니맵 마커가 내 캐릭터 위에 있는지 확인하세요` : '')
           : '미니맵에서 플레이어 점을 찾지 못했습니다 — 미니맵이 펼쳐져 있는지, 미니맵 영역이 맞는지 확인하세요';
       } catch (err) { stat.textContent = '미리보기 실패: ' + err.message; }
     };
