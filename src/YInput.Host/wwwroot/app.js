@@ -362,6 +362,21 @@ function renderStatus(s) {
   $('d-vigem').innerHTML = `${mark(d.vigem)} ${d.vigem ? '설치' : '미설치'}${b.gamepadConnected ? '·연결' : ''}`;
   $('d-admin').innerHTML = `${mark(d.admin)} ${d.admin ? '예' : '아니오'}`;
 
+  // .NET 런타임: 배포본은 내장(self-contained)이라 항상 동작 — 시스템 설치 여부는 별도 표시.
+  const dn = s.dotnet;
+  const dnHint = $('dotnet-hint');
+  if (dn) {
+    const appOk = dn.selfContained || dn.systemOk; // 앱 자체가 돌 수 있는 상태인가
+    const label = dn.selfContained
+      ? `내장 v${dn.major}${dn.systemOk ? ' · 시스템 설치됨' : ' · 시스템 미설치'}`
+      : (dn.systemOk ? `시스템 v${dn.major} 설치됨` : '미설치');
+    $('d-dotnet').innerHTML = `${mark(appOk)} ${label}`;
+    dnHint.innerHTML = dn.systemOk ? '' :
+      `시스템에 .NET ${dn.major} 런타임이 없습니다 — 개발 빌드(bin) 직접 실행 시 필요합니다. ` +
+      `<a class="sync-link" href="${dn.link}" target="_blank" rel="noopener">🔗 .NET ${dn.major} 설치 페이지</a>` +
+      (dn.selfContained ? ' (지금 실행 중인 배포본은 런타임 내장이라 영향 없음)' : '');
+  } else if (dnHint) dnHint.innerHTML = '';
+
   let hint = '';
   if (!b.interceptionAvailable) hint = 'Interception 미준비 — 설치 후 재부팅하세요.';
   else if (!b.keyboardReady || !b.mouseReady) {

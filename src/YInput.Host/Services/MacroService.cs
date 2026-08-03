@@ -121,6 +121,7 @@ public sealed class MacroService
             listening = _listenActive,
             monitoring = _monitorActive,
             driver = new { interception = ds.InterceptionInstalled, vigem = ds.ViGEmInstalled, admin = ds.IsAdministrator },
+            dotnet = DotnetProbe.Query(), // .NET 런타임 상태(내장 여부·시스템 설치 여부·설치 링크)
             backend = new
             {
                 interceptionAvailable = _backend.InterceptionAvailable,
