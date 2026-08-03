@@ -6,9 +6,6 @@ namespace YInput.Host.Vision;
 /// <summary>퍼즐 화살표 하나 — 화면 좌표(중심)와 방향('L','R','U','D').</summary>
 internal readonly record struct RuneArrow(PointF Center, char Dir);
 
-/// <summary>한 프레임에서 분석한 화살표 하나 — 방향 + 모양 시그니처(회전 정지 판별용).</summary>
-internal readonly record struct ArrowSample(PointF Center, char Dir, bool[] Sig);
-
 /// <summary>
 /// 룬 발동(스페이스) 후 화면 상단 배너 아래에 뜨는 방향키 퍼즐(화살표 4개)을 인식한다.
 /// 화살표는 채도 높은 작은 글리프(~20~30px)인데 <b>색은 룬마다 다르고</b> 그라데이션도
@@ -38,14 +35,9 @@ internal static class RuneArrowDetector
     private const int MinArrowBox = 8, MaxArrowBox = 70;
     private const int RowBandPx = 22;    // 같은 줄(4개 나열) 판정 Y 허용폭
 
-    /// <summary>프레임에서 화살표 4개를 찾아 왼쪽부터 순서대로 반환(단발 판정 — 입력 후 잔존 확인용).</summary>
-    public static List<RuneArrow>? FindArrows(Bitmap frame, Bitmap? before = null) =>
-        Analyze(frame, before)?.Select(a => new RuneArrow(a.Center, a.Dir)).ToList();
-
-    /// <summary>한 프레임 분석 — 화살표 4개의 방향 + 모양 시그니처. 회전형 퍼즐(돌다가 정답 방향에서
-    /// 잠깐 멈춤)은 호출자가 여러 프레임을 샘플링해 시그니처가 안 변하는 구간(정지)의 방향을 확정한다.
+    /// <summary>프레임에서 화살표 4개를 찾아 왼쪽부터 순서대로 반환. 4개를 못 찾으면 null.
     /// before = 스페이스 직전 프레임(있으면 차분으로 배경을 배제해 오탐이 크게 준다).</summary>
-    public static List<ArrowSample>? Analyze(Bitmap frame, Bitmap? before = null)
+    public static List<RuneArrow>? FindArrows(Bitmap frame, Bitmap? before = null)
     {
         var region = new Rectangle(
             (int)(frame.Width * RegionX0), (int)(frame.Height * RegionY0),
@@ -74,40 +66,13 @@ internal static class RuneArrowDetector
         if (best.Count < 4) return null;
         var row = best.OrderByDescending(b => b.Area).Take(4).OrderBy(b => b.Cx).ToList();
 
-        var result = new List<ArrowSample>(4);
+        var result = new List<RuneArrow>(4);
         foreach (var b in row)
         {
             char dir = ClassifyByEdgeProfile(b, mask, w);
-            result.Add(new ArrowSample(new PointF((float)(region.X + b.Cx), (float)(region.Y + b.Cy)), dir, Signature(b, w)));
+            result.Add(new RuneArrow(new PointF((float)(region.X + b.Cx), (float)(region.Y + b.Cy)), dir));
         }
         return result;
-    }
-
-    // ---------- 모양 시그니처(회전 정지 판별) ----------
-    private const int SigN = 12; // 바운딩박스를 12×12 셀로 정규화
-
-    /// <summary>블롭 모양을 바운딩박스 정규화 12×12 그리드로 요약 — 회전 중이면 프레임마다 달라지고,
-    /// 멈춰 있으면(정답 방향 표시 구간) 연속 프레임에서 같게 유지된다.</summary>
-    private static bool[] Signature(Blob b, int w)
-    {
-        var sig = new bool[SigN * SigN];
-        int bw = b.MaxX - b.MinX + 1, bh = b.MaxY - b.MinY + 1;
-        foreach (var p in b.Pixels)
-        {
-            int cx = (p % w - b.MinX) * SigN / bw;
-            int cy = (p / w - b.MinY) * SigN / bh;
-            sig[cy * SigN + cx] = true;
-        }
-        return sig;
-    }
-
-    /// <summary>두 시그니처가 '같은 모양'인가 — 일치 셀 비율 기준.</summary>
-    public static bool SigSimilar(bool[] a, bool[] b, double minMatch = 0.92)
-    {
-        if (a.Length != b.Length) return false;
-        int same = 0;
-        for (int i = 0; i < a.Length; i++) if (a[i] == b[i]) same++;
-        return (double)same / a.Length >= minMatch;
     }
 
     /// <summary>화살표 픽셀 마스크 — 채도 높은 픽셀(색상 불문)이고, before가 있으면 '변한' 픽셀만.
