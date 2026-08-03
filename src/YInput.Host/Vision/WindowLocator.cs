@@ -26,14 +26,19 @@ internal static class WindowLocator
 
     /// <summary>프로세스명(".exe" 유무 무관, 대소문자 무시)의 보이는 최상위 창 중 가장 큰 것의
     /// DWM 확장 프레임 rect(화면 좌표). 최소화된 창은 제외. 없으면 false.</summary>
-    public static bool TryGetWindowRect(string process, out Rectangle rect)
+    public static bool TryGetWindowRect(string process, out Rectangle rect) =>
+        TryGetWindow(process, out _, out rect, out _);
+
+    /// <summary>창 핸들 + DWM 확장 프레임 rect + GetWindowRect(전체 창) rect를 함께 얻는다.
+    /// PrintWindow 캡처는 전체 창 기준으로 그려지므로 두 rect의 차로 DWM 영역을 잘라낸다.</summary>
+    public static bool TryGetWindow(string process, out IntPtr hWnd, out Rectangle dwmRect, out Rectangle winRect)
     {
-        rect = Rectangle.Empty;
+        hWnd = IntPtr.Zero; dwmRect = Rectangle.Empty; winRect = Rectangle.Empty;
         var target = Normalize(process);
         if (target.Length == 0) return false;
 
         var pidCache = new Dictionary<uint, string>();
-        Rectangle best = Rectangle.Empty;
+        IntPtr bestH = IntPtr.Zero; Rectangle best = Rectangle.Empty;
         EnumWindows((h, _) =>
         {
             if (!IsWindowVisible(h) || IsIconic(h)) return true;
@@ -46,13 +51,16 @@ internal static class WindowLocator
             }
             if (name != target) return true;
             if (!TryRect(h, out var r)) return true;
-            if ((long)r.Width * r.Height > (long)best.Width * best.Height) best = r;
+            if ((long)r.Width * r.Height > (long)best.Width * best.Height) { best = r; bestH = h; }
             return true;
         }, IntPtr.Zero);
 
-        if (best.Width <= 0 || best.Height <= 0) return false;
-        rect = best;
-        return true;
+        if (bestH == IntPtr.Zero || best.Width <= 0 || best.Height <= 0) return false;
+        if (!GetWindowRect(bestH, out var wr)) return false;
+        hWnd = bestH;
+        dwmRect = best;
+        winRect = Rectangle.FromLTRB(wr.left, wr.top, wr.right, wr.bottom);
+        return winRect.Width > 0 && winRect.Height > 0;
     }
 
     /// <summary>대상 프로세스가 현재 포그라운드인가 — 보정 직전 안전 게이트.

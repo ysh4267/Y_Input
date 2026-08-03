@@ -116,13 +116,26 @@ public sealed class PositionWatcher : IDisposable
     }
 
     // ---------- 캡처/미니맵(전역) ----------
+    /// <summary>게임 창 프레임 캡처 — 브라우저 등 다른 창이 게임을 가리고 있어도 PrintWindow로
+    /// 창 내용을 직접 찍는다. 실패·검은 프레임(일부 DX 창)이면 화면 복사로 폴백.
+    /// 반환 프레임의 좌표계는 기존과 동일한 DWM rect(창 상대).</summary>
+    private static Bitmap? CaptureGameFrame(string process, out Rectangle win)
+    {
+        win = Rectangle.Empty;
+        if (!WindowLocator.TryGetWindow(process, out var hWnd, out var dwmRect, out var winRect)) return null;
+        win = dwmRect;
+        var bmp = ScreenCapture.CaptureWindow(hWnd, winRect, dwmRect);
+        if (bmp is not null && !ScreenCapture.IsMostlyBlack(bmp)) return bmp;
+        bmp?.Dispose();
+        return ScreenCapture.Capture(dwmRect);
+    }
+
     /// <summary>게임 창을 찾아 전체 프레임을 캡처하고 PNG로 반환. 프레임은 이후 영역 지정용으로 보관.</summary>
     public byte[] CaptureFrame()
     {
         string proc; lock (_gate) proc = _settings.Process;
-        if (!WindowLocator.TryGetWindowRect(proc, out var rect))
-            throw new InvalidOperationException($"'{proc}' 창을 찾을 수 없습니다. 게임이 실행 중인지 확인하세요.");
-        var bmp = ScreenCapture.Capture(rect);
+        var bmp = CaptureGameFrame(proc, out _)
+            ?? throw new InvalidOperationException($"'{proc}' 창을 찾을 수 없습니다. 게임이 실행 중인지 확인하세요.");
         lock (_gate) { _lastFrame?.Dispose(); _lastFrame = bmp; }
         return ScreenCapture.ToPng(bmp);
     }
@@ -155,11 +168,12 @@ public sealed class PositionWatcher : IDisposable
         {
             var s = _settings;
             if (s.MiniW <= 0) return new { ok = false, needMinimap = true, error = "미니맵 영역이 지정되지 않았습니다." };
-            if (!WindowLocator.TryGetWindowRect(s.Process, out var win))
+            var frame = CaptureGameFrame(s.Process, out _);
+            if (frame is null)
                 return new { ok = false, needMinimap = false, error = $"'{s.Process}' 창을 찾을 수 없습니다." };
 
             _liveFrame?.Dispose();
-            _liveFrame = ScreenCapture.Capture(win);
+            _liveFrame = frame;
 
             var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
             bool dotFound = MinimapDetector.TryFindPlayerDot(_liveFrame, mini, out var dot, s.DotMinR, s.DotMinG, s.DotMaxB);
@@ -202,10 +216,8 @@ public sealed class PositionWatcher : IDisposable
         {
             var s = _settings;
             if (s.MiniW <= 0) throw new InvalidOperationException("먼저 미니맵 영역을 지정하세요.");
-            if (!WindowLocator.TryGetWindowRect(s.Process, out var win))
-                throw new InvalidOperationException($"'{s.Process}' 창을 찾을 수 없습니다. 게임이 실행 중인지 확인하세요.");
-
-            using var frame = ScreenCapture.Capture(win);
+            using var frame = CaptureGameFrame(s.Process, out _)
+                ?? throw new InvalidOperationException($"'{s.Process}' 창을 찾을 수 없습니다. 게임이 실행 중인지 확인하세요.");
             var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
             if (!MinimapDetector.TryFindPlayerDot(frame, mini, out var dot, s.DotMinR, s.DotMinG, s.DotMaxB))
                 throw new ArgumentException("미니맵에서 플레이어 노란 점을 찾지 못했습니다. 미니맵이 펼쳐져 있고 가려지지 않았는지 확인하세요.");
@@ -420,26 +432,26 @@ public sealed class PositionWatcher : IDisposable
         catch { return null; }
     }
 
-    /// <summary>미니맵 영역만 캡처해 플레이어 점(미니맵 상대, 서브픽셀)을 찾는다. 창/점 없으면 null.</summary>
+    /// <summary>프레임을 찍어 미니맵의 플레이어 점(미니맵 상대, 서브픽셀)을 찾는다. 창/점 없으면 null.</summary>
     private PointF? MeasureDot(WatcherSettings s)
     {
-        if (!WindowLocator.TryGetWindowRect(s.Process, out var win)) return null;
-        var rect = new Rectangle(win.X + s.MiniX, win.Y + s.MiniY, s.MiniW, s.MiniH);
-        using var bmp = ScreenCapture.Capture(rect);
-        return MinimapDetector.TryFindPlayerDot(bmp, new Rectangle(0, 0, s.MiniW, s.MiniH), out var dot,
+        using var frame = CaptureGameFrame(s.Process, out _);
+        if (frame is null) return null;
+        return MinimapDetector.TryFindPlayerDot(frame, new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH), out var dot,
                                                 s.DotMinR, s.DotMinG, s.DotMaxB) ? dot : null;
     }
 
-    /// <summary>패치 Y ± 밴드만 창 전폭으로 캡처해 템플릿 매칭. dx = 현재 매칭 X − 저장 X.</summary>
+    /// <summary>프레임의 패치 Y ± 밴드에서 템플릿 매칭. dx = 현재 매칭 X − 저장 X.</summary>
     private (int dx, double score)? MeasurePatch(WatcherSettings s, SpotData spot, GrayImage patch)
     {
-        if (!WindowLocator.TryGetWindowRect(s.Process, out var win)) return null;
+        using var frame = CaptureGameFrame(s.Process, out _);
+        if (frame is null) return null;
         int y0 = Math.Max(0, spot.PatchY - SearchBandPx);
-        int y1 = Math.Min(win.Height, spot.PatchY + spot.PatchH + SearchBandPx);
-        if (y1 - y0 < spot.PatchH || win.Width < spot.PatchW) return null;
+        int y1 = Math.Min(frame.Height, spot.PatchY + spot.PatchH + SearchBandPx);
+        if (y1 - y0 < spot.PatchH || frame.Width < spot.PatchW) return null;
 
-        using var bmp = ScreenCapture.Capture(new Rectangle(win.X, win.Y + y0, win.Width, y1 - y0));
-        var gray = TemplateMatcher.ToGray(bmp);
+        using var band = frame.Clone(new Rectangle(0, y0, frame.Width, y1 - y0), frame.PixelFormat);
+        var gray = TemplateMatcher.ToGray(band);
         var search = new Rectangle(0, 0, gray.Width - patch.Width + 1, gray.Height - patch.Height + 1);
         var m = TemplateMatcher.Match(gray, patch, search);
         return (m.X - spot.PatchX, m.Score); // 밴드는 창 X=0부터라 X는 창 상대 그대로
