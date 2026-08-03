@@ -384,6 +384,8 @@ export function createEditor({ log, onSaved, getStatus, getMacros, openMinimapPi
           const parts = [r.dotFound ? `미니맵 이탈 ${sg(r.miniDx)}px` : '미니맵 점 미탐지'];
           if (r.score != null)
             parts.push(`매칭 ${(r.score * 100).toFixed(0)}%` + (r.patchFound ? ` · 화면 이탈 ${sg(r.dx)}px` : ' (임계 미달)'));
+          if (r.checkScore != null)
+            parts.push(`서있음 ${(r.checkScore * 100).toFixed(0)}%${r.checkOk ? ' ✓' : ' ✗'}`);
           info.textContent = parts.join(' · ');
         } catch (err) { info.textContent = err.message; }
       };
@@ -393,9 +395,9 @@ export function createEditor({ log, onSaved, getStatus, getMacros, openMinimapPi
         try {
           const s = await api.watcherSpot(ev.spotId);
           if (s && s.exists) {
-            img.src = `/api/watcher/spots/${ev.spotId}/patch?ts=${Date.now()}`;
+            img.src = `/api/watcher/spots/${ev.spotId}/preview?ts=${Date.now()}`;
             img.hidden = false; bTest.hidden = false;
-            info.textContent = `미니맵 (${s.dotX}, ${s.dotY}) · 기준 ${s.patchW}×${s.patchH}px${s.directionSign ? ' · 방향 학습됨' : ''}`;
+            info.textContent = `미니맵 (${s.dotX}, ${s.dotY})${s.hasCheck ? ' · 서있음 검증 사용' : ''}${s.directionSign ? ' · 방향 학습됨' : ''}`;
           } else {
             img.hidden = true; bTest.hidden = true;
             info.textContent = '저장된 위치가 없습니다(삭제됨) — 다시 지정하세요';
@@ -423,7 +425,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros, openMinimapPi
     miniWrap.append(mimg, marker);
     const pcol = document.createElement('span'); pcol.className = 'spot-patch-col';
     const pimg = document.createElement('img'); pimg.className = 'spot-patch'; pimg.alt = '저장될 기준 화면';
-    const plabel = document.createElement('span'); plabel.className = 'muted'; plabel.textContent = '저장될 기준 화면(캐릭터 발판)';
+    const plabel = document.createElement('span'); plabel.className = 'muted'; plabel.textContent = '저장될 기준 — 캐릭터 + 주변 지형';
     pcol.append(pimg, plabel);
     const stat = document.createElement('div'); stat.className = 'spot-stat muted';
     stat.textContent = '캐릭터를 서 있을 자리에 두고 [이 위치로 확정]을 누르세요…';
@@ -444,7 +446,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros, openMinimapPi
         bMini.hidden = true;
         const ts = Date.now();
         mimg.src = '/api/watcher/live/minimap?ts=' + ts;
-        pimg.src = '/api/watcher/live/patch?ts=' + ts;
+        pimg.src = '/api/watcher/live/check?ts=' + ts;
         if (live.dotFound) {
           marker.hidden = false;
           marker.style.left = (live.dotX / live.miniW * 100) + '%';
