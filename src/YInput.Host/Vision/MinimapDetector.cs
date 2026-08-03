@@ -184,35 +184,112 @@ internal static class MinimapDetector
         return list;
     }
 
+    private const int InnerMinLum = 180; // 맵 영역을 감싸는 흰 테두리 판정 밝기
+
+    /// <summary>검은 챠시 안에서 맵 영역을 감싸는 '흰 테두리 사각형(링)'을 찾는다 — 미니맵 창의
+    /// 확실한 지문. 반환 rect = 링 안쪽 맵 영역(프레임 좌표). 못 찾으면 null.</summary>
+    public static Rectangle? FindWhiteInnerFrame(Bitmap frame, Rectangle panel)
+    {
+        var area = Rectangle.Intersect(panel, new Rectangle(0, 0, frame.Width, frame.Height));
+        if (area.Width < 40 || area.Height < 40) return null;
+        int w = area.Width, h = area.Height;
+        var mask = new bool[w * h];
+        var data = frame.LockBits(area, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        try
+        {
+            unsafe
+            {
+                for (int y = 0; y < h; y++)
+                {
+                    byte* row = (byte*)data.Scan0 + y * data.Stride;
+                    int o = y * w;
+                    for (int x = 0; x < w; x++)
+                    {
+                        byte b = row[x * 4], g = row[x * 4 + 1], r = row[x * 4 + 2];
+                        mask[o + x] = (r * 299 + g * 587 + b * 114) / 1000 >= InnerMinLum;
+                    }
+                }
+            }
+        }
+        finally { frame.UnlockBits(data); }
+
+        var seen = new bool[w * h];
+        var stack = new Stack<int>();
+        Rectangle best = Rectangle.Empty; long bestArea = 0;
+        for (int i = 0; i < mask.Length; i++)
+        {
+            if (!mask[i] || seen[i]) continue;
+            int count = 0, minX = w, maxX = -1, minY = h, maxY = -1;
+            stack.Push(i); seen[i] = true;
+            while (stack.Count > 0)
+            {
+                int p = stack.Pop();
+                int px = p % w, py = p / w;
+                count++;
+                if (px < minX) minX = px; if (px > maxX) maxX = px;
+                if (py < minY) minY = py; if (py > maxY) maxY = py;
+                if (px > 0 && mask[p - 1] && !seen[p - 1]) { seen[p - 1] = true; stack.Push(p - 1); }
+                if (px < w - 1 && mask[p + 1] && !seen[p + 1]) { seen[p + 1] = true; stack.Push(p + 1); }
+                if (py > 0 && mask[p - w] && !seen[p - w]) { seen[p - w] = true; stack.Push(p - w); }
+                if (py < h - 1 && mask[p + w] && !seen[p + w]) { seen[p + w] = true; stack.Push(p + w); }
+            }
+            int bw = maxX - minX + 1, bh = maxY - minY + 1;
+            // 링 조건: 패널 폭 대부분을 차지하는 큰 사각 윤곽 + 얇음(꽉 찬 상자 아님) + 둘레가 밝음
+            if (bw < w * 0.6 || bh < h * 0.3) continue;
+            if ((double)count / (bw * bh) > 0.6) continue; // 꽉 찬 흰 상자 제외(링/링+지형만 허용)
+            int borderCells = 0, borderLit = 0;
+            for (int x = minX; x <= maxX; x++)
+            {
+                borderCells += 2;
+                if (mask[minY * w + x]) borderLit++;
+                if (mask[maxY * w + x]) borderLit++;
+            }
+            for (int y = minY + 1; y < maxY; y++)
+            {
+                borderCells += 2;
+                if (mask[y * w + minX]) borderLit++;
+                if (mask[y * w + maxX]) borderLit++;
+            }
+            if (borderCells == 0 || (double)borderLit / borderCells < 0.45) continue;
+            long a = (long)bw * bh;
+            if (a > bestArea) { bestArea = a; best = new Rectangle(area.X + minX + 2, area.Y + minY + 2, bw - 4, bh - 4); }
+        }
+        return best.IsEmpty ? null : best;
+    }
+
     /// <summary>
-    /// 미니맵 탐지의 메인 진입점 — ① 검은 패널 후보를 찾고 ② 노란 점이 들어있는 패널을 미니맵으로
-    /// 확정한다(점 후보가 가장 적은 패널 우선 — 노란 글자가 많은 채팅창 배제). 패널을 못 찾으면
-    /// 화면 전체 점 스캔으로 폴백. dot은 창(프레임) 상대 좌표.
+    /// 미니맵 탐지의 메인 진입점 — ① 검은 챠시 후보를 찾고 ② 그 안의 '흰 테두리(맵 영역)'를 확인,
+    /// ③ 노란 점이 들어있는 창을 미니맵으로 확정한다(흰 테두리 있는 창 우선, 그다음 점 후보가 적은 창 —
+    /// 노란 글자 많은 채팅창 배제). 흰 테두리를 찾으면 그 안쪽만 점 탐색(제목줄 아이콘 배제).
+    /// 챠시를 못 찾으면 화면 전체 점 스캔으로 폴백. dot은 창(프레임) 상대 좌표.
     /// </summary>
     public static bool TryDetect(Bitmap frame, out Rectangle panel, out PointF dot, out int candidateCount,
                                  int minR = 200, int minG = 180, int maxB = 120, int panelMaxLum = 70, PointF? near = null)
     {
         panel = Rectangle.Empty; dot = PointF.Empty; candidateCount = 0;
 
-        List<DotCandidate>? best = null; Rectangle bestPanel = Rectangle.Empty;
+        var found = new List<(Rectangle Chassis, Rectangle Search, bool Ring, List<DotCandidate> Dots)>();
         foreach (var p in FindDarkPanels(frame, panelMaxLum))
         {
-            var dots = FindDots(frame, p, minR, minG, maxB);
+            var inner = FindWhiteInnerFrame(frame, p);
+            var search = inner ?? p;
+            var dots = FindDots(frame, search, minR, minG, maxB);
             if (dots.Count == 0) continue;
-            if (best is null || dots.Count < best.Count) { best = dots; bestPanel = p; }
+            found.Add((p, search, inner is not null, dots));
         }
 
-        if (best is not null)
+        if (found.Count > 0)
         {
-            // FindDots 좌표는 패널 상대 → 프레임 상대로 변환
-            var frameDots = best.Select(c => c with { Center = new PointF(c.Center.X + bestPanel.X, c.Center.Y + bestPanel.Y) }).ToList();
-            panel = bestPanel;
+            var pick = found.OrderByDescending(f => f.Ring).ThenBy(f => f.Dots.Count).First();
+            // FindDots 좌표는 탐색 영역 상대 → 프레임 상대로 변환
+            var frameDots = pick.Dots.Select(c => c with { Center = new PointF(c.Center.X + pick.Search.X, c.Center.Y + pick.Search.Y) }).ToList();
+            panel = pick.Chassis;
             candidateCount = frameDots.Count;
             dot = Pick(frameDots, near).Center;
             return true;
         }
 
-        // 폴백: 검은 패널 미탐지(테마·투명도 차이 등) → 화면 전체 점 스캔
+        // 폴백: 검은 챠시 미탐지(테마·투명도 차이 등) → 화면 전체 점 스캔
         var all = FindDots(frame, new Rectangle(0, 0, frame.Width, frame.Height), minR, minG, maxB);
         if (all.Count == 0) return false;
         candidateCount = all.Count;
