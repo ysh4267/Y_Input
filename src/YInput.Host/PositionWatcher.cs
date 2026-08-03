@@ -29,6 +29,8 @@ public sealed class WatcherSettings
     public int DotMinR { get; set; } = 200;
     public int DotMinG { get; set; } = 180;
     public int DotMaxB { get; set; } = 120;
+    /// <summary>미니맵 창(어두운 프레임) 판정 밝기 임계 — 이 이하 밝기 픽셀을 '어두움'으로 본다.</summary>
+    public int PanelMaxLum { get; set; } = 70;
 
     // 템플릿(파인 보정 + 서있음 검증) 공통 파라미터.
     // 패치는 '캐릭터가 포함된' 창 정중앙 영역 하나 — 미세 보정과 제자리 검증을 겸한다.
@@ -135,6 +137,7 @@ public sealed class PositionWatcher : IDisposable
     // ---------- 실시간 미리보기(블록 확장 카드) ----------
     private Bitmap? _liveFrame;  // 마지막 Live() 캡처 — live/frame·live/mini가 같은 프레임을 사용
     private PointF? _liveDot;    // 마지막 Live()에서 감지된 캐릭터 점(창 상대) — 미니맵 확대 미리보기 중심
+    private Rectangle _liveMiniRect; // 마지막 Live()에서 감지된 미니맵 창(검은 프레임) rect — Empty면 폴백 스캔
 
     /// <summary>현재 게임 화면을 캡처해 미니맵 점·자동 패치 rect를 계산한다(키 입력 없음).
     /// 이어지는 <see cref="LiveCrop"/>이 이 프레임에서 미리보기 이미지를 잘라낸다.</summary>
@@ -150,17 +153,17 @@ public sealed class PositionWatcher : IDisposable
             _liveFrame?.Dispose();
             _liveFrame = frame;
 
-            // 미니맵은 어디로든 옮길 수 있음 — 화면 전체를 스캔해 점 후보(블롭)를 찾는다.
-            var cands = MinimapDetector.FindDots(_liveFrame, new Rectangle(0, 0, _liveFrame.Width, _liveFrame.Height),
-                                                 s.DotMinR, s.DotMinG, s.DotMaxB);
-            bool dotFound = cands.Count > 0;
-            var dot = dotFound ? MinimapDetector.Pick(cands).Center : PointF.Empty;
+            // 미니맵 창(어두운 프레임)을 먼저 찾고 그 안에서 캐릭터 점을 찾는다(월드 노란 물체 배제).
+            bool dotFound = MinimapDetector.TryDetect(_liveFrame, out var panel, out var dot, out int candCount,
+                                                      s.DotMinR, s.DotMinG, s.DotMaxB, s.PanelMaxLum);
             _liveDot = dotFound ? dot : null;
+            _liveMiniRect = panel;
             return new
             {
                 ok = true,
                 dotFound, dotX = Math.Round(dot.X, 1), dotY = Math.Round(dot.Y, 1), // 창(프레임) 상대
-                dotCandidates = cands.Count, // 2개 이상이면 UI가 '마커가 내 캐릭터인지 확인' 경고
+                dotCandidates = candCount,          // 2개 이상이면 UI가 '마커가 내 캐릭터인지 확인' 경고
+                panelFound = !panel.IsEmpty,        // false = 검은 창 미탐지 → 전체 화면 스캔 폴백
                 frameW = _liveFrame.Width, frameH = _liveFrame.Height, // 클릭 좌표 환산·오버레이 배율용
                 patchW = s.PatchW, patchH = s.PatchH,                  // 앵커 중심 저장 영역 오버레이 크기
                 foreground = WindowLocator.IsForeground(s.Process),
@@ -174,16 +177,19 @@ public sealed class PositionWatcher : IDisposable
         lock (_gate) return _liveFrame is null ? null : ScreenCapture.ToPng(_liveFrame);
     }
 
-    /// <summary>자동 감지된 미니맵 확대 미리보기 — 감지된 캐릭터 점을 중심으로 잘라 마커(노란 링)를
-    /// 그려서 반환. 점 미탐지/프레임 없음이면 null.</summary>
+    /// <summary>자동 감지된 미니맵 확대 미리보기 — 감지된 미니맵 창 전체(없으면 점 주변)를 잘라
+    /// 캐릭터 점 마커(노란 링)를 그려서 반환. 점 미탐지/프레임 없음이면 null.</summary>
     public byte[]? LiveMini()
     {
         lock (_gate)
         {
             if (_liveFrame is null || _liveDot is not { } dot) return null;
-            const int W = 180, H = 130; // 점 주변 확대 영역(창 px)
-            var r = ClampRect(new Rectangle((int)dot.X - W / 2, (int)dot.Y - H / 2, W, H),
-                              _liveFrame.Width, _liveFrame.Height);
+            var r = !_liveMiniRect.IsEmpty
+                ? ClampRect(new Rectangle(_liveMiniRect.X - 4, _liveMiniRect.Y - 4,
+                                          _liveMiniRect.Width + 8, _liveMiniRect.Height + 8),
+                            _liveFrame.Width, _liveFrame.Height)
+                : ClampRect(new Rectangle((int)dot.X - 90, (int)dot.Y - 65, 180, 130),
+                            _liveFrame.Width, _liveFrame.Height);
             if (r.Width <= 0 || r.Height <= 0) return null;
             using var crop = _liveFrame.Clone(r, _liveFrame.PixelFormat);
             using (var g = Graphics.FromImage(crop))
@@ -204,9 +210,9 @@ public sealed class PositionWatcher : IDisposable
             var s = _settings;
             using var frame = CaptureGameFrame(s.Process, out _)
                 ?? throw new InvalidOperationException($"'{s.Process}' 창을 찾을 수 없습니다. 게임이 실행 중인지 확인하세요.");
-            // 화면 전체 스캔(미니맵 위치·크기 무관) — Live 미리보기와 같은 선택 기준이라 마커와 일치.
-            if (!MinimapDetector.TryFindPlayerDot(frame, new Rectangle(0, 0, frame.Width, frame.Height), out var dot,
-                                                  s.DotMinR, s.DotMinG, s.DotMaxB))
+            // 미니맵 창(어두운 프레임) 우선 탐지 — Live 미리보기와 같은 선택 기준이라 마커와 일치.
+            if (!MinimapDetector.TryDetect(frame, out _, out var dot, out _,
+                                           s.DotMinR, s.DotMinG, s.DotMaxB, s.PanelMaxLum))
                 throw new ArgumentException("화면에서 미니맵 플레이어 점(노란 점)을 찾지 못했습니다. 미니맵이 펼쳐져 있는지 확인하세요.");
 
             // 앵커 = 사용자가 지정 카드에서 클릭한 캐릭터 위치(창 상대). 카메라 레이지 무브 때문에
@@ -426,14 +432,14 @@ public sealed class PositionWatcher : IDisposable
         catch { return null; }
     }
 
-    /// <summary>프레임을 찍어 화면 전체에서 플레이어 점(창 상대, 서브픽셀)을 찾는다. 창/점 없으면 null.
-    /// near = 직전(또는 저장) 위치 — 추적으로 다른 노란 블롭으로 튀는 것을 막는다.</summary>
+    /// <summary>프레임을 찍어 미니맵 창(어두운 프레임) 안에서 플레이어 점(창 상대, 서브픽셀)을 찾는다.
+    /// 창/점 없으면 null. near = 직전(또는 저장) 위치 — 추적으로 다른 노란 블롭으로 튀는 것을 막는다.</summary>
     private PointF? MeasureDot(WatcherSettings s, PointF? near = null)
     {
         using var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return null;
-        return MinimapDetector.TryFindPlayerDot(frame, new Rectangle(0, 0, frame.Width, frame.Height), out var dot,
-                                                s.DotMinR, s.DotMinG, s.DotMaxB, near) ? dot : null;
+        return MinimapDetector.TryDetect(frame, out _, out var dot, out _,
+                                         s.DotMinR, s.DotMinG, s.DotMaxB, s.PanelMaxLum, near) ? dot : null;
     }
 
     /// <summary>프레임의 패치 Y ± 밴드에서 템플릿 매칭. dx = 현재 매칭 X − 저장 X.</summary>
@@ -533,7 +539,7 @@ public sealed class PositionWatcher : IDisposable
         Process = s.Process,
         MiniX = s.MiniX, MiniY = s.MiniY, MiniW = s.MiniW, MiniH = s.MiniH,
         MiniTolerancePx = s.MiniTolerancePx, MsPerMiniPx = s.MsPerMiniPx,
-        DotMinR = s.DotMinR, DotMinG = s.DotMinG, DotMaxB = s.DotMaxB,
+        DotMinR = s.DotMinR, DotMinG = s.DotMinG, DotMaxB = s.DotMaxB, PanelMaxLum = s.PanelMaxLum,
         TolerancePx = s.TolerancePx, MinScore = s.MinScore, MsPerPx = s.MsPerPx,
         PatchW = s.PatchW, PatchH = s.PatchH,
         MaxHoldMs = s.MaxHoldMs, SettleMs = s.SettleMs, MaxCorrectionMs = s.MaxCorrectionMs,

@@ -467,7 +467,8 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
       const dotTxt = liveInfo.dotFound
         ? `미니맵 (${liveInfo.dotX}, ${liveInfo.dotY})`
         : '미니맵 점 미탐지 — 미니맵이 펼쳐져 있는지 확인';
-      const warn = liveInfo.dotCandidates > 1 ? ` · ⚠ 노란 점 후보 ${liveInfo.dotCandidates}개` : '';
+      const warn = (liveInfo.dotCandidates > 1 ? ` · ⚠ 노란 점 후보 ${liveInfo.dotCandidates}개` : '')
+        + (liveInfo.dotFound && !liveInfo.panelFound ? ' · 미니맵 창 미탐지(전체 화면 스캔)' : '');
       stat.textContent = anchor
         ? `${dotTxt}${warn} — 사각형이 캐릭터와 주변 지형을 감싸면 [이 위치로 확정]을 누르세요`
         : `${dotTxt}${warn} — 게임 화면에서 내 캐릭터를 클릭해 위치를 찍으세요`;

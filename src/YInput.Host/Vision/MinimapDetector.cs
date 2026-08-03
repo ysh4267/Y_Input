@@ -17,7 +17,7 @@ internal static class MinimapDetector
     private const int MinBlobArea = 2;    // 1px 노이즈 제외
     private const int MaxBlobArea = 150;  // 큰 노란 UI 덩어리 제외
     private const int MaxBlobBox = 14;    // 점은 작다 — 넓게 퍼진 장식·텍스트 제외
-    private const int TypicalDotArea = 9; // 플레이어 점 ≈ 3×3
+    private const int TypicalDotArea = 24; // 플레이어 점 ≈ 지름 5~7px 원(스크린샷 기준)
 
     /// <summary>minimapRect 안의 점 후보 블롭 목록(중심은 minimapRect 상대, 서브픽셀).</summary>
     public static List<DotCandidate> FindDots(Bitmap frame, Rectangle minimapRect,
@@ -95,6 +95,128 @@ internal static class MinimapDetector
         var cands = FindDots(frame, minimapRect, minR, minG, maxB);
         if (cands.Count == 0) return false;
         dot = Pick(cands, near).Center;
+        return true;
+    }
+
+    // ---------- 검은 창(미니맵 패널) 기반 탐지 ----------
+    // 실제 미니맵 창 구조(스크린샷 확인): 어두운 제목줄 + 어두운 테두리 안에 흰 테두리의 '컬러 맵'이
+    // 들어있다 — 즉 속이 꽉 찬 검은 상자가 아니라 '어두운 프레임(액자)' 모양이다. 그래서 채움 비율
+    // 대신 바운딩박스 '테두리 커버리지'(둘레가 어두운 비율)로 사각 창을 판정한다.
+    private const int PanelScale = 4;      // 1/4 해상도로 어두운 영역 스캔(성능)
+    private const int PanelMinW = 90;      // 미니맵 창 최소 크기(full px)
+    private const int PanelMinH = 80;
+    private const double PanelMaxFrac = 0.6;   // 창의 60% 넘는 어두운 덩어리는 패널이 아니라 어두운 맵 배경
+    private const double PanelMinFill = 0.12;  // 프레임 모양이라 내부는 비어도 됨 — 최소한만
+    private const double PanelMinBorder = 0.55; // 바운딩박스 둘레의 어두운 비율(모서리 라운드 감안)
+
+    /// <summary>화면에서 어두운 프레임(미니맵 창 챠시) 후보를 찾는다.</summary>
+    public static List<Rectangle> FindDarkPanels(Bitmap frame, int maxLum = 70)
+    {
+        var list = new List<Rectangle>();
+        int w = frame.Width / PanelScale, h = frame.Height / PanelScale;
+        if (w < 8 || h < 8) return list;
+
+        var mask = new bool[w * h];
+        var data = frame.LockBits(new Rectangle(0, 0, frame.Width, frame.Height),
+                                  ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        try
+        {
+            unsafe
+            {
+                for (int y = 0; y < h; y++)
+                {
+                    byte* row = (byte*)data.Scan0 + y * PanelScale * data.Stride;
+                    int o = y * w;
+                    for (int x = 0; x < w; x++)
+                    {
+                        int px = x * PanelScale * 4;
+                        byte b = row[px], g = row[px + 1], r = row[px + 2];
+                        mask[o + x] = (r * 299 + g * 587 + b * 114) / 1000 <= maxLum;
+                    }
+                }
+            }
+        }
+        finally { frame.UnlockBits(data); }
+
+        var seen = new bool[w * h];
+        var stack = new Stack<int>();
+        int minW = PanelMinW / PanelScale, minH = PanelMinH / PanelScale;
+        int maxW = (int)(w * PanelMaxFrac), maxH = (int)(h * PanelMaxFrac);
+        for (int i = 0; i < mask.Length; i++)
+        {
+            if (!mask[i] || seen[i]) continue;
+            int count = 0, minX = w, maxX = -1, minY = h, maxY = -1;
+            stack.Push(i); seen[i] = true;
+            while (stack.Count > 0)
+            {
+                int p = stack.Pop();
+                int px = p % w, py = p / w;
+                count++;
+                if (px < minX) minX = px; if (px > maxX) maxX = px;
+                if (py < minY) minY = py; if (py > maxY) maxY = py;
+                if (px > 0 && mask[p - 1] && !seen[p - 1]) { seen[p - 1] = true; stack.Push(p - 1); }
+                if (px < w - 1 && mask[p + 1] && !seen[p + 1]) { seen[p + 1] = true; stack.Push(p + 1); }
+                if (py > 0 && mask[p - w] && !seen[p - w]) { seen[p - w] = true; stack.Push(p - w); }
+                if (py < h - 1 && mask[p + w] && !seen[p + w]) { seen[p + w] = true; stack.Push(p + w); }
+            }
+            int bw = maxX - minX + 1, bh = maxY - minY + 1;
+            if (bw < minW || bh < minH || bw > maxW || bh > maxH) continue;
+            if ((double)count / (bw * bh) < PanelMinFill) continue; // 최소 실체는 있어야 함
+
+            // 프레임(액자) 판정: 바운딩박스 둘레가 충분히 어두운가 — 제목줄+테두리가 둘레를 이룬다.
+            int borderCells = 0, borderDark = 0;
+            for (int x = minX; x <= maxX; x++)
+            {
+                borderCells += 2;
+                if (mask[minY * w + x]) borderDark++;
+                if (mask[maxY * w + x]) borderDark++;
+            }
+            for (int y = minY + 1; y < maxY; y++)
+            {
+                borderCells += 2;
+                if (mask[y * w + minX]) borderDark++;
+                if (mask[y * w + maxX]) borderDark++;
+            }
+            if (borderCells > 0 && (double)borderDark / borderCells < PanelMinBorder) continue;
+
+            list.Add(new Rectangle(minX * PanelScale, minY * PanelScale, bw * PanelScale, bh * PanelScale));
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// 미니맵 탐지의 메인 진입점 — ① 검은 패널 후보를 찾고 ② 노란 점이 들어있는 패널을 미니맵으로
+    /// 확정한다(점 후보가 가장 적은 패널 우선 — 노란 글자가 많은 채팅창 배제). 패널을 못 찾으면
+    /// 화면 전체 점 스캔으로 폴백. dot은 창(프레임) 상대 좌표.
+    /// </summary>
+    public static bool TryDetect(Bitmap frame, out Rectangle panel, out PointF dot, out int candidateCount,
+                                 int minR = 200, int minG = 180, int maxB = 120, int panelMaxLum = 70, PointF? near = null)
+    {
+        panel = Rectangle.Empty; dot = PointF.Empty; candidateCount = 0;
+
+        List<DotCandidate>? best = null; Rectangle bestPanel = Rectangle.Empty;
+        foreach (var p in FindDarkPanels(frame, panelMaxLum))
+        {
+            var dots = FindDots(frame, p, minR, minG, maxB);
+            if (dots.Count == 0) continue;
+            if (best is null || dots.Count < best.Count) { best = dots; bestPanel = p; }
+        }
+
+        if (best is not null)
+        {
+            // FindDots 좌표는 패널 상대 → 프레임 상대로 변환
+            var frameDots = best.Select(c => c with { Center = new PointF(c.Center.X + bestPanel.X, c.Center.Y + bestPanel.Y) }).ToList();
+            panel = bestPanel;
+            candidateCount = frameDots.Count;
+            dot = Pick(frameDots, near).Center;
+            return true;
+        }
+
+        // 폴백: 검은 패널 미탐지(테마·투명도 차이 등) → 화면 전체 점 스캔
+        var all = FindDots(frame, new Rectangle(0, 0, frame.Width, frame.Height), minR, minG, maxB);
+        if (all.Count == 0) return false;
+        candidateCount = all.Count;
+        dot = Pick(all, near).Center;
         return true;
     }
 }
