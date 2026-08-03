@@ -429,131 +429,82 @@ public sealed class PositionWatcher : IDisposable
             if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면이 아니라 보정을 건너뜁니다."); return; }
             var sw = Stopwatch.StartNew();
 
-            for (int pass = 0; pass < 2; pass++) // 파인 후 미니맵이 다시 벗어나 있으면 1회 한해 코스부터 재시도
+            // ── 1단계: 내 캐릭터 점 식별 — 노란 블롭이 여러 개면(NPC 마커 등) 살짝 걸어보고
+            //           '움직인' 블롭을 내 캐릭터로 잠근다(마커·타인 점은 안 움직임) ──
+            var dots0 = MeasureDots(s);
+            if (dots0 is null || dots0.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 보정을 포기합니다."); return; }
+            var idShot = SaveShot("identify");
+            FileLog.Write("info",
+                $"[위치보정:식별] 저장=({spot.DotX:0.0},{spot.DotY:0.0}) " +
+                $"후보 {dots0.Count}개: {string.Join(" ", dots0.Select(c => $"({c.Center.X:0.0},{c.Center.Y:0.0} a{c.Area} {c.BoxW}x{c.BoxH})"))}{(idShot is null ? "" : $" shot={idShot}")}");
+            PointF? dot;
+            if (dots0.Count == 1) dot = dots0[0].Center;
+            else
             {
-                // ── 1단계: 내 캐릭터 점 식별 — 노란 블롭이 여러 개면(NPC 마커 등) 살짝 걸어보고
-                //           '움직인' 블롭을 내 캐릭터로 잠근다(마커·타인 점은 안 움직임) ──
-                var dots0 = MeasureDots(s);
-                if (dots0 is null || dots0.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 보정을 포기합니다."); return; }
-                var idShot = SaveShot("identify");
-                FileLog.Write("info",
-                    $"[위치보정:식별] 저장=({spot.DotX:0.0},{spot.DotY:0.0}) " +
-                    $"후보 {dots0.Count}개: {string.Join(" ", dots0.Select(c => $"({c.Center.X:0.0},{c.Center.Y:0.0} a{c.Area} {c.BoxW}x{c.BoxH})"))}{(idShot is null ? "" : $" shot={idShot}")}");
-                PointF? dot;
-                if (dots0.Count == 1) dot = dots0[0].Center;
-                else
-                {
-                    Status("coarse", $"노란 블롭 {dots0.Count}개 — 살짝 이동해 내 캐릭터를 식별합니다");
-                    await TapAsync(ScLeft, 90, ct).ConfigureAwait(false); // 왼쪽으로 프로브(어차피 보정으로 되돌아옴)
-                    await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
-                    var dots1 = MeasureDots(s);
-                    if (dots1 is null || dots1.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 보정을 포기합니다."); return; }
-                    // 폴백도 저장 위치 근접이 아닌 크기 기반 — 근접 선택은 정지 블롭에 고정될 수 있다.
-                    dot = IdentifyMovedLeft(dots0, dots1) ?? MinimapDetector.Pick(dots1).Center;
-                }
-                double miniDx = dot.Value.X - spot.DotX;
-                double releaseEarly = Math.Max(s.MiniTolerancePx, 1.2); // 키를 뗀 뒤 관성 미끄러짐 여유분
-                int rebounds = 0; // 도착/지나침 후 반대 방향 재보정 횟수 — 누를수록 짧게(최소 50ms)
-
-                while (Math.Abs(miniDx) > s.MiniTolerancePx && sw.ElapsedMilliseconds < s.MaxCorrectionMs)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 보정을 중단합니다."); return; }
-                    Status("coarse", $"미니맵 보정 중 (이탈 {miniDx:+0.0;-0.0}px)");
-                    // 점이 저장 위치보다 오른쪽(+) = 캐릭터가 오른쪽에 있음 → 왼쪽 키
-                    ushort key = miniDx > 0 ? ScLeft : ScRight;
-                    int dirSign = Math.Sign(miniDx);
-                    bool lostDot = false;
-                    // 첫 홀드는 도착할 때까지 무제한, 이후 되돌림은 220→132→79→50ms로 점점 짧게 눌러 미세 조정
-                    long holdCapMs = rebounds == 0 ? long.MaxValue
-                                                   : Math.Max(50, (long)(220 * Math.Pow(0.6, rebounds - 1)));
-                    var holdSw = Stopwatch.StartNew();
-                    _backend.Send(new KeyboardEvent { Code = key, State = KeyDownE0 });
-                    try
-                    {
-                        // 누른 채 연속 이동 — 걷는 동안 주기적으로 위치를 재며 도착 직전 또는 지나침에 뗀다
-                        while (sw.ElapsedMilliseconds < s.MaxCorrectionMs)
-                        {
-                            long remain = holdCapMs - holdSw.ElapsedMilliseconds;
-                            if (remain <= 0) break;                       // 되돌림 홀드 상한 도달
-                            await PreciseDelay.WaitAsync((int)Math.Min(60, remain), ct).ConfigureAwait(false);
-                            if (holdCapMs - holdSw.ElapsedMilliseconds <= 0) break;
-                            var d2 = MeasureDot(s, dot);
-                            if (d2 is null) { lostDot = true; break; } // 점 놓침 → 일단 멈추고 아래서 재평가
-                            dot = d2;
-                            miniDx = dot.Value.X - spot.DotX;
-                            if (Math.Sign(miniDx) != dirSign) break;      // 목표를 지나침
-                            if (Math.Abs(miniDx) <= releaseEarly) break;  // 도착 직전(관성 감안)
-                        }
-                    }
-                    finally { try { _backend.Send(new KeyboardEvent { Code = key, State = KeyUpE0 }); } catch { } }
-                    rebounds++;
-
-                    // 관성·가속 때문에 키를 뗀 뒤에도 조금 미끄러진다 — 고정 시간만큼 기다렸다 측정
-                    await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
-                    var d3 = MeasureDot(s, dot);
-                    if (d3 is null) { Status("fail", "보정 중 미니맵 점을 놓쳤습니다."); return; }
-                    _ = lostDot; // 홀드 중 일시적으로 놓쳤어도 정지 후 다시 찾았으면 계속
-                    dot = d3;
-                    miniDx = dot.Value.X - spot.DotX;
-                    // 아직 밖이면 새 방향으로 다시 홀드(지나쳤으면 자연히 반대 방향으로 짧게 되돌아온다)
-                }
-                if (Math.Abs(miniDx) > s.MiniTolerancePx) { Status("fail", $"보정 시간 초과(미니맵 이탈 {miniDx:+0.0;-0.0}px 남음)."); return; }
-
-                // ── 2단계: 템플릿 파인 조정(캐릭터 포함 기준 화면 — 못 찾으면 다른 발판/맵 의심) ──
-                var pm = MeasurePatch(s, spot, patch);
-                if (pm is not { } m || m.score < s.MinScore)
-                {
-                    Status("fail", $"기준 지형(캐릭터 주변)을 찾지 못했습니다 — 다른 발판이나 다른 맵에 있을 수 있습니다{(pm is { } p0 ? $"(일치 {p0.score * 100:0}%)" : "")}.");
-                    return;
-                }
-
-                int sign = spot.DirectionSign == 0 ? 1 : spot.DirectionSign; // 기본: 카메라-추적 가정
-                bool learning = spot.DirectionSign == 0;
-                int dx = m.dx;
-                double msPerPx = s.MsPerPx;
-
-                while (Math.Abs(dx) > s.TolerancePx && sw.ElapsedMilliseconds < s.MaxCorrectionMs)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 보정을 중단합니다."); return; }
-                    Status("fine", $"미세 보정 중 (이탈 {dx:+0;-0}px)", dx: dx, score: m.score);
-                    // 카메라-추적: 배경 패치가 오른쪽(+)에 보이면 캐릭터가 왼쪽으로 간 것 → 오른쪽 키
-                    ushort key = dx * sign > 0 ? ScRight : ScLeft;
-                    // 잔여 오차가 작으면 비례 홀드 대신 최소 탭으로 콕콕 이동 — 오버슈트 없이 허용오차 안까지
-                    double hold = Math.Abs(dx) <= FineNudgePx
-                        ? MinTapMs
-                        : Math.Clamp(Math.Abs(dx) * msPerPx, MinTapMs, s.MaxHoldMs);
-                    await TapAsync(key, hold, ct).ConfigureAwait(false);
-                    // 탭 후에도 관성으로 미끄러진다 — 고정 시간만큼 기다렸다 측정
-                    await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
-
-                    int prevDx = dx;
-                    pm = MeasurePatch(s, spot, patch);
-                    if (pm is not { } m2 || m2.score < s.MinScore)
-                    { Status("done", "미세 보정 중 매칭을 놓쳐 여기서 마칩니다."); return; }
-                    m = m2; dx = m.dx;
-
-                    if (learning)
-                    {
-                        // 첫 탭 결과로 부호 학습: 편차가 커졌으면 반대 방향(맵 가장자리 = 카메라 고정 케이스)
-                        if (Math.Abs(dx) > Math.Abs(prevDx) + 2) { sign = -sign; PersistSign(spotId!, spot, sign); learning = false; Status("fine", "이동 방향을 반대로 학습했습니다."); }
-                        else if (Math.Abs(dx) < Math.Abs(prevDx)) { PersistSign(spotId!, spot, sign); learning = false; }
-                    }
-                    else if (dx * prevDx < 0) msPerPx *= 0.55; // 목표를 지나침 → 다음 탭 약하게(진동 방지)
-                }
-
-                if (Math.Abs(dx) > s.TolerancePx) { Status("fail", $"보정 시간 초과(잔여 이탈 {dx:+0;-0}px)."); return; }
-
-                // 파인 탭 도중 크게 밀렸을 수 있으니 미니맵 재확인(직전 추적 위치 기준) — 벗어났으면 한 번만 처음부터
-                var recheck = MeasureDot(s, dot);
-                if (pass == 0 && recheck is { } rd && Math.Abs(rd.X - spot.DotX) > s.MiniTolerancePx) continue;
-
-                // 패치가 캐릭터 포함 지형이므로 최종 매칭 성공 = 그 자리에 제대로 서 있음
-                Status("done", $"위치 보정 완료 — 서있음 확인 {m.score * 100:0}% (잔여 {dx:+0;-0}px)", dx: dx, score: m.score);
-                return;
+                Status("coarse", $"노란 블롭 {dots0.Count}개 — 살짝 이동해 내 캐릭터를 식별합니다");
+                await TapAsync(ScLeft, 90, ct).ConfigureAwait(false); // 왼쪽으로 프로브(어차피 보정으로 되돌아옴)
+                await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
+                var dots1 = MeasureDots(s);
+                if (dots1 is null || dots1.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 보정을 포기합니다."); return; }
+                // 폴백도 저장 위치 근접이 아닌 크기 기반 — 근접 선택은 정지 블롭에 고정될 수 있다.
+                dot = IdentifyMovedLeft(dots0, dots1) ?? MinimapDetector.Pick(dots1).Center;
             }
-            Status("done", "위치 보정 완료");
+            double miniDx = dot.Value.X - spot.DotX;
+            double releaseEarly = Math.Max(s.MiniTolerancePx, 1.2); // 키를 뗀 뒤 관성 미끄러짐 여유분
+            int rebounds = 0; // 도착/지나침 후 반대 방향 재보정 횟수 — 누를수록 짧게(최소 50ms)
+
+            while (Math.Abs(miniDx) > s.MiniTolerancePx && sw.ElapsedMilliseconds < s.MaxCorrectionMs)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 보정을 중단합니다."); return; }
+                Status("coarse", $"미니맵 보정 중 (이탈 {miniDx:+0.0;-0.0}px)");
+                // 점이 저장 위치보다 오른쪽(+) = 캐릭터가 오른쪽에 있음 → 왼쪽 키
+                ushort key = miniDx > 0 ? ScLeft : ScRight;
+                int dirSign = Math.Sign(miniDx);
+                bool lostDot = false;
+                // 첫 홀드는 도착할 때까지 무제한, 이후 되돌림은 220→132→79→50ms로 점점 짧게 눌러 미세 조정
+                long holdCapMs = rebounds == 0 ? long.MaxValue
+                                               : Math.Max(50, (long)(220 * Math.Pow(0.6, rebounds - 1)));
+                var holdSw = Stopwatch.StartNew();
+                _backend.Send(new KeyboardEvent { Code = key, State = KeyDownE0 });
+                try
+                {
+                    // 누른 채 연속 이동 — 걷는 동안 주기적으로 위치를 재며 도착 직전 또는 지나침에 뗀다
+                    while (sw.ElapsedMilliseconds < s.MaxCorrectionMs)
+                    {
+                        long remain = holdCapMs - holdSw.ElapsedMilliseconds;
+                        if (remain <= 0) break;                       // 되돌림 홀드 상한 도달
+                        await PreciseDelay.WaitAsync((int)Math.Min(60, remain), ct).ConfigureAwait(false);
+                        if (holdCapMs - holdSw.ElapsedMilliseconds <= 0) break;
+                        var d2 = MeasureDot(s, dot);
+                        if (d2 is null) { lostDot = true; break; } // 점 놓침 → 일단 멈추고 아래서 재평가
+                        dot = d2;
+                        miniDx = dot.Value.X - spot.DotX;
+                        if (Math.Sign(miniDx) != dirSign) break;      // 목표를 지나침
+                        if (Math.Abs(miniDx) <= releaseEarly) break;  // 도착 직전(관성 감안)
+                    }
+                }
+                finally { try { _backend.Send(new KeyboardEvent { Code = key, State = KeyUpE0 }); } catch { } }
+                rebounds++;
+
+                // 관성·가속 때문에 키를 뗀 뒤에도 조금 미끄러진다 — 고정 시간만큼 기다렸다 측정
+                await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
+                var d3 = MeasureDot(s, dot);
+                if (d3 is null) { Status("fail", "보정 중 미니맵 점을 놓쳤습니다."); return; }
+                _ = lostDot; // 홀드 중 일시적으로 놓쳤어도 정지 후 다시 찾았으면 계속
+                dot = d3;
+                miniDx = dot.Value.X - spot.DotX;
+                // 아직 밖이면 새 방향으로 다시 홀드(지나쳤으면 자연히 반대 방향으로 짧게 되돌아온다)
+            }
+            if (Math.Abs(miniDx) > s.MiniTolerancePx) { Status("fail", $"보정 시간 초과(미니맵 이탈 {miniDx:+0.0;-0.0}px 남음)."); return; }
+
+            // 파인(화면 매칭) 이동은 쓰지 않는다 — 주변 유저·말풍선이 패치에 겹치거나 카메라
+            // 레이지무브가 정착 중이면 매칭이 흔들려, 맞춰둔 자리를 오히려 이탈시켰다(18:05 실행 로그).
+            // 지형 일치율은 이동 없이 참고용으로만 측정해 완료 메시지에 남긴다.
+            var pm = MeasurePatch(s, spot, patch);
+            Status("done",
+                $"위치 보정 완료 — 미니맵 기준 (잔여 {miniDx:+0.0;-0.0}px){(pm is { } m ? $" · 지형 일치 {m.score * 100:0}%" : "")}",
+                score: pm?.score);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { try { Status("fail", "보정 오류: " + ex.Message); } catch { } }
