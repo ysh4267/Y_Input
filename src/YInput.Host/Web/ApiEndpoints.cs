@@ -273,8 +273,7 @@ public static class ApiEndpoints
         // ---- 위치 지킴이('위치 보정' 블록의 자리 보정: 미니맵 코스 + 템플릿 파인. 기준 위치는 블록별 스팟) ----
         app.MapGet("/api/watcher", () => Results.Json(watcher.Get()));
         app.MapPost("/api/watcher", (WatcherBody? b) => Results.Json(
-            watcher.Update(b?.Process, b?.TolerancePx, b?.MsPerPx,
-                           b?.MaxCorrectionMs, b?.MinScore, b?.MiniTolerancePx, b?.MsPerMiniPx)));
+            watcher.Update(b?.Process, b?.MaxCorrectionMs, b?.MinScore, b?.MiniTolerancePx)));
         // 미니맵 고정: [탐지] 1회 자동 감지 / 수동 드래그 지정(frame 캡처 → 영역 전송) / 확인용 미리보기
         app.MapPost("/api/watcher/minimap/auto", () => Guard(() =>
             Task.FromResult(Results.Json(watcher.AutoDetectMinimap()))));
@@ -464,9 +463,8 @@ public static class ApiEndpoints
     private sealed record WidgetBody(string? Id = null);
     private sealed record OverlayBody(bool? Enabled = null);
     private sealed record OverlayTargetBody(string? Process = null);
-    private sealed record WatcherBody(string? Process = null, int? TolerancePx = null,
-                                      double? MsPerPx = null, int? MaxCorrectionMs = null, double? MinScore = null,
-                                      double? MiniTolerancePx = null, double? MsPerMiniPx = null);
+    private sealed record WatcherBody(string? Process = null, int? MaxCorrectionMs = null,
+                                      double? MinScore = null, double? MiniTolerancePx = null);
     private sealed record RegionBody(int X = 0, int Y = 0, int W = 0, int H = 0);
     private sealed record RecordStartBody(
         bool Keyboard = true,

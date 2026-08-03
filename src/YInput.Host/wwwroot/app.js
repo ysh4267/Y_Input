@@ -110,7 +110,7 @@ function wtSetStatus(msg, isErr) {
 function renderWatcher(s) {
   if (!s) return;
   wtSettings = s;
-  const tol = $('wt-tol'); if (tol && document.activeElement !== tol) tol.value = s.tolerancePx;
+  const tol = $('wt-tol'); if (tol && document.activeElement !== tol) tol.value = s.miniTolerancePx;
   const mx = $('wt-maxms'); if (mx && document.activeElement !== mx) mx.value = s.maxCorrectionMs;
   const info = $('wt-info');
   const thumb = $('wt-mini-thumb');
@@ -1294,8 +1294,8 @@ function wire() {
   $('wt-mini-manual').onclick = openMinimapModal;
   wireMinimapModal();
   $('wt-tol').onchange = async () => {
-    const v = parseInt($('wt-tol').value, 10);
-    if (Number.isFinite(v)) try { renderWatcher(await api.setWatcher({ tolerancePx: v })); } catch (e) { log('error', e.message); }
+    const v = parseFloat($('wt-tol').value);
+    if (Number.isFinite(v)) try { renderWatcher(await api.setWatcher({ miniTolerancePx: v })); } catch (e) { log('error', e.message); }
   };
   $('wt-maxms').onchange = async () => {
     const v = parseInt($('wt-maxms').value, 10);

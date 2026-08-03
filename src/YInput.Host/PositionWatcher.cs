@@ -23,7 +23,6 @@ public sealed class WatcherSettings
     public int MiniH { get; set; }
     /// <summary>미니맵 허용오차(px). 점은 서브픽셀 centroid로 재므로 1 미만도 의미 있다.</summary>
     public double MiniTolerancePx { get; set; } = 0.6;
-    public double MsPerMiniPx { get; set; } = 120; // 미니맵 1px ≈ 실좌표 수~십수 px → 홀드 비율 큼
 
     // 플레이어 점 색 임계(노랑) — UI 미노출, watcher.json 직접 수정으로 조정 가능
     public int DotMinR { get; set; } = 200;
@@ -32,17 +31,13 @@ public sealed class WatcherSettings
     /// <summary>미니맵 창(어두운 프레임) 판정 밝기 임계 — 이 이하 밝기 픽셀을 '어두움'으로 본다.</summary>
     public int PanelMaxLum { get; set; } = 70;
 
-    // 템플릿(파인 보정 + 서있음 검증) 공통 파라미터.
-    // 패치는 '캐릭터가 포함된' 창 정중앙 영역 하나 — 미세 보정과 제자리 검증을 겸한다.
-    public int TolerancePx { get; set; } = 2;
+    // 기준 화면 패치(캐릭터 포함 지형) — 이동에는 쓰지 않고 '서있음' 일치율 참고 표시용.
     /// <summary>매칭/서있음 일치 임계 — 캐릭터 애니메이션·방향 변화 때문에 100%는 안 나온다.</summary>
     public double MinScore { get; set; } = 0.55;
-    public double MsPerPx { get; set; } = 12;
     public int PatchW { get; set; } = 450;
     public int PatchH { get; set; } = 340;
 
-    public int MaxHoldMs { get; set; } = 350;
-    /// <summary>탭 후 재측정까지 대기(ms) — 키를 뗀 뒤 캐릭터가 미끄러져 멈출 시간을 포함해야 정확히 잰다.</summary>
+    /// <summary>이동 후 재측정까지 대기(ms) — 키를 뗀 뒤 캐릭터가 관성으로 미끄러져 멈출 시간.</summary>
     public int SettleMs { get; set; } = 500;
     public int MaxCorrectionMs { get; set; } = 10000;
 }
@@ -61,14 +56,12 @@ public sealed class SpotData
     public int PatchY { get; set; }
     public int PatchW { get; set; }
     public int PatchH { get; set; }
-    /// <summary>파인 보정 방향 부호. 0=미학습(카메라-추적 가정 +1로 시작해 첫 탭 결과로 학습·영속).</summary>
-    public int DirectionSign { get; set; }
 }
 
 /// <summary>
 /// 위치 지킴이 — '위치 보정' 스텝(<see cref="PositionCorrectEvent"/>)이 실행될 때 캐릭터가 그 블록에
-/// 지정된 자리(스팟)에서 벗어났으면 방향키로 되돌린다. 2단계: ① 미니맵 노란 점으로 코스 복귀(절대 위치라
-/// 방향 명확, 멀리 벗어나도 복귀), ② 화면 템플릿 매칭으로 파인 조정. 블록마다 서로 다른 스팟을 가진다.
+/// 지정된 자리(스팟)에서 벗어났으면 방향키로 되돌린다. 이동은 미니맵 노란 점 기준으로만 하고(절대 위치라
+/// 방향 명확, 멀리 벗어나도 복귀), 화면 패치는 이동 없이 '서있음' 일치율 참고 표시에만 쓴다. 블록마다 서로 다른 스팟.
 /// 공통 설정은 <c>watcher.json</c>, 스팟은 <c>spots\{id}.json</c> + <c>spots\{id}.png</c>에 저장.
 /// </summary>
 public sealed class PositionWatcher : IDisposable
@@ -77,8 +70,6 @@ public sealed class PositionWatcher : IDisposable
     private const ushort KeyDownE0 = 0x02, KeyUpE0 = 0x03;
     private const int SearchBandPx = 24;                  // 템플릿 탐색 Y 범위(저장 Y ± 이 값)
     private const double MinPatchStdDev = 8;              // 패치 대비 하한(단색·특징 부족 거부)
-    private const int MinTapMs = 28;                      // 최소 탭(이보다 짧으면 게임이 이동으로 안 받을 수 있음)
-    private const int FineNudgePx = 6;                    // 이 이하 잔여 오차는 비례 대신 최소 탭으로 미세 이동(오버슈트 방지)
 
     private readonly string _statePath;
     private readonly string _spotsDir;
@@ -102,19 +93,15 @@ public sealed class PositionWatcher : IDisposable
     // ---------- 조회/설정 ----------
     public object Get() { lock (_gate) return Snapshot(_settings); }
 
-    public object Update(string? process, int? tolerancePx, double? msPerPx,
-                         int? maxCorrectionMs, double? minScore, double? miniTolerancePx, double? msPerMiniPx)
+    public object Update(string? process, int? maxCorrectionMs, double? minScore, double? miniTolerancePx)
     {
         object snap;
         lock (_gate)
         {
             if (!string.IsNullOrWhiteSpace(process)) _settings.Process = Normalize(process);
-            if (tolerancePx is int t && t >= 0) _settings.TolerancePx = t;
-            if (msPerPx is double m && m > 0) _settings.MsPerPx = m;
             if (maxCorrectionMs is int mc && mc > 0) _settings.MaxCorrectionMs = mc;
             if (minScore is double ms && ms is > 0 and <= 1) _settings.MinScore = ms;
             if (miniTolerancePx is double mt && mt >= 0) _settings.MiniTolerancePx = mt;
-            if (msPerMiniPx is double mm && mm > 0) _settings.MsPerMiniPx = mm;
             Save(_settings);
             snap = Snapshot(_settings);
         }
@@ -331,7 +318,6 @@ public sealed class PositionWatcher : IDisposable
             {
                 DotX = dot.X, DotY = dot.Y, DotFrame = true, DotRel = true, // 미니맵 영역 상대 좌표
                 PatchX = rect.X, PatchY = rect.Y, PatchW = rect.Width, PatchH = rect.Height,
-                DirectionSign = 0, // 새 자리 → 파인 방향 재학습
             };
             Directory.CreateDirectory(_spotsDir);
             File.WriteAllBytes(SpotPng(id), ScreenCapture.ToPng(patchBmp));
@@ -358,7 +344,6 @@ public sealed class PositionWatcher : IDisposable
                 exists = true,
                 dotX = Math.Round(s.Data.DotX, 1), dotY = Math.Round(s.Data.DotY, 1),
                 patchX = s.Data.PatchX, patchY = s.Data.PatchY, patchW = s.Data.PatchW, patchH = s.Data.PatchH,
-                directionSign = s.Data.DirectionSign,
             };
         }
     }
@@ -382,27 +367,17 @@ public sealed class PositionWatcher : IDisposable
         var cands = MeasureDots(s);
         int candCount = cands?.Count ?? 0;
         double? miniDx = null;
+        // 미리보기(Live)와 같은 기준(점 크기 기반)으로 내 캐릭터 점을 고른다 —
+        // '저장 위치 근접' 선택은 저장 지점 옆의 정지 블롭(마커 등)에 고정될 수 있다.
         if (cands is { Count: > 0 })
-        {
-            // 미리보기(Live)와 같은 기준(점 크기 기반)으로 내 캐릭터 점을 고른다.
-            // '저장 위치에서 가장 가까운 블롭'으로 고르면 저장 지점 옆의 정지 블롭(마커 등)에
-            // 영원히 고정되어 캐릭터가 어디에 있든 같은 이탈값이 나온다.
-            var picked = MinimapDetector.Pick(cands);
-            miniDx = Math.Round(picked.Center.X - sp.Data.DotX, 1);
-            var shot = SaveShot("test");
-            FileLog.Write("info",
-                $"[테스트] 저장=({sp.Data.DotX:0.0},{sp.Data.DotY:0.0}) 선택=({picked.Center.X:0.0},{picked.Center.Y:0.0}) miniDx={miniDx:+0.0;-0.0} " +
-                $"후보 {cands.Count}개: {string.Join(" ", cands.Select(c => $"({c.Center.X:0.0},{c.Center.Y:0.0} a{c.Area} {c.BoxW}x{c.BoxH})"))}{(shot is null ? "" : $" shot={shot}")}");
-        }
-        double? score = null; int? dx = null;
-        var pm = MeasurePatch(s, sp.Data, sp.Gray);
-        if (pm is { } r) { dx = r.dx; score = r.score; }
+            miniDx = Math.Round(MinimapDetector.Pick(cands).Center.X - sp.Data.DotX, 1);
+        double? score = MeasurePatch(s, sp.Data, sp.Gray)?.score;
         return new
         {
             dotFound = miniDx is not null, miniDx,
             inPlace = miniDx is { } m && Math.Abs(m) <= s.MiniTolerancePx, // 서있어야 할 위치에 있는가
             dotCandidates = candCount, // 2개 이상 = 오인 가능(재생 보정은 프로브 이동으로 자동 식별)
-            patchFound = score >= s.MinScore, dx, score,
+            patchFound = score >= s.MinScore, score, // 지형 일치율 — 참고용(이동에는 미사용)
         };
     }
 
@@ -433,10 +408,6 @@ public sealed class PositionWatcher : IDisposable
             //           '움직인' 블롭을 내 캐릭터로 잠근다(마커·타인 점은 안 움직임) ──
             var dots0 = MeasureDots(s);
             if (dots0 is null || dots0.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 보정을 포기합니다."); return; }
-            var idShot = SaveShot("identify");
-            FileLog.Write("info",
-                $"[위치보정:식별] 저장=({spot.DotX:0.0},{spot.DotY:0.0}) " +
-                $"후보 {dots0.Count}개: {string.Join(" ", dots0.Select(c => $"({c.Center.X:0.0},{c.Center.Y:0.0} a{c.Area} {c.BoxW}x{c.BoxH})"))}{(idShot is null ? "" : $" shot={idShot}")}");
             PointF? dot;
             if (dots0.Count == 1) dot = dots0[0].Center;
             else
@@ -518,7 +489,6 @@ public sealed class PositionWatcher : IDisposable
             _liveFrame?.Dispose(); _liveFrame = null;
             _lastFrame?.Dispose(); _lastFrame = null;
         }
-        lock (_dbgGate) { _dbgFrame?.Dispose(); _dbgFrame = null; }
         _sem.Dispose();
     }
 
@@ -563,30 +533,10 @@ public sealed class PositionWatcher : IDisposable
     private List<DotCandidate>? MeasureDots(WatcherSettings s)
     {
         if (s.MiniW <= 0) return null;
-        var frame = CaptureGameFrame(s.Process, out _);
+        using var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return null;
         var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
-        var dots = MinimapDetector.FindDots(frame, mini, s.DotMinR, s.DotMinG, s.DotMaxB);
-        KeepDebugFrame(frame); // 소유권 이전 — 이 측정 시점의 화면을 로그 스냅샷용으로 보관
-        return dots;
-    }
-
-    // ---------- 로그 스냅샷(진단) ----------
-    private Bitmap? _dbgFrame;               // 마지막 측정에 쓴 프레임 — 로그가 찍히는 순간의 화면
-    private readonly object _dbgGate = new();
-
-    private void KeepDebugFrame(Bitmap frame)
-    {
-        lock (_dbgGate) { _dbgFrame?.Dispose(); _dbgFrame = frame; }
-    }
-
-    /// <summary>마지막 측정 프레임을 logs\shots\에 저장하고 파일명을 반환(로그 줄에 연결). 없으면 null.</summary>
-    private string? SaveShot(string tag)
-    {
-        Bitmap? clone;
-        try { lock (_dbgGate) { if (_dbgFrame is null) return null; clone = new Bitmap(_dbgFrame); } }
-        catch { return null; }
-        return FileLog.SaveShot(clone, tag);
+        return MinimapDetector.FindDots(frame, mini, s.DotMinR, s.DotMinG, s.DotMaxB);
     }
 
     /// <summary>프로브 이동(왼쪽 90ms) 전/후 블롭을 근접 매칭해 '왼쪽으로 움직인' 블롭을 찾는다 =
@@ -614,17 +564,16 @@ public sealed class PositionWatcher : IDisposable
     /// <summary>프레임의 패치 Y ± 밴드에서 템플릿 매칭. dx = 현재 매칭 X − 저장 X.</summary>
     private (int dx, double score)? MeasurePatch(WatcherSettings s, SpotData spot, GrayImage patch)
     {
-        var frame = CaptureGameFrame(s.Process, out _);
+        using var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return null;
         int y0 = Math.Max(0, spot.PatchY - SearchBandPx);
         int y1 = Math.Min(frame.Height, spot.PatchY + spot.PatchH + SearchBandPx);
-        if (y1 - y0 < spot.PatchH || frame.Width < spot.PatchW) { KeepDebugFrame(frame); return null; }
+        if (y1 - y0 < spot.PatchH || frame.Width < spot.PatchW) return null;
 
         using var band = frame.Clone(new Rectangle(0, y0, frame.Width, y1 - y0), frame.PixelFormat);
         var gray = TemplateMatcher.ToGray(band);
         var search = new Rectangle(0, 0, gray.Width - patch.Width + 1, gray.Height - patch.Height + 1);
         var m = TemplateMatcher.Match(gray, patch, search);
-        KeepDebugFrame(frame); // 소유권 이전 — 이 측정 시점의 화면을 로그 스냅샷용으로 보관
         return (m.X - spot.PatchX, m.Score); // 밴드는 창 X=0부터라 X는 창 상대 그대로
     }
 
@@ -633,16 +582,6 @@ public sealed class PositionWatcher : IDisposable
         _backend.Send(new KeyboardEvent { Code = code, State = KeyDownE0 });
         try { await PreciseDelay.WaitAsync(holdMs, ct).ConfigureAwait(false); }
         finally { try { _backend.Send(new KeyboardEvent { Code = code, State = KeyUpE0 }); } catch { } }
-    }
-
-    private void PersistSign(string id, SpotData spot, int sign)
-    {
-        lock (_gate)
-        {
-            spot.DirectionSign = sign;
-            try { File.WriteAllText(SpotJson(id), JsonSerializer.Serialize(spot)); } catch { }
-            if (_spotCache.TryGetValue(id, out var c)) _spotCache[id] = (spot, c.Gray);
-        }
     }
 
     // 스팟 id는 클라이언트가 만든 UUID(하이픈 제거 가능) — 경로 조작 방지를 위해 엄격 검증.
@@ -662,8 +601,7 @@ public sealed class PositionWatcher : IDisposable
     private void Status(string state, string message, int? miniDx = null, int? dx = null, double? score = null)
     {
         _hub.Broadcast("watcherStatus", new { state, message, miniDx, dx, score });
-        var shot = SaveShot(state); // 이 로그 시점의 화면을 logs\shots\에 저장해 나중에 짝지어 본다
-        FileLog.Write(state is "fail" ? "warn" : "info", $"[위치보정:{state}] {message}{(shot is null ? "" : $" shot={shot}")}");
+        FileLog.Write(state is "fail" ? "warn" : "info", $"[위치보정:{state}] {message}");
     }
 
     private void Broadcast() { lock (_gate) _hub.Broadcast("watcherSettings", Snapshot(_settings)); }
@@ -673,9 +611,8 @@ public sealed class PositionWatcher : IDisposable
         process = s.Process,
         hasMinimap = s.MiniW > 0,
         miniX = s.MiniX, miniY = s.MiniY, miniW = s.MiniW, miniH = s.MiniH,
-        tolerancePx = s.TolerancePx, minScore = s.MinScore, msPerPx = s.MsPerPx,
-        miniTolerancePx = s.MiniTolerancePx, msPerMiniPx = s.MsPerMiniPx,
-        maxHoldMs = s.MaxHoldMs, settleMs = s.SettleMs, maxCorrectionMs = s.MaxCorrectionMs,
+        minScore = s.MinScore, miniTolerancePx = s.MiniTolerancePx,
+        settleMs = s.SettleMs, maxCorrectionMs = s.MaxCorrectionMs,
     };
 
     // ---------- 영속 ----------
@@ -686,7 +623,6 @@ public sealed class PositionWatcher : IDisposable
         catch { return new(); }
         // 구버전 기본값 마이그레이션(사용자가 직접 조정한 값은 유지).
         if (s.MiniTolerancePx == 1) s.MiniTolerancePx = 0.6;
-        if (s.TolerancePx == 4) s.TolerancePx = 2;
         if (s.SettleMs is 150 or 220 or 350) s.SettleMs = 500; // 관성·가속 정지 대기 확대
         // 패치를 '캐릭터 포함 창 중앙'으로 통합하면서 크기/임계 기본값 변경
         if (s.PatchW is 120 or 180) s.PatchW = 450; // 캐릭터 주변 범위 약 2.5배 확대
@@ -712,10 +648,9 @@ public sealed class PositionWatcher : IDisposable
     {
         Process = s.Process,
         MiniX = s.MiniX, MiniY = s.MiniY, MiniW = s.MiniW, MiniH = s.MiniH,
-        MiniTolerancePx = s.MiniTolerancePx, MsPerMiniPx = s.MsPerMiniPx,
+        MiniTolerancePx = s.MiniTolerancePx,
         DotMinR = s.DotMinR, DotMinG = s.DotMinG, DotMaxB = s.DotMaxB, PanelMaxLum = s.PanelMaxLum,
-        TolerancePx = s.TolerancePx, MinScore = s.MinScore, MsPerPx = s.MsPerPx,
-        PatchW = s.PatchW, PatchH = s.PatchH,
-        MaxHoldMs = s.MaxHoldMs, SettleMs = s.SettleMs, MaxCorrectionMs = s.MaxCorrectionMs,
+        MinScore = s.MinScore, PatchW = s.PatchW, PatchH = s.PatchH,
+        SettleMs = s.SettleMs, MaxCorrectionMs = s.MaxCorrectionMs,
     };
 }

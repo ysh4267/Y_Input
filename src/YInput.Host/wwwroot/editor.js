@@ -382,7 +382,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
         else parts.push(`📍 기준 위치보다 ${r.miniDx > 0 ? '오른쪽 →' : '← 왼쪽'}으로 ${Math.abs(r.miniDx).toFixed(1)}px(미니맵) 벗어남`);
         if (r.dotCandidates > 1) parts.push(`⚠ 노란 블롭 ${r.dotCandidates}개 — 다른 점을 잡았을 수 있음(재생 보정은 살짝 이동해 자동 식별)`);
         if (r.score != null)
-          parts.push(`서있음 ${(r.score * 100).toFixed(0)}%${r.patchFound ? ' ✓' : ' ✗'}` + (r.patchFound ? ` · 화면 미세오차 ${sg(r.dx)}px` : ''));
+          parts.push(`지형 일치 ${(r.score * 100).toFixed(0)}%${r.patchFound ? ' ✓' : ' ✗ (다른 발판일 수 있음)'}`);
         info.textContent = parts.join(' · ');
       } catch (err) { info.textContent = err.message; }
     };
@@ -394,7 +394,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
         if (s && s.exists) {
           img.src = `/api/watcher/spots/${ev.spotId}/patch?ts=${Date.now()}`;
           img.hidden = false; bTest.hidden = false;
-          info.textContent = `미니맵 (${s.dotX}, ${s.dotY})${s.directionSign ? ' · 방향 학습됨' : ''}`;
+          info.textContent = `미니맵 (${s.dotX}, ${s.dotY})`;
         } else {
           img.hidden = true; bTest.hidden = true;
           info.textContent = '저장된 위치가 없습니다(삭제됨) — 다시 지정하세요';

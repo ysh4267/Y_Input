@@ -53,27 +53,6 @@ public static class FileLog
 
     public static void Error(string context, Exception ex) => Write("error", context + ": " + ex);
 
-    /// <summary>로그 시점의 화면 스냅샷을 <c>logs\shots\</c>에 PNG로 저장(인코딩은 백그라운드).
-    /// 파일명을 즉시 반환해 로그 줄에 함께 남긴다 — 나중에 로그와 화면을 시간으로 짝지어 볼 수 있다.
-    /// 비트맵 소유권을 가져가 저장 후 해제한다. 실패/미초기화면 null.</summary>
-    public static string? SaveShot(System.Drawing.Bitmap frame, string tag)
-    {
-        if (_dir.Length == 0) { try { frame.Dispose(); } catch { } return null; }
-        var name = $"{DateTime.Now:yyyyMMdd-HHmmss-fff}_{tag}.png";
-        var dir = Path.Combine(_dir, "shots");
-        _ = Task.Run(() =>
-        {
-            try
-            {
-                Directory.CreateDirectory(dir);
-                frame.Save(Path.Combine(dir, name), System.Drawing.Imaging.ImageFormat.Png);
-            }
-            catch { /* 스냅샷 실패는 앱 동작에 영향 없음 */ }
-            finally { try { frame.Dispose(); } catch { } }
-        });
-        return name;
-    }
-
     private static void Cleanup()
     {
         try
@@ -82,10 +61,8 @@ public static class FileLog
                 if (DateTime.Now - File.GetLastWriteTime(f) > TimeSpan.FromDays(14))
                     try { File.Delete(f); } catch { /* 잠김 등 무시 */ }
             var shots = Path.Combine(_dir, "shots");
-            if (Directory.Exists(shots))
-                foreach (var f in Directory.EnumerateFiles(shots, "*.png")) // 스냅샷은 용량이 커 3일만 보관
-                    if (DateTime.Now - File.GetLastWriteTime(f) > TimeSpan.FromDays(3))
-                        try { File.Delete(f); } catch { /* 무시 */ }
+            if (Directory.Exists(shots)) // 구버전이 남긴 진단 스냅샷 폴더 정리
+                try { Directory.Delete(shots, true); } catch { /* 무시 */ }
         }
         catch { /* 무시 */ }
     }
