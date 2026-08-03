@@ -29,25 +29,14 @@ public sealed class WatcherSettings
     public int DotMinG { get; set; } = 180;
     public int DotMaxB { get; set; } = 120;
 
-    // 템플릿(파인 보정) 공통 파라미터
+    // 템플릿(파인 보정 + 서있음 검증) 공통 파라미터.
+    // 패치는 '캐릭터가 포함된' 창 정중앙 영역 하나 — 미세 보정과 제자리 검증을 겸한다.
     public int TolerancePx { get; set; } = 2;
-    public double MinScore { get; set; } = 0.60;
+    /// <summary>매칭/서있음 일치 임계 — 캐릭터 애니메이션·방향 변화 때문에 100%는 안 나온다.</summary>
+    public double MinScore { get; set; } = 0.55;
     public double MsPerPx { get; set; } = 12;
-
-    // 자동 기준 패치 크기/위치 — 창 가로 중앙, 세로 중앙에서 아래로 오프셋(캐릭터 발판 부근).
-    // 카메라-추적 시 캐릭터가 화면 중앙에 오므로 그 발밑 지형이 기준이 된다. UI 미노출.
-    public int PatchW { get; set; } = 120;
-    public int PatchH { get; set; } = 64;
-    public int PatchOffsetY { get; set; } = 24;
-
-    // 검증 패치 — 캐릭터가 '포함'된 주변 지형(창 중앙). 보정 후 이 지형과 대조해
-    // 캐릭터가 그 자리에 제대로 서 있는지(다른 발판/다른 맵 아님)를 확인한다.
-    public int CheckW { get; set; } = 180;
-    public int CheckH { get; set; } = 140;
-    /// <summary>서있음 검증 일치 임계 — 캐릭터 애니메이션/방향 때문에 100%는 안 나오므로 여유 있게.</summary>
-    public double CheckMinScore { get; set; } = 0.50;
-    /// <summary>검증 시 저장 위치 주변 허용 탐색 범위(px) — 잔여 오차만큼만 봐준다.</summary>
-    public int CheckSearchPx { get; set; } = 6;
+    public int PatchW { get; set; } = 180;
+    public int PatchH { get; set; } = 140;
 
     public int MaxHoldMs { get; set; } = 350;
     /// <summary>탭 후 재측정까지 대기(ms) — 키를 뗀 뒤 캐릭터가 미끄러져 멈출 시간을 포함해야 정확히 잰다.</summary>
@@ -66,12 +55,6 @@ public sealed class SpotData
     public int PatchH { get; set; }
     /// <summary>파인 보정 방향 부호. 0=미학습(카메라-추적 가정 +1로 시작해 첫 탭 결과로 학습·영속).</summary>
     public int DirectionSign { get; set; }
-
-    // 검증 패치(캐릭터 포함 주변 지형) rect — 창 상대. W=0이면 구버전 스팟(검증 생략).
-    public int CheckX { get; set; }
-    public int CheckY { get; set; }
-    public int CheckW { get; set; }
-    public int CheckH { get; set; }
 }
 
 /// <summary>
@@ -97,7 +80,7 @@ public sealed class PositionWatcher : IDisposable
     private readonly SemaphoreSlim _sem = new(1, 1); // 동시 재생 매크로 여러 개 → 보정은 한 번에 하나
 
     private WatcherSettings _settings;
-    private readonly Dictionary<string, (SpotData Data, GrayImage Gray, GrayImage? Check)> _spotCache = new();
+    private readonly Dictionary<string, (SpotData Data, GrayImage Gray)> _spotCache = new();
     private Bitmap? _lastFrame; // 마지막 캡처 프레임 — 영역 지정은 사용자가 본 이 프레임에서 크롭
 
     public PositionWatcher(string dataRoot, SocketHub hub, InputBackend backend)
@@ -199,12 +182,9 @@ public sealed class PositionWatcher : IDisposable
         {
             if (_liveFrame is null) return null;
             var s = _settings;
-            var r = what switch
-            {
-                "minimap" => new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH),
-                "check" => AutoCheckRect(s, _liveFrame.Width, _liveFrame.Height),
-                _ => AutoPatchRect(s, _liveFrame.Width, _liveFrame.Height),
-            };
+            var r = what == "minimap"
+                ? new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH)
+                : AutoPatchRect(s, _liveFrame.Width, _liveFrame.Height);
             r = ClampRect(r, _liveFrame.Width, _liveFrame.Height);
             if (r.Width <= 0 || r.Height <= 0) return null;
             using var crop = _liveFrame.Clone(r, _liveFrame.PixelFormat);
@@ -238,34 +218,24 @@ public sealed class PositionWatcher : IDisposable
             if (TemplateMatcher.StdDev(gray) < MinPatchStdDev)
                 throw new ArgumentException("캐릭터 발밑 배경의 특징이 부족합니다(거의 단색). 무늬 있는 지형 위에서 확정하세요.");
 
-            // 검증 패치 — 캐릭터가 포함된 주변 지형(창 중앙). 보정 후 '제대로 서있음' 확인에 사용.
-            var checkRect = ClampRect(AutoCheckRect(s, frame.Width, frame.Height), frame.Width, frame.Height);
-            using var checkBmp = frame.Clone(checkRect, frame.PixelFormat);
-            var checkGray = TemplateMatcher.ToGray(checkBmp);
-
             var spot = new SpotData
             {
                 DotX = dot.X, DotY = dot.Y,
                 PatchX = rect.X, PatchY = rect.Y, PatchW = rect.Width, PatchH = rect.Height,
-                CheckX = checkRect.X, CheckY = checkRect.Y, CheckW = checkRect.Width, CheckH = checkRect.Height,
                 DirectionSign = 0, // 새 자리 → 파인 방향 재학습
             };
             Directory.CreateDirectory(_spotsDir);
             File.WriteAllBytes(SpotPng(id), ScreenCapture.ToPng(patchBmp));
-            File.WriteAllBytes(SpotCheckPng(id), ScreenCapture.ToPng(checkBmp));
             File.WriteAllText(SpotJson(id), JsonSerializer.Serialize(spot));
-            _spotCache[id] = (spot, gray, checkGray);
+            _spotCache[id] = (spot, gray);
         }
         return GetSpot(id);
     }
 
-    /// <summary>자동 기준 패치 rect — 창 가로 중앙, 세로 중앙 + 오프셋(캐릭터 발판 부근).</summary>
+    /// <summary>자동 기준 패치 rect — 창 정중앙, 캐릭터가 '포함'된 주변 지형.
+    /// 카메라-추적 시 캐릭터가 화면 중앙에 오므로 이 영역이 캐릭터+발판 기준이 된다.</summary>
     private static Rectangle AutoPatchRect(WatcherSettings s, int w, int h) =>
-        new(w / 2 - s.PatchW / 2, h / 2 + s.PatchOffsetY, s.PatchW, s.PatchH);
-
-    /// <summary>자동 검증 패치 rect — 창 정중앙(캐릭터 포함 주변 지형).</summary>
-    private static Rectangle AutoCheckRect(WatcherSettings s, int w, int h) =>
-        new(w / 2 - s.CheckW / 2, h / 2 - s.CheckH / 2, s.CheckW, s.CheckH);
+        new(w / 2 - s.PatchW / 2, h / 2 - s.PatchH / 2, s.PatchW, s.PatchH);
 
     /// <summary>스팟 정보(블록 카드 표시용). 없으면 exists=false.</summary>
     public object GetSpot(string id)
@@ -280,7 +250,6 @@ public sealed class PositionWatcher : IDisposable
                 exists = true,
                 dotX = Math.Round(s.Data.DotX, 1), dotY = Math.Round(s.Data.DotY, 1),
                 patchX = s.Data.PatchX, patchY = s.Data.PatchY, patchW = s.Data.PatchW, patchH = s.Data.PatchH,
-                hasCheck = s.Data.CheckW > 0,
                 directionSign = s.Data.DirectionSign,
             };
         }
@@ -293,21 +262,12 @@ public sealed class PositionWatcher : IDisposable
         return File.Exists(p) ? File.ReadAllBytes(p) : null;
     }
 
-    /// <summary>블록 카드 썸네일 — 캐릭터 포함 검증 패치를 우선, 없으면(구버전) 발판 패치.</summary>
-    public byte[]? GetSpotPreview(string id)
-    {
-        RequireValidId(id);
-        var c = SpotCheckPng(id);
-        if (File.Exists(c)) return File.ReadAllBytes(c);
-        var p = SpotPng(id);
-        return File.Exists(p) ? File.ReadAllBytes(p) : null;
-    }
 
     /// <summary>키를 누르지 않고 스팟 기준 현재 이탈량만 측정(블록 카드의 테스트 버튼).</summary>
     public object TestSpot(string id)
     {
         RequireValidId(id);
-        WatcherSettings s; (SpotData Data, GrayImage Gray, GrayImage? Check)? spot;
+        WatcherSettings s; (SpotData Data, GrayImage Gray)? spot;
         lock (_gate) { s = Clone(_settings); spot = ResolveSpot(id); }
         if (s.MiniW <= 0) return new { error = "미니맵 영역이 지정되지 않았습니다." };
         if (spot is not { } sp) return new { error = "지정된 위치가 없습니다. [지정하기]로 저장하세요." };
@@ -317,13 +277,7 @@ public sealed class PositionWatcher : IDisposable
         double? score = null; int? dx = null;
         var pm = MeasurePatch(s, sp.Data, sp.Gray);
         if (pm is { } r) { dx = r.dx; score = r.score; }
-        double? checkScore = sp.Check is { } cg ? MeasureCheck(s, sp.Data, cg) : null;
-        return new
-        {
-            dotFound = dot is not null, miniDx, patchFound = score >= s.MinScore, dx, score,
-            checkScore = checkScore is { } cv ? Math.Round(cv, 2) : (double?)null,
-            checkOk = checkScore is { } cv2 ? cv2 >= s.CheckMinScore : (bool?)null,
-        };
+        return new { dotFound = dot is not null, miniDx, patchFound = score >= s.MinScore, dx, score };
     }
 
     // ---------- 보정(재생 훅) ----------
@@ -334,7 +288,7 @@ public sealed class PositionWatcher : IDisposable
     /// </summary>
     public async Task CorrectAsync(string? spotId, CancellationToken ct)
     {
-        WatcherSettings s; (SpotData Data, GrayImage Gray, GrayImage? Check)? resolved;
+        WatcherSettings s; (SpotData Data, GrayImage Gray)? resolved;
         lock (_gate)
         {
             s = Clone(_settings);
@@ -346,7 +300,7 @@ public sealed class PositionWatcher : IDisposable
 
         try
         {
-            var spot = sp.Data; var patch = sp.Gray; var check = sp.Check;
+            var spot = sp.Data; var patch = sp.Gray;
             if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면이 아니라 보정을 건너뜁니다."); return; }
             var sw = Stopwatch.StartNew();
 
@@ -377,10 +331,13 @@ public sealed class PositionWatcher : IDisposable
                 }
                 if (Math.Abs(miniDx) > s.MiniTolerancePx) { Status("fail", $"보정 시간 초과(미니맵 이탈 {miniDx:+0.0;-0.0}px 남음)."); return; }
 
-                // ── 2단계: 템플릿 파인 조정(캐릭터 발판 기준 화면) ──
+                // ── 2단계: 템플릿 파인 조정(캐릭터 포함 기준 화면 — 못 찾으면 다른 발판/맵 의심) ──
                 var pm = MeasurePatch(s, spot, patch);
                 if (pm is not { } m || m.score < s.MinScore)
-                { Status("done", "템플릿 매칭 실패 — 미니맵 보정까지만 수행했습니다."); return; }
+                {
+                    Status("fail", $"기준 지형(캐릭터 주변)을 찾지 못했습니다 — 다른 발판이나 다른 맵에 있을 수 있습니다{(pm is { } p0 ? $"(일치 {p0.score * 100:0}%)" : "")}.");
+                    return;
+                }
 
                 int sign = spot.DirectionSign == 0 ? 1 : spot.DirectionSign; // 기본: 카메라-추적 가정
                 bool learning = spot.DirectionSign == 0;
@@ -422,18 +379,8 @@ public sealed class PositionWatcher : IDisposable
                 var recheck = MeasureDot(s);
                 if (pass == 0 && recheck is { } rd && Math.Abs(rd.X - spot.DotX) > s.MiniTolerancePx) continue;
 
-                // ── 3단계: 서있음 검증 — 캐릭터가 포함된 저장 지형과 대조(다른 발판/다른 맵 감지) ──
-                if (check is { } cg && MeasureCheck(s, spot, cg) is { } chkScore)
-                {
-                    if (chkScore < s.CheckMinScore)
-                    {
-                        Status("fail", $"위치 검증 실패 — 캐릭터가 기준 지형에 제대로 서 있지 않은 것 같습니다(지형 일치 {chkScore * 100:0}%).");
-                        return;
-                    }
-                    Status("done", $"위치 보정 완료 — 서있음 확인 {chkScore * 100:0}% (잔여 {dx:+0;-0}px)", dx: dx, score: m.score);
-                    return;
-                }
-                Status("done", $"위치 보정 완료 (잔여 {dx:+0;-0}px)", dx: dx, score: m.score);
+                // 패치가 캐릭터 포함 지형이므로 최종 매칭 성공 = 그 자리에 제대로 서 있음
+                Status("done", $"위치 보정 완료 — 서있음 확인 {m.score * 100:0}% (잔여 {dx:+0;-0}px)", dx: dx, score: m.score);
                 return;
             }
             Status("done", "위치 보정 완료");
@@ -455,7 +402,7 @@ public sealed class PositionWatcher : IDisposable
 
     // ---------- 내부 ----------
     /// <summary>스팟을 캐시→디스크 순으로 해석. 반드시 _gate 안에서 호출.</summary>
-    private (SpotData Data, GrayImage Gray, GrayImage? Check)? ResolveSpot(string id)
+    private (SpotData Data, GrayImage Gray)? ResolveSpot(string id)
     {
         if (_spotCache.TryGetValue(id, out var c)) return c;
         try
@@ -466,13 +413,7 @@ public sealed class PositionWatcher : IDisposable
             if (data is null || data.PatchW <= 0) return null;
             GrayImage gray;
             using (var bmp = new Bitmap(png)) gray = TemplateMatcher.ToGray(bmp);
-            GrayImage? check = null;
-            if (data.CheckW > 0 && File.Exists(SpotCheckPng(id)))
-            {
-                try { using var cb = new Bitmap(SpotCheckPng(id)); check = TemplateMatcher.ToGray(cb); }
-                catch { check = null; }
-            }
-            var entry = (data, gray, check);
+            var entry = (data, gray);
             _spotCache[id] = entry;
             return entry;
         }
@@ -517,24 +458,8 @@ public sealed class PositionWatcher : IDisposable
         {
             spot.DirectionSign = sign;
             try { File.WriteAllText(SpotJson(id), JsonSerializer.Serialize(spot)); } catch { }
-            if (_spotCache.TryGetValue(id, out var c)) _spotCache[id] = (spot, c.Gray, c.Check);
+            if (_spotCache.TryGetValue(id, out var c)) _spotCache[id] = (spot, c.Gray);
         }
-    }
-
-    /// <summary>검증 패치(캐릭터 포함 주변 지형)를 저장 위치 ±CheckSearchPx에서 대조한 최고 NCC 점수.
-    /// 캐릭터가 그 발판 그 자리에 서 있으면 높고, 다른 발판/다른 맵이면 낮다.</summary>
-    private double? MeasureCheck(WatcherSettings s, SpotData spot, GrayImage check)
-    {
-        if (spot.CheckW <= 0) return null;
-        if (!WindowLocator.TryGetWindowRect(s.Process, out var win)) return null;
-        int pad = Math.Max(0, s.CheckSearchPx);
-        var region = ClampRect(new Rectangle(spot.CheckX - pad, spot.CheckY - pad,
-                                             spot.CheckW + pad * 2, spot.CheckH + pad * 2), win.Width, win.Height);
-        if (region.Width < check.Width || region.Height < check.Height) return null;
-        using var bmp = ScreenCapture.Capture(new Rectangle(win.X + region.X, win.Y + region.Y, region.Width, region.Height));
-        var gray = TemplateMatcher.ToGray(bmp);
-        var search = new Rectangle(0, 0, gray.Width - check.Width + 1, gray.Height - check.Height + 1);
-        return TemplateMatcher.Match(gray, check, search).Score;
     }
 
     // 스팟 id는 클라이언트가 만든 UUID(하이픈 제거 가능) — 경로 조작 방지를 위해 엄격 검증.
@@ -545,7 +470,6 @@ public sealed class PositionWatcher : IDisposable
 
     private string SpotJson(string id) => Path.Combine(_spotsDir, id + ".json");
     private string SpotPng(string id) => Path.Combine(_spotsDir, id + ".png");
-    private string SpotCheckPng(string id) => Path.Combine(_spotsDir, id + "_check.png");
 
     private static Rectangle ClampRect(int x, int y, int w, int h, int maxW, int maxH) =>
         Rectangle.Intersect(new Rectangle(x, y, w, h), new Rectangle(0, 0, maxW, maxH));
@@ -573,10 +497,14 @@ public sealed class PositionWatcher : IDisposable
         WatcherSettings s;
         try { s = File.Exists(_statePath) ? (JsonSerializer.Deserialize<WatcherSettings>(File.ReadAllText(_statePath)) ?? new()) : new(); }
         catch { return new(); }
-        // 구버전 기본값 마이그레이션(사용자가 직접 조정한 값은 유지) — 정밀도 개선 기본값으로 올린다.
+        // 구버전 기본값 마이그레이션(사용자가 직접 조정한 값은 유지).
         if (s.MiniTolerancePx == 1) s.MiniTolerancePx = 0.6;
         if (s.TolerancePx == 4) s.TolerancePx = 2;
         if (s.SettleMs == 150) s.SettleMs = 220;
+        // 패치를 '캐릭터 포함 창 중앙'으로 통합하면서 크기/임계 기본값 변경
+        if (s.PatchW == 120) s.PatchW = 180;
+        if (s.PatchH == 64) s.PatchH = 140;
+        if (s.MinScore == 0.60) s.MinScore = 0.55;
         return s;
     }
 
@@ -599,7 +527,7 @@ public sealed class PositionWatcher : IDisposable
         MiniTolerancePx = s.MiniTolerancePx, MsPerMiniPx = s.MsPerMiniPx,
         DotMinR = s.DotMinR, DotMinG = s.DotMinG, DotMaxB = s.DotMaxB,
         TolerancePx = s.TolerancePx, MinScore = s.MinScore, MsPerPx = s.MsPerPx,
-        PatchW = s.PatchW, PatchH = s.PatchH, PatchOffsetY = s.PatchOffsetY,
+        PatchW = s.PatchW, PatchH = s.PatchH,
         MaxHoldMs = s.MaxHoldMs, SettleMs = s.SettleMs, MaxCorrectionMs = s.MaxCorrectionMs,
     };
 }

@@ -294,14 +294,6 @@ public static class ApiEndpoints
                 ? Results.NotFound(new { error = "저장된 위치가 없습니다." })
                 : Results.File(png, "image/png"));
         }));
-        // 카드 썸네일 — 캐릭터 포함 검증 패치(구버전 스팟은 발판 패치로 폴백)
-        app.MapGet("/api/watcher/spots/{id}/preview", (string id) => Guard(() =>
-        {
-            var png = watcher.GetSpotPreview(id);
-            return Task.FromResult(png is null
-                ? Results.NotFound(new { error = "저장된 위치가 없습니다." })
-                : Results.File(png, "image/png"));
-        }));
         // 확정: 지금 화면을 캡처해 이 블록의 기준 위치로 저장(확장 카드의 [확정] 버튼)
         app.MapPost("/api/watcher/spots/{id}/capture", (string id) => Guard(() =>
             Task.FromResult(Results.Json(watcher.CaptureSpot(id)))));
@@ -311,7 +303,7 @@ public static class ApiEndpoints
         app.MapGet("/api/watcher/live", () => Results.Json(watcher.Live()));
         app.MapGet("/api/watcher/live/{what}", (string what) =>
         {
-            if (what is not ("minimap" or "patch" or "check")) return Results.NotFound();
+            if (what is not ("minimap" or "patch")) return Results.NotFound();
             var png = watcher.LiveCrop(what);
             return png is null ? Results.NotFound(new { error = "미리보기 프레임이 없습니다." }) : Results.File(png, "image/png");
         });

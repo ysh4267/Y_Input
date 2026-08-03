@@ -383,9 +383,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros, openMinimapPi
           const sg = (v) => (v > 0 ? '+' : '') + v;
           const parts = [r.dotFound ? `미니맵 이탈 ${sg(r.miniDx)}px` : '미니맵 점 미탐지'];
           if (r.score != null)
-            parts.push(`매칭 ${(r.score * 100).toFixed(0)}%` + (r.patchFound ? ` · 화면 이탈 ${sg(r.dx)}px` : ' (임계 미달)'));
-          if (r.checkScore != null)
-            parts.push(`서있음 ${(r.checkScore * 100).toFixed(0)}%${r.checkOk ? ' ✓' : ' ✗'}`);
+            parts.push(`서있음 ${(r.score * 100).toFixed(0)}%${r.patchFound ? ' ✓' : ' ✗'}` + (r.patchFound ? ` · 화면 이탈 ${sg(r.dx)}px` : ''));
           info.textContent = parts.join(' · ');
         } catch (err) { info.textContent = err.message; }
       };
@@ -395,9 +393,9 @@ export function createEditor({ log, onSaved, getStatus, getMacros, openMinimapPi
         try {
           const s = await api.watcherSpot(ev.spotId);
           if (s && s.exists) {
-            img.src = `/api/watcher/spots/${ev.spotId}/preview?ts=${Date.now()}`;
+            img.src = `/api/watcher/spots/${ev.spotId}/patch?ts=${Date.now()}`;
             img.hidden = false; bTest.hidden = false;
-            info.textContent = `미니맵 (${s.dotX}, ${s.dotY})${s.hasCheck ? ' · 서있음 검증 사용' : ''}${s.directionSign ? ' · 방향 학습됨' : ''}`;
+            info.textContent = `미니맵 (${s.dotX}, ${s.dotY})${s.directionSign ? ' · 방향 학습됨' : ''}`;
           } else {
             img.hidden = true; bTest.hidden = true;
             info.textContent = '저장된 위치가 없습니다(삭제됨) — 다시 지정하세요';
@@ -446,7 +444,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros, openMinimapPi
         bMini.hidden = true;
         const ts = Date.now();
         mimg.src = '/api/watcher/live/minimap?ts=' + ts;
-        pimg.src = '/api/watcher/live/check?ts=' + ts;
+        pimg.src = '/api/watcher/live/patch?ts=' + ts;
         if (live.dotFound) {
           marker.hidden = false;
           marker.style.left = (live.dotX / live.miniW * 100) + '%';
