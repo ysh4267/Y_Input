@@ -275,6 +275,22 @@ public static class ApiEndpoints
         app.MapPost("/api/watcher", (WatcherBody? b) => Results.Json(
             watcher.Update(b?.Process, b?.TolerancePx, b?.MsPerPx,
                            b?.MaxCorrectionMs, b?.MinScore, b?.MiniTolerancePx, b?.MsPerMiniPx)));
+        // 미니맵 고정: [탐지] 1회 자동 감지 / 수동 드래그 지정(frame 캡처 → 영역 전송) / 확인용 미리보기
+        app.MapPost("/api/watcher/minimap/auto", () => Guard(() =>
+            Task.FromResult(Results.Json(watcher.AutoDetectMinimap()))));
+        app.MapGet("/api/watcher/frame", () => Guard(() =>
+            Task.FromResult(Results.File(watcher.CaptureFrame(), "image/png"))));
+        app.MapPost("/api/watcher/minimap", (RegionBody? b) => Guard(() =>
+            Task.FromResult(b is null ? Results.BadRequest(new { error = "영역이 필요합니다." })
+                                      : Results.Json(watcher.SetMinimapRegion(b.X, b.Y, b.W, b.H)))));
+        app.MapGet("/api/watcher/minimap/preview", () => Guard(() =>
+        {
+            var png = watcher.MinimapPreview();
+            return Task.FromResult(png is null
+                ? Results.NotFound(new { error = "미니맵이 지정되지 않았거나 캡처에 실패했습니다." })
+                : Results.File(png, "image/png"));
+        }));
+
         // 블록별 스팟: 조회/패치 썸네일/지정/테스트
         app.MapGet("/api/watcher/spots/{id}", (string id) => Guard(() =>
             Task.FromResult(Results.Json(watcher.GetSpot(id)))));

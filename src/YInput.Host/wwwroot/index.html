@@ -208,11 +208,17 @@
       </section>
       <section class="drawer-sec">
         <h3>위치 지킴이</h3>
-        <p class="hint">매크로 편집기에서 <b>🧭 위치 보정</b> 블록을 원하는 위치에 넣으면, 재생이 그 블록에 도달했을 때 캐릭터가 저장된 자리에서 벗어나 있는지 확인해 <b>미니맵 점</b>으로 대략 복귀시키고 저장해둔 <b>기준 화면</b>과 대조해 미세 조정합니다. 미니맵은 <b>화면 어디에 있든 자동 감지</b>됩니다(따로 지정할 필요 없음). 게임 창이 전면일 때만 동작합니다.</p>
+        <p class="hint">매크로 편집기에서 <b>🧭 위치 보정</b> 블록을 원하는 위치에 넣으면, 재생이 그 블록에 도달했을 때 캐릭터가 저장된 자리에서 벗어나 있는지 확인해 <b>미니맵 점</b>으로 대략 복귀시키고 저장해둔 <b>기준 화면</b>과 대조해 미세 조정합니다. 게임 창이 전면일 때만 동작합니다.</p>
         <div class="row" style="margin-top:10px">
           <select id="wt-winlist" class="ov-select"></select>
           <button id="wt-win-refresh" class="btn ghost sm" title="실행 중 창 목록 새로고침">↻</button>
         </div>
+        <p class="hint" style="margin-top:10px"><b>미니맵 고정</b> — [미니맵 탐지]를 누르면 그 순간 1회 자동 감지해 크기·위치를 고정합니다. 결과가 마음에 안 들면 [수동 지정]으로 직접 드래그하세요.</p>
+        <div class="row">
+          <button id="wt-mini-auto" class="btn ghost sm">미니맵 탐지</button>
+          <button id="wt-mini-manual" class="btn ghost sm">수동 지정</button>
+        </div>
+        <img id="wt-mini-thumb" class="wt-mini-thumb" alt="고정된 미니맵" hidden />
         <p id="wt-info" class="hint">—</p>
         <div class="row wt-nums">
           <label>허용오차(px) <input id="wt-tol" type="number" min="0" max="50" step="1"></label>
@@ -252,6 +258,23 @@
         <div class="ver-url">로컬 전용 · <code id="foot-url"></code></div>
       </div>
     </aside>
+  </div>
+
+  <!-- 미니맵 수동 지정: 캡처 프레임에서 미니맵 맵 영역을 드래그 선택 -->
+  <div id="wt-modal" class="wt-modal" hidden>
+    <div class="wt-modal-head">
+      <b>미니맵 수동 지정</b>
+      <span class="wt-modal-hint">미니맵의 맵 영역(흰 테두리 안)을 드래그로 감싸세요 — 내 캐릭터 노란 점이 보여야 합니다</span>
+      <div class="row">
+        <button id="wt-apply" class="btn primary sm" disabled>이 영역으로 고정</button>
+        <button id="wt-recapture" class="btn ghost sm">다시 캡처</button>
+        <button id="wt-modal-cancel" class="btn ghost sm">취소</button>
+      </div>
+    </div>
+    <div id="wt-canvas" class="wt-canvas">
+      <img id="wt-frame" alt="캡처된 게임 화면" draggable="false" />
+      <div id="wt-sel" class="wt-sel" hidden></div>
+    </div>
   </div>
 
   <script type="module" src="app.js"></script>

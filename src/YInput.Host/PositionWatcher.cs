@@ -15,8 +15,8 @@ public sealed class WatcherSettings
 {
     public string Process { get; set; } = "maplestory";
 
-    // (레거시) 예전 미니맵 지정 영역 — 지금은 화면 전체 자동 감지라 탐지에는 안 쓰고,
-    // 구버전 스팟의 점 좌표(미니맵 상대 → 창 상대) 변환에만 사용한다.
+    // 고정된 미니맵 영역(점 탐색 범위, 창 상대) — [미니맵 탐지] 버튼으로 1회 자동 감지해 고정하거나
+    // 수동 드래그로 지정한다. 이후 모든 측정은 이 고정 영역 안에서만 점을 찾는다.
     public int MiniX { get; set; }
     public int MiniY { get; set; }
     public int MiniW { get; set; }
@@ -134,11 +134,85 @@ public sealed class PositionWatcher : IDisposable
         return ScreenCapture.Capture(dwmRect);
     }
 
-    // ---------- 실시간 미리보기(블록 확장 카드) ----------
+    // ---------- 미니맵 고정(자동 탐지/수동 지정) ----------
+    private Bitmap? _lastFrame; // 수동 지정 모달용 마지막 캡처 — 사용자가 본 그 프레임에서 좌표를 받는다
+
+    /// <summary>수동 지정 모달용: 게임 창 전체 프레임을 캡처해 PNG 반환 + 보관.</summary>
+    public byte[] CaptureFrame()
+    {
+        string proc; lock (_gate) proc = _settings.Process;
+        var bmp = CaptureGameFrame(proc, out _)
+            ?? throw new InvalidOperationException($"'{proc}' 창을 찾을 수 없습니다. 게임이 실행 중인지 확인하세요.");
+        lock (_gate) { _lastFrame?.Dispose(); _lastFrame = bmp; }
+        return ScreenCapture.ToPng(bmp);
+    }
+
+    /// <summary>[미니맵 탐지] — 지금 이 순간 1회 자동 감지해 미니맵 영역을 '고정'한다.
+    /// 흰 테두리 안 맵 영역을 우선, 없으면 검은 챠시. 실패 시 예외(수동 지정 안내).</summary>
+    public object AutoDetectMinimap()
+    {
+        lock (_gate)
+        {
+            var s = _settings;
+            using var frame = CaptureGameFrame(s.Process, out _)
+                ?? throw new InvalidOperationException($"'{s.Process}' 창을 찾을 수 없습니다. 게임이 실행 중인지 확인하세요.");
+            if (!MinimapDetector.TryDetect(frame, out var panel, out var mapArea, out _, out _,
+                                           s.DotMinR, s.DotMinG, s.DotMaxB, s.PanelMaxLum) || panel.IsEmpty)
+                throw new ArgumentException("미니맵을 자동으로 찾지 못했습니다 — 미니맵이 펼쳐져 있는지 확인하거나 [수동 지정]을 사용하세요.");
+            var r = mapArea.IsEmpty ? panel : mapArea;
+            _settings.MiniX = r.X; _settings.MiniY = r.Y; _settings.MiniW = r.Width; _settings.MiniH = r.Height;
+            Save(_settings);
+        }
+        Broadcast();
+        lock (_gate) return Snapshot(_settings);
+    }
+
+    /// <summary>[수동 지정] — 마지막 캡처 프레임에서 드래그한 영역을 미니맵으로 고정. 점이 안 보이면 거부.</summary>
+    public object SetMinimapRegion(int x, int y, int w, int h)
+    {
+        lock (_gate)
+        {
+            var frame = _lastFrame ?? throw new InvalidOperationException("먼저 화면을 캡처하세요.");
+            var rect = ClampRect(new Rectangle(x, y, w, h), frame.Width, frame.Height);
+            if (rect.Width < 8 || rect.Height < 8) throw new ArgumentException("미니맵 영역이 너무 작습니다.");
+            if (!MinimapDetector.TryFindPlayerDot(frame, rect, out _, _settings.DotMinR, _settings.DotMinG, _settings.DotMaxB))
+                throw new ArgumentException("선택한 영역에서 플레이어 노란 점을 찾지 못했습니다. 미니맵 맵 영역을 감싸게 다시 드래그하세요.");
+            _settings.MiniX = rect.X; _settings.MiniY = rect.Y; _settings.MiniW = rect.Width; _settings.MiniH = rect.Height;
+            Save(_settings);
+        }
+        Broadcast();
+        lock (_gate) return Snapshot(_settings);
+    }
+
+    /// <summary>고정된 미니맵 확인용 미리보기 — 새 프레임에서 고정 영역(+여백)을 잘라 영역 테두리(초록)와
+    /// 현재 캐릭터 점(노란 링)을 그려 반환. 미지정/실패 시 null.</summary>
+    public byte[]? MinimapPreview()
+    {
+        WatcherSettings s; lock (_gate) s = Clone(_settings);
+        if (s.MiniW <= 0) return null;
+        using var frame = CaptureGameFrame(s.Process, out _);
+        if (frame is null) return null;
+        var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
+        var r = ClampRect(new Rectangle(mini.X - 10, mini.Y - 10, mini.Width + 20, mini.Height + 20), frame.Width, frame.Height);
+        if (r.Width <= 0 || r.Height <= 0) return null;
+        bool hasDot = MinimapDetector.TryFindPlayerDot(frame, mini, out var dotRel, s.DotMinR, s.DotMinG, s.DotMaxB);
+        using var crop = frame.Clone(r, frame.PixelFormat);
+        using (var g = Graphics.FromImage(crop))
+        {
+            using var penMini = new Pen(Color.FromArgb(52, 211, 153), 1.6f);
+            g.DrawRectangle(penMini, mini.X - r.X, mini.Y - r.Y, mini.Width - 1, mini.Height - 1);
+            if (hasDot)
+            {
+                using var penDot = new Pen(Color.FromArgb(255, 216, 59), 2f);
+                g.DrawEllipse(penDot, mini.X + dotRel.X - r.X - 6, mini.Y + dotRel.Y - r.Y - 6, 12, 12);
+            }
+        }
+        return ScreenCapture.ToPng(crop);
+    }
+
+    // ---------- 실시간 미리보기(캐릭터 위치 지정 팝업) ----------
     private Bitmap? _liveFrame;  // 마지막 Live() 캡처 — live/frame·live/mini가 같은 프레임을 사용
-    private PointF? _liveDot;    // 마지막 Live()에서 감지된 캐릭터 점(창 상대) — 미니맵 확대 미리보기 중심
-    private Rectangle _liveMiniRect; // 마지막 Live()에서 감지된 미니맵 창(검은 챠시) rect — Empty면 폴백 스캔
-    private Rectangle _liveMapArea;  // 마지막 Live()에서 감지된 흰 테두리 안 맵 영역 rect — Empty면 미탐지
+    private PointF? _liveDot;    // 마지막 Live()에서 감지된 캐릭터 점(창 상대)
 
     /// <summary>현재 게임 화면을 캡처해 미니맵 점·자동 패치 rect를 계산한다(키 입력 없음).
     /// 이어지는 <see cref="LiveCrop"/>이 이 프레임에서 미리보기 이미지를 잘라낸다.</summary>
@@ -147,25 +221,27 @@ public sealed class PositionWatcher : IDisposable
         lock (_gate)
         {
             var s = _settings;
+            if (s.MiniW <= 0)
+                return new { ok = false, needMinimap = true, error = "미니맵이 지정되지 않았습니다." };
             var frame = CaptureGameFrame(s.Process, out _);
             if (frame is null)
-                return new { ok = false, error = $"'{s.Process}' 창을 찾을 수 없습니다." };
+                return new { ok = false, needMinimap = false, error = $"'{s.Process}' 창을 찾을 수 없습니다." };
 
             _liveFrame?.Dispose();
             _liveFrame = frame;
 
-            // 미니맵 창(어두운 프레임)을 먼저 찾고 그 안에서 캐릭터 점을 찾는다(월드 노란 물체 배제).
-            bool dotFound = MinimapDetector.TryDetect(_liveFrame, out var panel, out var mapArea, out var dot, out int candCount,
-                                                      s.DotMinR, s.DotMinG, s.DotMaxB, s.PanelMaxLum);
+            // 고정된 미니맵 영역 안에서만 캐릭터 점을 찾는다.
+            var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
+            var cands = MinimapDetector.FindDots(_liveFrame, mini, s.DotMinR, s.DotMinG, s.DotMaxB)
+                .Select(c => c with { Center = new PointF(c.Center.X + mini.X, c.Center.Y + mini.Y) }).ToList();
+            bool dotFound = cands.Count > 0;
+            var dot = dotFound ? MinimapDetector.Pick(cands).Center : PointF.Empty;
             _liveDot = dotFound ? dot : null;
-            _liveMiniRect = panel;
-            _liveMapArea = mapArea;
             return new
             {
                 ok = true,
                 dotFound, dotX = Math.Round(dot.X, 1), dotY = Math.Round(dot.Y, 1), // 창(프레임) 상대
-                dotCandidates = candCount,          // 2개 이상이면 UI가 '마커가 내 캐릭터인지 확인' 경고
-                panelFound = !panel.IsEmpty,        // false = 검은 창 미탐지 → 전체 화면 스캔 폴백
+                dotCandidates = cands.Count,        // 2개 이상이면 UI가 '마커가 내 캐릭터인지 확인' 경고
                 frameW = _liveFrame.Width, frameH = _liveFrame.Height, // 클릭 좌표 환산·오버레이 배율용
                 patchW = s.PatchW, patchH = s.PatchH,                  // 앵커 중심 저장 영역 오버레이 크기
                 foreground = WindowLocator.IsForeground(s.Process),
@@ -179,37 +255,24 @@ public sealed class PositionWatcher : IDisposable
         lock (_gate) return _liveFrame is null ? null : ScreenCapture.ToPng(_liveFrame);
     }
 
-    /// <summary>자동 감지된 미니맵 미리보기 — 감지된 미니맵 '창 전체'(여백 포함)를 잘라
-    /// 인식 결과를 눈으로 검증할 수 있게 그려서 반환: 초록=인식된 창 경계, 파랑=흰 테두리 안
-    /// 맵 영역(점 탐색 범위), 노란 링=내 캐릭터 점. 점 미탐지/프레임 없음이면 null.</summary>
+    /// <summary>고정된 미니맵 미리보기(팝업용) — 고정 영역(+여백)을 잘라 영역 테두리(초록)와
+    /// 내 캐릭터 점(노란 링)을 그려 반환. 점 미탐지/프레임 없음이면 null.</summary>
     public byte[]? LiveMini()
     {
         lock (_gate)
         {
-            if (_liveFrame is null || _liveDot is not { } dot) return null;
-            var r = !_liveMiniRect.IsEmpty
-                ? ClampRect(new Rectangle(_liveMiniRect.X - 8, _liveMiniRect.Y - 8,
-                                          _liveMiniRect.Width + 16, _liveMiniRect.Height + 16),
-                            _liveFrame.Width, _liveFrame.Height)
-                : ClampRect(new Rectangle((int)dot.X - 90, (int)dot.Y - 65, 180, 130),
-                            _liveFrame.Width, _liveFrame.Height);
+            var s = _settings;
+            if (_liveFrame is null || _liveDot is not { } dot || s.MiniW <= 0) return null;
+            var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
+            var r = ClampRect(new Rectangle(mini.X - 8, mini.Y - 8, mini.Width + 16, mini.Height + 16),
+                              _liveFrame.Width, _liveFrame.Height);
             if (r.Width <= 0 || r.Height <= 0) return null;
             using var crop = _liveFrame.Clone(r, _liveFrame.PixelFormat);
             using (var g = Graphics.FromImage(crop))
             {
-                if (!_liveMiniRect.IsEmpty)
-                {
-                    using var penPanel = new Pen(Color.FromArgb(52, 211, 153), 1.6f); // 초록 = 인식된 창 경계
-                    g.DrawRectangle(penPanel, _liveMiniRect.X - r.X, _liveMiniRect.Y - r.Y,
-                                    _liveMiniRect.Width - 1, _liveMiniRect.Height - 1);
-                }
-                if (!_liveMapArea.IsEmpty)
-                {
-                    using var penMap = new Pen(Color.FromArgb(79, 140, 255), 1.6f); // 파랑 = 맵 영역(점 탐색 범위)
-                    g.DrawRectangle(penMap, _liveMapArea.X - r.X, _liveMapArea.Y - r.Y,
-                                    _liveMapArea.Width - 1, _liveMapArea.Height - 1);
-                }
-                using var penDot = new Pen(Color.FromArgb(255, 216, 59), 2f); // 노랑 = 내 캐릭터 점
+                using var penMini = new Pen(Color.FromArgb(52, 211, 153), 1.6f); // 초록 = 고정된 미니맵 영역
+                g.DrawRectangle(penMini, mini.X - r.X, mini.Y - r.Y, mini.Width - 1, mini.Height - 1);
+                using var penDot = new Pen(Color.FromArgb(255, 216, 59), 2f);    // 노랑 = 내 캐릭터 점
                 g.DrawEllipse(penDot, dot.X - r.X - 6, dot.Y - r.Y - 6, 12, 12);
             }
             return ScreenCapture.ToPng(crop);
@@ -225,12 +288,14 @@ public sealed class PositionWatcher : IDisposable
         lock (_gate)
         {
             var s = _settings;
+            if (s.MiniW <= 0) throw new InvalidOperationException("미니맵이 지정되지 않았습니다 — 설정에서 [미니맵 탐지] 또는 [수동 지정]을 먼저 하세요.");
             using var frame = CaptureGameFrame(s.Process, out _)
                 ?? throw new InvalidOperationException($"'{s.Process}' 창을 찾을 수 없습니다. 게임이 실행 중인지 확인하세요.");
-            // 미니맵 창(어두운 프레임) 우선 탐지 — Live 미리보기와 같은 선택 기준이라 마커와 일치.
-            if (!MinimapDetector.TryDetect(frame, out _, out _, out var dot, out _,
-                                           s.DotMinR, s.DotMinG, s.DotMaxB, s.PanelMaxLum))
-                throw new ArgumentException("화면에서 미니맵 플레이어 점(노란 점)을 찾지 못했습니다. 미니맵이 펼쳐져 있는지 확인하세요.");
+            // 고정된 미니맵 영역 안에서 점 탐지 — Live 미리보기와 같은 기준이라 마커와 일치.
+            var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
+            if (!MinimapDetector.TryFindPlayerDot(frame, mini, out var dotRel, s.DotMinR, s.DotMinG, s.DotMaxB))
+                throw new ArgumentException("고정된 미니맵 영역에서 플레이어 점을 찾지 못했습니다. 미니맵이 이동/접힘 상태인지 확인하세요.");
+            var dot = new PointF(dotRel.X + mini.X, dotRel.Y + mini.Y); // 창 상대
 
             // 앵커 = 사용자가 지정 카드에서 클릭한 캐릭터 위치(창 상대). 카메라 레이지 무브 때문에
             // 캐릭터가 화면 중앙에 있다는 보장이 없어, 중앙 가정 대신 앵커 중심으로 자른다.
@@ -419,6 +484,7 @@ public sealed class PositionWatcher : IDisposable
         lock (_gate)
         {
             _liveFrame?.Dispose(); _liveFrame = null;
+            _lastFrame?.Dispose(); _lastFrame = null;
         }
         _sem.Dispose();
     }
@@ -449,14 +515,18 @@ public sealed class PositionWatcher : IDisposable
         catch { return null; }
     }
 
-    /// <summary>프레임을 찍어 미니맵 창(어두운 프레임) 안에서 플레이어 점(창 상대, 서브픽셀)을 찾는다.
-    /// 창/점 없으면 null. near = 직전(또는 저장) 위치 — 추적으로 다른 노란 블롭으로 튀는 것을 막는다.</summary>
+    /// <summary>프레임을 찍어 '고정된 미니맵 영역' 안에서 플레이어 점(창 상대, 서브픽셀)을 찾는다.
+    /// 창/점/미니맵 미지정이면 null. near = 직전(또는 저장) 위치 — 추적으로 다른 점으로 튀는 것을 막는다.</summary>
     private PointF? MeasureDot(WatcherSettings s, PointF? near = null)
     {
+        if (s.MiniW <= 0) return null;
         using var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return null;
-        return MinimapDetector.TryDetect(frame, out _, out _, out var dot, out _,
-                                         s.DotMinR, s.DotMinG, s.DotMaxB, s.PanelMaxLum, near) ? dot : null;
+        var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
+        var cands = MinimapDetector.FindDots(frame, mini, s.DotMinR, s.DotMinG, s.DotMaxB)
+            .Select(c => c with { Center = new PointF(c.Center.X + mini.X, c.Center.Y + mini.Y) }).ToList();
+        if (cands.Count == 0) return null;
+        return MinimapDetector.Pick(cands, near).Center;
     }
 
     /// <summary>프레임의 패치 Y ± 밴드에서 템플릿 매칭. dx = 현재 매칭 X − 저장 X.</summary>
@@ -517,6 +587,8 @@ public sealed class PositionWatcher : IDisposable
     private object Snapshot(WatcherSettings s) => new
     {
         process = s.Process,
+        hasMinimap = s.MiniW > 0,
+        miniX = s.MiniX, miniY = s.MiniY, miniW = s.MiniW, miniH = s.MiniH,
         tolerancePx = s.TolerancePx, minScore = s.MinScore, msPerPx = s.MsPerPx,
         miniTolerancePx = s.MiniTolerancePx, msPerMiniPx = s.MsPerMiniPx,
         maxHoldMs = s.MaxHoldMs, settleMs = s.SettleMs, maxCorrectionMs = s.MaxCorrectionMs,

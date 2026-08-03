@@ -535,6 +535,15 @@ input[type=range] { accent-color: var(--accent); }
 .spot-anchor::after { top: 50%; left: 0; right: 0; height: 2px; transform: translateY(-50%); }
 .spot-anchor-box { position: absolute; transform: translate(-50%, -50%); border: 1.5px solid var(--accent); border-radius: 4px; background: rgba(79,140,255,.10); box-shadow: 0 0 8px rgba(79,140,255,.4); pointer-events: none; }
 .spot-dot-marker { position: absolute; width: 10px; height: 10px; border-radius: 50%; border: 2px solid #ffd83b; transform: translate(-50%, -50%); box-shadow: 0 0 7px #ffd83b; pointer-events: none; }
+.wt-mini-thumb { display: block; max-width: 100%; margin-top: 8px; border: 1px solid var(--border2); border-radius: 8px; image-rendering: pixelated; }
+
+/* 캐릭터 위치 지정 팝업(별도 오버레이) */
+.spot-popup { position: fixed; inset: 0; z-index: 1500; background: rgba(8,10,14,.9); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.spot-popup-box { background: var(--card); border: 1px solid var(--border2); border-radius: 14px; box-shadow: 0 18px 60px rgba(0,0,0,.6); padding: 14px 16px; max-width: min(1040px, 94vw); max-height: 92vh; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+.spot-popup-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.spot-popup-head b { font-size: 14px; }
+.spot-popup .spot-frame-wrap { max-width: 640px; }
+
 .spot-mini-col { display: inline-flex; flex-direction: column; gap: 4px; align-items: flex-start; flex-shrink: 0; }
 .spot-mini-col .muted { font-size: 12px; }
 .spot-mini-view { display: block; width: 270px; max-width: 40vw; height: auto; border: 1px solid var(--border2); border-radius: 8px; image-rendering: pixelated; }

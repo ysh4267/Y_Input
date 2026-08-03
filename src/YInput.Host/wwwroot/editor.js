@@ -50,8 +50,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
   let recTickTimer = null;    // 진행 중 지연 행 실시간 갱신 타이머
 
   // 위치 보정 블록 확장(지정 모드) 상태 — 확장 카드가 실시간 미리보기를 폴링
-  let spotExpandedUid = null; // 확장된 위치 보정 카드의 _uid(하나만)
-  let spotLiveTimer = null;   // 실시간 미리보기 폴링 타이머
+  let spotLiveTimer = null;   // 위치 지정 팝업의 실시간 미리보기 폴링 타이머
 
   // 클립보드·언두
   let clipboard = [];
@@ -75,8 +74,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
     if (recTickTimer) { clearInterval(recTickTimer); recTickTimer = null; }
     if (recordingUid != null) { api.recordStop('', false).catch(() => {}); } // 서버 녹화 중단(베스트에포트)
     recordingUid = null; liveRec = []; tickingUid = null; pendingServerGap = null; liveEl = null;
-    if (spotLiveTimer) { clearInterval(spotLiveTimer); spotLiveTimer = null; } // 위치 지정 모드도 정리
-    spotExpandedUid = null;
+    closeSpotPopup(); // 위치 지정 팝업도 정리
   }
 
   function open(macro) {
@@ -143,9 +141,8 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
 
   // ---------- 렌더 ----------
   function renderSteps() {
-    // 이전 렌더의 실시간 미리보기 타이머 정리(확장 상태면 새 카드가 다시 시작)
-    if (spotLiveTimer) { clearInterval(spotLiveTimer); spotLiveTimer = null; }
-    const wrap = stepsEl();
+    const wrap = stepsEl(); // 위치 지정 팝업은 별도 오버레이라 재렌더의 영향을 받지 않는다
+
     wrap.innerHTML = '';
     wrap.classList.toggle('is-empty', !editing.steps.length); // 빈 상태: 점선 박스가 영역 전체 채움
     if (!editing.steps.length) {
@@ -359,95 +356,121 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
     }
   }
 
-  // ---------- 위치 보정 카드(접힘: 저장된 위치 요약 / 확장: 실시간 미리보기 + 확정) ----------
+  // ---------- 위치 보정 카드(요약) — 지정은 별도 팝업(openSpotPopup)에서 ----------
   function buildSpotDetail(row, td, step) {
     const ev = step.event;
-    const expanded = spotExpandedUid === step._uid;
+    const bSet = document.createElement('button'); bSet.className = 'btn ghost sm'; bSet.type = 'button';
+    bSet.textContent = ev.spotId ? '다시 지정' : '지정하기';
+    const bTest = document.createElement('button'); bTest.className = 'btn ghost sm'; bTest.type = 'button';
+    bTest.textContent = '테스트'; bTest.hidden = !ev.spotId;
+    const img = document.createElement('img'); img.className = 'wt-step-thumb'; img.alt = '기준 화면'; img.hidden = true;
+    const info = document.createElement('span'); info.className = 'muted';
 
-    if (!expanded) {
-      const bSet = document.createElement('button'); bSet.className = 'btn ghost sm'; bSet.type = 'button';
-      bSet.textContent = ev.spotId ? '다시 지정' : '지정하기';
-      const bTest = document.createElement('button'); bTest.className = 'btn ghost sm'; bTest.type = 'button';
-      bTest.textContent = '테스트'; bTest.hidden = !ev.spotId;
-      const img = document.createElement('img'); img.className = 'wt-step-thumb'; img.alt = '기준 화면'; img.hidden = true;
-      const info = document.createElement('span'); info.className = 'muted';
+    bSet.onclick = (e) => { e.stopPropagation(); openSpotPopup(ev); };
+    bTest.onclick = async (e) => {
+      e.stopPropagation();
+      if (!ev.spotId) return;
+      info.textContent = '측정 중…';
+      try {
+        const r = await api.watcherSpotTest(ev.spotId);
+        if (r.error) { info.textContent = r.error; return; }
+        const sg = (v) => (v > 0 ? '+' : '') + v;
+        const parts = [r.dotFound ? `미니맵 이탈 ${sg(r.miniDx)}px` : '미니맵 점 미탐지'];
+        if (r.score != null)
+          parts.push(`서있음 ${(r.score * 100).toFixed(0)}%${r.patchFound ? ' ✓' : ' ✗'}` + (r.patchFound ? ` · 화면 이탈 ${sg(r.dx)}px` : ''));
+        info.textContent = parts.join(' · ');
+      } catch (err) { info.textContent = err.message; }
+    };
 
-      bSet.onclick = (e) => { e.stopPropagation(); spotExpandedUid = step._uid; renderSteps(); };
-      bTest.onclick = async (e) => {
-        e.stopPropagation();
-        if (!ev.spotId) return;
-        info.textContent = '측정 중…';
-        try {
-          const r = await api.watcherSpotTest(ev.spotId);
-          if (r.error) { info.textContent = r.error; return; }
-          const sg = (v) => (v > 0 ? '+' : '') + v;
-          const parts = [r.dotFound ? `미니맵 이탈 ${sg(r.miniDx)}px` : '미니맵 점 미탐지'];
-          if (r.score != null)
-            parts.push(`서있음 ${(r.score * 100).toFixed(0)}%${r.patchFound ? ' ✓' : ' ✗'}` + (r.patchFound ? ` · 화면 이탈 ${sg(r.dx)}px` : ''));
-          info.textContent = parts.join(' · ');
-        } catch (err) { info.textContent = err.message; }
-      };
+    (async () => {
+      if (!ev.spotId) { info.textContent = '지정된 위치 없음 — [지정하기]를 눌러 캐릭터가 설 자리를 확정하세요'; return; }
+      try {
+        const s = await api.watcherSpot(ev.spotId);
+        if (s && s.exists) {
+          img.src = `/api/watcher/spots/${ev.spotId}/patch?ts=${Date.now()}`;
+          img.hidden = false; bTest.hidden = false;
+          info.textContent = `미니맵 (${s.dotX}, ${s.dotY})${s.directionSign ? ' · 방향 학습됨' : ''}`;
+        } else {
+          img.hidden = true; bTest.hidden = true;
+          info.textContent = '저장된 위치가 없습니다(삭제됨) — 다시 지정하세요';
+        }
+      } catch { info.textContent = '위치 정보를 불러오지 못했습니다'; }
+    })();
 
-      (async () => {
-        if (!ev.spotId) { info.textContent = '지정된 위치 없음 — [지정하기]를 눌러 캐릭터가 설 자리를 확정하세요'; return; }
-        try {
-          const s = await api.watcherSpot(ev.spotId);
-          if (s && s.exists) {
-            img.src = `/api/watcher/spots/${ev.spotId}/patch?ts=${Date.now()}`;
-            img.hidden = false; bTest.hidden = false;
-            info.textContent = `미니맵 (${s.dotX}, ${s.dotY})${s.directionSign ? ' · 방향 학습됨' : ''}`;
-          } else {
-            img.hidden = true; bTest.hidden = true;
-            info.textContent = '저장된 위치가 없습니다(삭제됨) — 다시 지정하세요';
-          }
-        } catch { info.textContent = '위치 정보를 불러오지 못했습니다'; }
-      })();
+    td.append(bSet, bTest, img, info);
+  }
 
-      td.append(bSet, bTest, img, info);
-      return;
-    }
+  // ---------- 캐릭터 위치 지정 팝업(별도 오버레이) ----------
+  function closeSpotPopup() {
+    if (spotLiveTimer) { clearInterval(spotLiveTimer); spotLiveTimer = null; }
+    document.getElementById('spot-popup')?.remove();
+  }
 
-    // ---- 확장(지정 모드): 실시간 미리보기 폴링 + [이 위치로 확정] ----
-    row.classList.add('spot-card');
+  function openSpotPopup(ev) {
+    closeSpotPopup();
+    const overlay = document.createElement('div'); overlay.className = 'spot-popup'; overlay.id = 'spot-popup';
+    const box0 = document.createElement('div'); box0.className = 'spot-popup-box';
+    overlay.appendChild(box0);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeSpotPopup(); });
+
+    // 헤더: 제목 + 확정/취소(+미니맵 탐지)
+    const head = document.createElement('div'); head.className = 'spot-popup-head';
+    const title = document.createElement('b'); title.textContent = '🧭 캐릭터 위치 지정';
+    const btns = document.createElement('div'); btns.className = 'row';
     const bConfirm = document.createElement('button'); bConfirm.className = 'btn primary sm'; bConfirm.type = 'button';
-    bConfirm.textContent = '이 위치로 확정';
+    bConfirm.textContent = '이 위치로 확정'; bConfirm.disabled = true; // 캐릭터 클릭 전 확정 불가
+    const bMini = document.createElement('button'); bMini.className = 'btn ghost sm'; bMini.type = 'button';
+    bMini.textContent = '미니맵 탐지'; bMini.hidden = true;
     const bCancel = document.createElement('button'); bCancel.className = 'btn ghost sm'; bCancel.type = 'button';
     bCancel.textContent = '취소';
+    btns.append(bConfirm, bMini, bCancel);
+    head.append(title, btns);
 
-    // 게임 화면 전체 실시간 뷰 — 캐릭터를 '클릭'해 앵커를 찍는다.
-    // 카메라 레이지 무브 때문에 캐릭터가 화면 중앙에 있다는 보장이 없어서 중앙 자동 가정을 쓰지 않는다.
+    // 본문: 게임 화면 실시간 뷰(캐릭터 클릭 = 앵커) + 고정 미니맵 미리보기
     const panel = document.createElement('div'); panel.className = 'spot-live';
     const frameWrap = document.createElement('span'); frameWrap.className = 'spot-frame-wrap';
     const fimg = document.createElement('img'); fimg.className = 'spot-frame'; fimg.alt = '게임 화면 실시간'; fimg.draggable = false;
     const cross = document.createElement('span'); cross.className = 'spot-anchor'; cross.hidden = true;
-    const box = document.createElement('span'); box.className = 'spot-anchor-box'; box.hidden = true;
+    const abox = document.createElement('span'); abox.className = 'spot-anchor-box'; abox.hidden = true;
     const dotMark = document.createElement('span'); dotMark.className = 'spot-dot-marker'; dotMark.hidden = true;
-    dotMark.title = '감지된 미니맵 캐릭터 점';
-    frameWrap.append(fimg, cross, box, dotMark);
-    // 자동 감지된 미니맵 확대 미리보기(감지 점 중심 크롭 — 서버가 마커까지 그려서 내려줌)
+    dotMark.title = '미니맵에서 감지된 내 캐릭터 점';
+    frameWrap.append(fimg, cross, abox, dotMark);
     const miniCol = document.createElement('span'); miniCol.className = 'spot-mini-col'; miniCol.hidden = true;
-    const miniImg = document.createElement('img'); miniImg.className = 'spot-mini-view'; miniImg.alt = '감지된 미니맵'; miniImg.draggable = false;
-    const miniLabel = document.createElement('span'); miniLabel.className = 'muted'; miniLabel.textContent = '감지된 미니맵 창 — 초록=창 경계 · 파랑=맵 영역 · 노랑=내 캐릭터';
+    const miniImg = document.createElement('img'); miniImg.className = 'spot-mini-view'; miniImg.alt = '고정된 미니맵'; miniImg.draggable = false;
+    const miniLabel = document.createElement('span'); miniLabel.className = 'muted'; miniLabel.textContent = '고정된 미니맵 — 초록=영역 · 노랑=내 캐릭터';
     miniCol.append(miniImg, miniLabel);
     panel.append(frameWrap, miniCol);
     const stat = document.createElement('div'); stat.className = 'spot-stat muted';
     stat.textContent = '게임 화면에서 내 캐릭터를 클릭해 위치를 찍으세요…';
-    bConfirm.disabled = true; // 앵커(캐릭터 클릭) 전에는 확정 불가 — 엉뚱한 곳 저장 방지
+    box0.append(head, panel, stat);
+    document.body.appendChild(overlay);
 
     let busy = false;
     let anchor = null;   // 창 px 기준 캐릭터 앵커 {x, y}
     let liveInfo = null; // 마지막 live 측정값(frameW/H, patchW/H, 점 정보)
+    const alive = () => !!document.getElementById('spot-popup');
 
     const drawAnchor = () => {
-      if (!anchor || !liveInfo) { cross.hidden = true; box.hidden = true; return; }
+      if (!anchor || !liveInfo) { cross.hidden = true; abox.hidden = true; return; }
       const px = (anchor.x / liveInfo.frameW * 100) + '%';
       const py = (anchor.y / liveInfo.frameH * 100) + '%';
       cross.style.left = px; cross.style.top = py; cross.hidden = false;
-      box.style.left = px; box.style.top = py;
-      box.style.width = (liveInfo.patchW / liveInfo.frameW * 100) + '%';
-      box.style.height = (liveInfo.patchH / liveInfo.frameH * 100) + '%';
-      box.hidden = false;
+      abox.style.left = px; abox.style.top = py;
+      abox.style.width = (liveInfo.patchW / liveInfo.frameW * 100) + '%';
+      abox.style.height = (liveInfo.patchH / liveInfo.frameH * 100) + '%';
+      abox.hidden = false;
       if (!busy) bConfirm.disabled = false;
+    };
+
+    const updateStat = () => {
+      if (!liveInfo) return;
+      const dotTxt = liveInfo.dotFound
+        ? `미니맵 (${liveInfo.dotX}, ${liveInfo.dotY})`
+        : '미니맵 점 미탐지 — 미니맵이 펼쳐져 있는지, 고정 영역이 맞는지 확인';
+      const warn = liveInfo.dotCandidates > 1 ? ` · ⚠ 노란 점 후보 ${liveInfo.dotCandidates}개` : '';
+      stat.textContent = anchor
+        ? `${dotTxt}${warn} — 사각형이 캐릭터와 주변 지형을 감싸면 [이 위치로 확정]을 누르세요`
+        : `${dotTxt}${warn} — 게임 화면에서 내 캐릭터를 클릭해 위치를 찍으세요`;
     };
 
     frameWrap.addEventListener('click', (evc) => {
@@ -462,32 +485,21 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
       updateStat();
     });
 
-    const updateStat = () => {
-      if (!liveInfo) return;
-      const dotTxt = liveInfo.dotFound
-        ? `미니맵 (${liveInfo.dotX}, ${liveInfo.dotY})`
-        : '미니맵 점 미탐지 — 미니맵이 펼쳐져 있는지 확인';
-      const warn = (liveInfo.dotCandidates > 1 ? ` · ⚠ 노란 점 후보 ${liveInfo.dotCandidates}개` : '')
-        + (liveInfo.dotFound && !liveInfo.panelFound ? ' · 미니맵 창 미탐지(전체 화면 스캔)' : '');
-      stat.textContent = anchor
-        ? `${dotTxt}${warn} — 사각형이 캐릭터와 주변 지형을 감싸면 [이 위치로 확정]을 누르세요`
-        : `${dotTxt}${warn} — 게임 화면에서 내 캐릭터를 클릭해 위치를 찍으세요`;
-    };
-
     const poll = async () => {
-      if (busy || spotExpandedUid !== step._uid) return;
+      if (busy || !alive()) return;
       try {
         const live = await api.watcherLive();
-        if (spotExpandedUid !== step._uid) return; // 폴링 중 접힘
+        if (!alive()) return; // 폴링 중 닫힘
         if (!live.ok) {
-          liveInfo = null; cross.hidden = true; box.hidden = true; dotMark.hidden = true; miniCol.hidden = true; bConfirm.disabled = true;
-          stat.textContent = live.error;
+          liveInfo = null; cross.hidden = true; abox.hidden = true; dotMark.hidden = true; miniCol.hidden = true; bConfirm.disabled = true;
+          bMini.hidden = !live.needMinimap;
+          stat.textContent = live.error + (live.needMinimap ? ' — [미니맵 탐지]를 누르거나 설정에서 수동 지정하세요.' : '');
           return;
         }
+        bMini.hidden = true;
         liveInfo = live;
         const ts = Date.now();
         fimg.src = '/api/watcher/live/frame?ts=' + ts;
-        // 화면 전체 스캔으로 감지된 캐릭터 점(미니맵이 어디 있든) — 노란 마커로 표시
         if (live.dotFound) {
           dotMark.style.left = (live.dotX / live.frameW * 100) + '%';
           dotMark.style.top = (live.dotY / live.frameH * 100) + '%';
@@ -502,6 +514,12 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
     spotLiveTimer = setInterval(poll, 800);
     poll();
 
+    bMini.onclick = async (e) => {
+      e.stopPropagation();
+      stat.textContent = '미니맵 자동 탐지 중…';
+      try { await api.watcherMinimapAuto(); stat.textContent = '미니맵을 고정했습니다.'; poll(); }
+      catch (err) { stat.textContent = err.message; }
+    };
     bConfirm.onclick = async (e) => {
       e.stopPropagation();
       if (busy || !anchor) return;
@@ -512,7 +530,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
         await api.watcherSpotCapture(id, anchor);
         pushUndo();
         ev.spotId = id;
-        spotExpandedUid = null;
+        closeSpotPopup();
         log('info', '위치 보정 블록: 캐릭터 위치를 확정했습니다.');
         renderSteps();
       } catch (err) {
@@ -520,8 +538,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
         stat.textContent = '저장 실패: ' + err.message;
       }
     };
-    bCancel.onclick = (e) => { e.stopPropagation(); spotExpandedUid = null; renderSteps(); };
-    td.append(bConfirm, bCancel, panel, stat);
+    bCancel.onclick = (e) => { e.stopPropagation(); closeSpotPopup(); };
   }
 
   // 유니버설 입력 캡처(키보드=keydown, 마우스=mousedown, 패드=서버 listen→inputDetected)

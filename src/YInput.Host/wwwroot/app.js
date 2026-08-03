@@ -113,8 +113,105 @@ function renderWatcher(s) {
   const tol = $('wt-tol'); if (tol && document.activeElement !== tol) tol.value = s.tolerancePx;
   const mx = $('wt-maxms'); if (mx && document.activeElement !== mx) mx.value = s.maxCorrectionMs;
   const info = $('wt-info');
-  if (info) info.textContent = '미니맵은 화면 어디에 있든 자동 감지됩니다 — 각 위치는 편집기의 🧭 위치 보정 블록에서 [지정하기]로 저장하세요.';
+  const thumb = $('wt-mini-thumb');
+  if (s.hasMinimap) {
+    if (info) info.textContent = `미니맵 고정됨 ${s.miniW}×${s.miniH}px — 각 위치는 편집기의 🧭 위치 보정 블록에서 [지정하기]로 저장하세요.`;
+    if (thumb) { thumb.src = '/api/watcher/minimap/preview?ts=' + Date.now(); thumb.hidden = false; }
+  } else {
+    if (info) info.textContent = '미니맵이 지정되지 않았습니다 — [미니맵 탐지]를 눌러 고정하세요.';
+    if (thumb) thumb.hidden = true;
+  }
   renderWatcherWinSelect();
+}
+
+// ---------- 미니맵 고정(자동 탐지 1회 / 수동 드래그) ----------
+async function onMinimapAuto() {
+  wtSetStatus('미니맵 자동 탐지 중…');
+  try {
+    renderWatcher(await api.watcherMinimapAuto());
+    wtSetStatus('미니맵을 감지해 고정했습니다 — 아래 미리보기에서 초록 테두리를 확인하세요.');
+    log('info', '위치 지킴이: 미니맵을 자동 감지해 고정했습니다.');
+  } catch (e) { wtSetStatus(e.message, true); }
+}
+
+let wtSel = null;      // 수동 지정 드래그 선택(표시 px)
+let wtFrameUrl = null; // 캡처 프레임 blob URL
+
+async function openMinimapModal() {
+  try {
+    wtSetStatus('게임 화면 캡처 중…');
+    const res = await fetch('/api/watcher/frame?ts=' + Date.now());
+    if (!res.ok) {
+      let m = 'HTTP ' + res.status;
+      try { m = (await res.json()).error || m; } catch { /* 무시 */ }
+      throw new Error(m);
+    }
+    const blob = await res.blob();
+    if (wtFrameUrl) URL.revokeObjectURL(wtFrameUrl);
+    wtFrameUrl = URL.createObjectURL(blob);
+    $('wt-frame').src = wtFrameUrl;
+    wtClearSel();
+    $('wt-modal').hidden = false;
+    wtSetStatus('—');
+  } catch (e) { wtSetStatus('캡처 실패: ' + e.message, true); }
+}
+
+function wtClearSel() { wtSel = null; $('wt-sel').hidden = true; $('wt-apply').disabled = true; }
+function closeMinimapModal() { $('wt-modal').hidden = true; wtClearSel(); }
+
+function wireMinimapModal() {
+  const canvas = $('wt-canvas'), img = $('wt-frame'), box = $('wt-sel');
+  let start = null;
+  const pos = (ev) => {
+    const r = img.getBoundingClientRect();
+    return {
+      x: Math.min(Math.max(ev.clientX - r.left, 0), r.width),
+      y: Math.min(Math.max(ev.clientY - r.top, 0), r.height),
+    };
+  };
+  const drawSel = () => {
+    if (!wtSel) { box.hidden = true; return; }
+    const r = img.getBoundingClientRect(), c = canvas.getBoundingClientRect();
+    box.style.left = (wtSel.x + r.left - c.left) + 'px';
+    box.style.top = (wtSel.y + r.top - c.top) + 'px';
+    box.style.width = wtSel.w + 'px';
+    box.style.height = wtSel.h + 'px';
+    box.hidden = false;
+  };
+  canvas.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0) return;
+    start = pos(ev);
+    canvas.setPointerCapture(ev.pointerId);
+    wtSel = { x: start.x, y: start.y, w: 0, h: 0 };
+    $('wt-apply').disabled = true;
+    drawSel();
+  });
+  canvas.addEventListener('pointermove', (ev) => {
+    if (!start) return;
+    const p = pos(ev);
+    wtSel = { x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) };
+    drawSel();
+  });
+  canvas.addEventListener('pointerup', () => {
+    start = null;
+    if (wtSel && wtSel.w >= 8 && wtSel.h >= 8) $('wt-apply').disabled = false;
+  });
+  $('wt-apply').onclick = async () => {
+    if (!wtSel) return;
+    const scale = img.naturalWidth / img.getBoundingClientRect().width; // 표시 px → 창 px
+    const rect = {
+      x: Math.round(wtSel.x * scale), y: Math.round(wtSel.y * scale),
+      w: Math.round(wtSel.w * scale), h: Math.round(wtSel.h * scale),
+    };
+    try {
+      renderWatcher(await api.watcherMinimap(rect));
+      closeMinimapModal();
+      wtSetStatus('미니맵을 수동 지정으로 고정했습니다.');
+      log('info', '위치 지킴이: 미니맵을 수동 지정했습니다.');
+    } catch (e) { wtSetStatus(e.message, true); }
+  };
+  $('wt-recapture').onclick = () => openMinimapModal();
+  $('wt-modal-cancel').onclick = closeMinimapModal;
 }
 
 function renderWatcherWinSelect() {
@@ -1193,6 +1290,9 @@ function wire() {
     try { renderWatcher(await api.setWatcher({ process: p })); } catch (e) { log('error', e.message); }
   };
   $('wt-win-refresh').onclick = async () => { await loadOverlayWindows(); renderWatcherWinSelect(); };
+  $('wt-mini-auto').onclick = onMinimapAuto;
+  $('wt-mini-manual').onclick = openMinimapModal;
+  wireMinimapModal();
   $('wt-tol').onchange = async () => {
     const v = parseInt($('wt-tol').value, 10);
     if (Number.isFinite(v)) try { renderWatcher(await api.setWatcher({ tolerancePx: v })); } catch (e) { log('error', e.message); }
