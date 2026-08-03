@@ -616,6 +616,8 @@ public sealed class PositionWatcher : IDisposable
             var beforeFrame = CaptureGameFrame(s.Process, out _);
             try
             {
+                // 퍼즐은 스페이스 후 ~100ms 안에 열리고, '입력이 3초간 없으면' 자동 취소된다 —
+                // 열리자마자 판정을 시작하고, 실패해도 재발동 없이 취소 전(2초) 안에서 연속 재시도한다.
                 List<RuneArrow>? arrows = null;
                 for (int attempt = 0; attempt < 2 && arrows is null; attempt++)
                 {
@@ -624,13 +626,10 @@ public sealed class PositionWatcher : IDisposable
                     if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 룬 발동을 중단합니다."); return; }
                     if (attempt > 0) Status("rune", "퍼즐이 안 보여 스페이스를 다시 누릅니다");
                     await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
-                    await PreciseDelay.WaitAsync(1400, ct).ConfigureAwait(false); // 퍼즐 UI 등장+페이드인 대기
-                    arrows = await DetectArrowsAsync(s, beforeFrame, saveShot: true, ct).ConfigureAwait(false);
-                    if (arrows is null)
-                    {
-                        await PreciseDelay.WaitAsync(700, ct).ConfigureAwait(false); // UI가 늦게 뜨는 경우
+                    await PreciseDelay.WaitAsync(150, ct).ConfigureAwait(false);
+                    var winSw = Stopwatch.StartNew();
+                    while (arrows is null && winSw.ElapsedMilliseconds < 2000)
                         arrows = await DetectArrowsAsync(s, beforeFrame, saveShot: true, ct).ConfigureAwait(false);
-                    }
                 }
                 if (arrows is null) { Status("fail", "룬 퍼즐 화살표를 인식하지 못했습니다 — 직접 입력해 주세요(logs\\rune-puzzle.png 확인)."); return; }
 
