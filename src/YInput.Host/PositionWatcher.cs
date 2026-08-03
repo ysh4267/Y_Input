@@ -623,12 +623,7 @@ public sealed class PositionWatcher : IDisposable
                     if (attempt > 0) Status("rune", "퍼즐이 안 보여 스페이스를 다시 누릅니다");
                     await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
                     await PreciseDelay.WaitAsync(1200, ct).ConfigureAwait(false); // 퍼즐 UI 등장 대기
-                    arrows = DetectArrows(s, beforeFrame, saveShot: true);
-                    if (arrows is null)
-                    {
-                        await PreciseDelay.WaitAsync(800, ct).ConfigureAwait(false); // UI가 늦게 뜨는 경우
-                        arrows = DetectArrows(s, beforeFrame, saveShot: true);
-                    }
+                    arrows = await SolveArrowsAsync(s, beforeFrame, ct).ConfigureAwait(false);
                 }
                 if (arrows is null) { Status("fail", "룬 퍼즐 화살표를 인식하지 못했습니다 — 직접 입력해 주세요(logs\\rune-puzzle.png 확인)."); return; }
 
@@ -664,14 +659,82 @@ public sealed class PositionWatcher : IDisposable
         return MinimapDetector.FindRuneIcon(frame, mini);
     }
 
-    /// <summary>화면에서 룬 퍼즐 화살표 4개 탐지. before = 발동 직전 프레임(차분으로 배경 배제).
-    /// saveShot이면 판정에 쓴 프레임을 logs\rune-puzzle.png로 남긴다(인식 실패·오인 시 확인용, 덮어씀).</summary>
+    /// <summary>화면에서 룬 퍼즐 화살표 4개 탐지(단발 — 입력 후 잔존 확인용).
+    /// before = 발동 직전 프레임(차분으로 배경 배제).</summary>
     private List<RuneArrow>? DetectArrows(WatcherSettings s, Bitmap? before, bool saveShot)
     {
         using var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return null;
         if (saveShot) FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(frame));
         return RuneArrowDetector.FindArrows(frame, before);
+    }
+
+    // 퍼즐 샘플링 — 회전형 화살표(돌다가 정답 방향에서 잠깐 멈춤) 대응
+    private const int ArrowSampleMs = 130;       // 샘플 간격
+    private const int ArrowMaxSamples = 50;      // 총 ~6.5초
+    private const int ArrowStableRun = 3;        // 연속 이 횟수 같은 모양·방향 = 멈춤으로 확정
+    private const int ArrowFindGraceSamples = 6; // 초반 이 횟수 안에 화살표 줄을 못 찾으면 퍼즐 없음
+
+    /// <summary>퍼즐 화살표 4개의 방향 확정 — 프레임을 주기 샘플링해 화살표마다 '모양이 멈춘 구간'
+    /// (런 시작 시그니처·방향이 연속 유지)에서 확정한다. 정지형은 3샘플(~0.4초)에 바로 끝나고,
+    /// 회전형은 멈추는 순간을 기다린다. 시간 초과 시 다수결 폴백(멈춤 구간 표본이 가장 많다).</summary>
+    private async Task<List<RuneArrow>?> SolveArrowsAsync(WatcherSettings s, Bitmap? before, CancellationToken ct)
+    {
+        var locked = new char?[4];
+        var centers = new PointF[4];
+        var runSig = new bool[4][]; var runDir = new char[4]; var runLen = new int[4];
+        var votes = new Dictionary<char, int>[4];
+        for (int j = 0; j < 4; j++) votes[j] = new Dictionary<char, int>();
+        bool rowSeen = false, shotSaved = false, spinNoted = false;
+        int lockedCount = 0;
+
+        for (int i = 0; i < ArrowMaxSamples && lockedCount < 4; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            using (var frame = CaptureGameFrame(s.Process, out _))
+            {
+                if (frame is not null)
+                {
+                    var row = RuneArrowDetector.Analyze(frame, before);
+                    if (row is not null)
+                    {
+                        if (!shotSaved) { FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(frame)); shotSaved = true; }
+                        rowSeen = true;
+                        for (int j = 0; j < 4; j++)
+                        {
+                            centers[j] = row[j].Center;
+                            if (locked[j] is not null) continue;
+                            votes[j][row[j].Dir] = votes[j].GetValueOrDefault(row[j].Dir) + 1;
+                            // 멈춤 판정: '런 시작' 모양과 계속 같아야 함 — 느린 회전도 누적 드리프트로 걸러진다
+                            if (runSig[j] is not null && runDir[j] == row[j].Dir
+                                && RuneArrowDetector.SigSimilar(runSig[j], row[j].Sig))
+                            {
+                                if (++runLen[j] >= ArrowStableRun) { locked[j] = runDir[j]; lockedCount++; }
+                            }
+                            else { runSig[j] = row[j].Sig; runDir[j] = row[j].Dir; runLen[j] = 1; }
+                        }
+                        if (!spinNoted && i >= ArrowStableRun + 1 && lockedCount < 4)
+                        { spinNoted = true; Status("rune", "화살표가 회전 중 — 멈추는 순간을 기다립니다"); }
+                    }
+                    else if (!rowSeen && i + 1 >= ArrowFindGraceSamples)
+                    {
+                        FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(frame)); // 미탐지 원인 확인용
+                        return null; // 퍼즐 자체가 안 떠 있음 → 호출자가 스페이스 재시도
+                    }
+                }
+            }
+            if (lockedCount < 4) await PreciseDelay.WaitAsync(ArrowSampleMs, ct).ConfigureAwait(false);
+        }
+        if (!rowSeen) return null;
+
+        var result = new List<RuneArrow>(4);
+        for (int j = 0; j < 4; j++)
+        {
+            char? dir = locked[j] ?? (votes[j].Count > 0 ? votes[j].MaxBy(kv => kv.Value).Key : null);
+            if (dir is not { } d) return null;
+            result.Add(new RuneArrow(centers[j], d));
+        }
+        return result;
     }
 
     public void Dispose()
