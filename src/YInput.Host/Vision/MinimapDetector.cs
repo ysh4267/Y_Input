@@ -110,7 +110,7 @@ internal static class MinimapDetector
     private const int RuneMaxBlobBox = 24;
 
     /// <summary>미니맵 영역에서 룬(보라 다이아) 아이콘 중심을 찾는다(minimapRect 상대, 서브픽셀).
-    /// 후보가 여럿이면 가장 큰 블롭. 없으면 null.</summary>
+    /// 후보가 여럿이면 가장 큰 블롭. 없으면 null. (룬 사용 시작 시 1회만 측정하는 용도)</summary>
     public static PointF? FindRuneIcon(Bitmap frame, Rectangle minimapRect)
     {
         var area = Rectangle.Intersect(minimapRect, new Rectangle(0, 0, frame.Width, frame.Height));
@@ -141,7 +141,7 @@ internal static class MinimapDetector
         var seen = new bool[w * h];
         var stack = new Stack<int>();
         float ox = area.X - minimapRect.X, oy = area.Y - minimapRect.Y;
-        PointF? best = null; int bestArea = 0;
+        PointF? best = null; double bestScore = double.MinValue;
         for (int i = 0; i < mask.Length; i++)
         {
             if (!mask[i] || seen[i]) continue;
@@ -162,11 +162,8 @@ internal static class MinimapDetector
             }
             int bw = maxX - minX + 1, bh = maxY - minY + 1;
             if (count < RuneMinBlobArea || count > RuneMaxBlobArea || bw > RuneMaxBlobBox || bh > RuneMaxBlobBox) continue;
-            if (count > bestArea)
-            {
-                bestArea = count;
-                best = new PointF((float)sumX / count + ox, (float)sumY / count + oy);
-            }
+            var c = new PointF((float)sumX / count + ox, (float)sumY / count + oy);
+            if (count > bestScore) { bestScore = count; best = c; }
         }
         return best;
     }

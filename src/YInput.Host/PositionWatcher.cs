@@ -72,8 +72,10 @@ public sealed class PositionWatcher : IDisposable
     // 룬 사용 — 룬은 상호작용 범위가 넓어 위치 보정보다 허용오차를 느슨하게 잡는다.
     private const double RuneTolX = 2.0;   // 미니맵 px
     private const double RuneTolY = 6.0;   // 층(발판) 일치 — 다이아 아이콘 중심이 발판보다 몇 px 위에 그려진다
-    // 내 노란 점이 룬 아이콘에 겹치면 아이콘 탐지가 끊긴다 — 마지막으로 본 위치의 이 범위 안에서
-    // 아이콘이 사라지면 '내가 가린 것 = 도착'으로 판정한다(19:24 실행 로그의 실패 원인).
+    // 도착 판정 범위 — 내 노란 점이 룬 아이콘에 겹칠(가릴) 정도로 가까우면 도착.
+    // 룬 위치는 시작 시 1회만 측정하고 이후 갱신하지 않는다(룬은 능동적으로 움직이지 않는다) —
+    // 도착 순간 내 점이 아이콘을 가리거나 다른 보라 마커(정예 등)가 있어도 목표가 흔들리지 않는다
+    // (19:24 '아이콘 놓침' 실패, 19:48 목표 ±135px 널뜀 로그의 원인).
     private const double OccludeNearX = 5.0, OccludeNearY = 9.0;
     private const int RuneMaxMs = 30000;   // 수직 이동 포함 총 제한 — 위치 보정보다 길게
     private const int JumpSettleMs = 1000; // 점프(윗점프/아래점프) 후 착지·정지 대기
@@ -537,8 +539,8 @@ public sealed class PositionWatcher : IDisposable
         try
         {
             if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면이 아니라 룬 사용을 건너뜁니다."); return; }
-            if (MeasureRune(s, mini) is not { } runeFirst) { Status("skip", "미니맵에 룬(보라 다이아) 아이콘이 없어 건너뜁니다."); return; }
-            var runeLast = runeFirst; // 마지막으로 본 룬 위치 — 도착 직전 가림(탐지 끊김) 판정 기준
+            // 룬 위치는 여기서 1회만 측정 — 이후 갱신하지 않는다(맵 이동·재접속 전까지 룬은 그대로).
+            if (MeasureRune(s, mini) is not { } runeAt) { Status("skip", "미니맵에 룬(보라 다이아) 아이콘이 없어 건너뜁니다."); return; }
             var sw = Stopwatch.StartNew();
 
             // ── 1단계: 내 캐릭터 점 식별(위치 보정과 동일 — 여러 개면 프로브 이동으로 확인) ──
@@ -561,11 +563,9 @@ public sealed class PositionWatcher : IDisposable
             {
                 ct.ThrowIfCancellationRequested();
                 if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 룬 사용을 중단합니다."); return; }
-                if (MeasureRune(s, mini) is { } rn) runeLast = rn;
-                else if (Math.Abs(dot.X - runeLast.X) <= OccludeNearX && Math.Abs(dot.Y - runeLast.Y) <= OccludeNearY)
-                    break; // 아이콘이 사라졌는데 내가 그 자리에 있다 = 내 점이 가림 = 도착
-                else { Status("fail", "이동 중 미니맵에서 룬 아이콘을 놓쳤습니다."); return; }
-                var rune = runeLast;
+                if (Math.Abs(dot.X - runeAt.X) <= OccludeNearX && Math.Abs(dot.Y - runeAt.Y) <= OccludeNearY)
+                    break; // 도착 — 시작 시 측정한 룬 위치 기준(아이콘이 내 점에 가려져도 무관)
+                var rune = runeAt;
 
                 if (Math.Abs(dot.X - rune.X) > RuneTolX)
                 {
@@ -603,11 +603,10 @@ public sealed class PositionWatcher : IDisposable
                 dot = d.Value;
             }
 
-            // 최종 도착 확인 — 아이콘이 내 점에 가려 안 보이면 마지막으로 본 위치 기준
-            var runeF = MeasureRune(s, mini) ?? runeLast;
-            if (Math.Abs(dot.X - runeF.X) > OccludeNearX || Math.Abs(dot.Y - runeF.Y) > OccludeNearY)
+            // 최종 도착 확인 — 시작 시 측정한 룬 위치 기준(재측정 없음)
+            if (Math.Abs(dot.X - runeAt.X) > OccludeNearX || Math.Abs(dot.Y - runeAt.Y) > OccludeNearY)
             {
-                Status("fail", $"룬 도달 시간 초과(잔여 dx {dot.X - runeF.X:+0.0;-0.0}px · dy {dot.Y - runeF.Y:+0.0;-0.0}px).");
+                Status("fail", $"룬 도달 시간 초과(잔여 dx {dot.X - runeAt.X:+0.0;-0.0}px · dy {dot.Y - runeAt.Y:+0.0;-0.0}px).");
                 return;
             }
 
@@ -651,7 +650,8 @@ public sealed class PositionWatcher : IDisposable
         finally { _sem.Release(); }
     }
 
-    /// <summary>미니맵 영역에서 룬(보라 다이아) 아이콘 위치(미니맵 상대). 없으면 null.</summary>
+    /// <summary>미니맵 영역에서 룬(보라 다이아) 아이콘 위치(미니맵 상대). 없으면 null.
+    /// 룬 사용 시작 시 1회만 호출된다 — 이후에는 갱신하지 않는다.</summary>
     private PointF? MeasureRune(WatcherSettings s, Rectangle mini)
     {
         using var frame = CaptureGameFrame(s.Process, out _);
