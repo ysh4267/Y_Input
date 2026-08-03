@@ -204,6 +204,30 @@
         </div>
       </section>
       <section class="drawer-sec">
+        <h3>위치 지킴이</h3>
+        <p class="hint">매크로 <b>반복 사이마다</b> 캐릭터가 저장된 자리에서 벗어나 있으면 <b>미니맵</b>으로 대략 복귀시키고, 저장해둔 <b>기준 화면</b>과 대조해 미세 조정합니다. 게임 창이 전면일 때만 동작합니다.</p>
+        <label class="sync-toggle"><input id="wt-enabled" type="checkbox"> 위치 지킴이 켜기</label>
+        <div class="row" style="margin-top:10px">
+          <select id="wt-winlist" class="ov-select"></select>
+          <button id="wt-win-refresh" class="btn ghost sm" title="실행 중 창 목록 새로고침">↻</button>
+        </div>
+        <div class="wt-saved">
+          <img id="wt-patch" class="wt-patch" alt="저장된 기준 화면" hidden />
+          <p id="wt-info" class="hint">저장된 위치가 없습니다. 캐릭터를 원하는 자리에 세워두고 <b>현재 위치 저장</b>을 누르세요.</p>
+        </div>
+        <div class="row">
+          <button id="wt-capture" class="btn ghost sm">현재 위치 저장</button>
+          <button id="wt-minimap" class="btn ghost sm" title="미니맵 영역부터 다시 지정">미니맵 다시 지정</button>
+          <button id="wt-test" class="btn ghost sm">테스트</button>
+          <button id="wt-clear" class="btn ghost sm danger">삭제</button>
+        </div>
+        <div class="row wt-nums">
+          <label>허용오차(px) <input id="wt-tol" type="number" min="0" max="50" step="1"></label>
+          <label>최대 보정(ms) <input id="wt-maxms" type="number" min="500" max="60000" step="500"></label>
+        </div>
+        <p id="wt-status" class="hint">—</p>
+      </section>
+      <section class="drawer-sec">
         <h3>화면</h3>
         <p class="hint">업데이트 후 화면이 안 바뀌면 새로고침하세요(최신 UI 적용). 키보드 단축키는 잠겨 있어 이 버튼으로 합니다.</p>
         <div class="row">
@@ -235,6 +259,23 @@
         <div class="ver-url">로컬 전용 · <code id="foot-url"></code></div>
       </div>
     </aside>
+  </div>
+
+  <!-- 위치 지킴이: 캡처 프레임에서 미니맵/기준 영역 드래그 선택 모달 -->
+  <div id="wt-modal" class="wt-modal" hidden>
+    <div class="wt-modal-head">
+      <b id="wt-modal-title">영역 선택</b>
+      <span id="wt-modal-hint" class="wt-modal-hint"></span>
+      <div class="row">
+        <button id="wt-apply" class="btn primary sm" disabled>이 영역으로 저장</button>
+        <button id="wt-recapture" class="btn ghost sm">다시 캡처</button>
+        <button id="wt-modal-cancel" class="btn ghost sm">취소</button>
+      </div>
+    </div>
+    <div id="wt-canvas" class="wt-canvas">
+      <img id="wt-frame" alt="캡처된 게임 화면" draggable="false" />
+      <div id="wt-sel" class="wt-sel" hidden></div>
+    </div>
   </div>
 
   <script type="module" src="app.js"></script>
