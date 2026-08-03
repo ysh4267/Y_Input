@@ -89,6 +89,15 @@ internal static class RuneArrowDetector
         return Detect(frame, bannerRef, mask, region, w, h, thinFilter: true);
     }
 
+    /// <summary>퍼즐(안내 배너)이 지금 떠 있는지 — bannerRef(발동 전 프레임) 대비 '가로로 넓게 변한 띠'
+    /// 존재 여부. 열린 퍼즐에 스페이스를 다시 누르면 오답 입력이 되므로, 재발동 전 확인용.</summary>
+    public static bool PuzzlePresent(Bitmap frame, Bitmap? bannerRef, bool precropped = false)
+    {
+        if (bannerRef is null || bannerRef.Width != frame.Width || bannerRef.Height != frame.Height) return false;
+        if (!TryRegion(frame, precropped, out var region)) return false;
+        return BannerBand(frame, bannerRef, region, region.Width, region.Height).CenterX >= 0;
+    }
+
     // ---------- 공통 파이프라인 ----------
     private static bool TryRegion(Bitmap frame, bool precropped, out Rectangle region)
     {

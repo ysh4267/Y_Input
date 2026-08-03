@@ -641,8 +641,23 @@ public sealed class PositionWatcher : IDisposable
                     if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 룬 발동을 중단합니다."); return; }
                     if (attempt > 0)
                     {
-                        Status("rune", "퍼즐 인식 실패 — 무입력 취소(3초)를 기다렸다 다시 발동합니다");
-                        await PreciseDelay.WaitAsync(1700, ct).ConfigureAwait(false); // 1.5초 창 + 1.7초 = 취소 확정
+                        // 열린 퍼즐에 스페이스를 누르면 '오답 입력'이 되어 실패한다(21:57 실행) —
+                        // 화면에서 배너가 실제로 사라진 것을 확인한 뒤에만 재발동한다(고정 시간 가정 금지).
+                        Status("rune", "퍼즐 인식 실패 — 퍼즐이 닫히기를 기다렸다 다시 발동합니다");
+                        bool open = true;
+                        var closeSw = Stopwatch.StartNew();
+                        while (open && closeSw.ElapsedMilliseconds < 8000)
+                        {
+                            await PreciseDelay.WaitAsync(400, ct).ConfigureAwait(false);
+                            try
+                            {
+                                using var f = ScreenCapture.Capture(screenCrop);
+                                open = RuneArrowDetector.PuzzlePresent(f, beforeCrop, precropped: true);
+                            }
+                            catch { /* 일시적 캡처 실패 — 다음 폴링 */ }
+                        }
+                        if (open) { Status("fail", "퍼즐이 닫히지 않아 재발동을 포기합니다."); return; }
+                        await PreciseDelay.WaitAsync(300, ct).ConfigureAwait(false);
                     }
                     await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
                     await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
@@ -709,13 +724,20 @@ public sealed class PositionWatcher : IDisposable
             if (i > 0) await PreciseDelay.WaitAsync(90, ct).ConfigureAwait(false);
             try { frames.Add(ScreenCapture.Capture(screenCrop)); } catch { /* 일시적 캡처 실패 무시 */ }
         }
-        ClearRuneShots();
-        _runeShots.AddRange(frames); // 소유권 이전(진단 보관)
-        if (frames.Count == 0) return null;
-        var res = frames.Count >= 2 ? RuneArrowDetector.FindArrowsAnimated(frames, beforeCrop, precropped: true) : null;
-        if (res is not null) { FileLog.Write("info", "[위치보정:rune] 퍼즐 인식 경로: 애니메이션 차분"); return res; }
-        res = RuneArrowDetector.FindArrows(frames[^1], beforeCrop, beforeCrop, precropped: true);
-        if (res is not null) FileLog.Write("info", "[위치보정:rune] 퍼즐 인식 경로: 발동 전 차분 폴백");
+        List<RuneArrow>? res = null;
+        if (frames.Count >= 2)
+        {
+            res = RuneArrowDetector.FindArrowsAnimated(frames, beforeCrop, precropped: true);
+            if (res is not null) FileLog.Write("info", "[위치보정:rune] 퍼즐 인식 경로: 애니메이션 차분");
+        }
+        if (res is null && frames.Count > 0)
+        {
+            res = RuneArrowDetector.FindArrows(frames[^1], beforeCrop, beforeCrop, precropped: true);
+            if (res is not null) FileLog.Write("info", "[위치보정:rune] 퍼즐 인식 경로: 발동 전 차분 폴백");
+        }
+        // 진단 보관은 '첫 버스트'(퍼즐이 확실히 열려 있던 순간) — 이후 버스트가 덮어쓰지 않는다
+        if (_runeShots.Count == 0) _runeShots.AddRange(frames);
+        else foreach (var f in frames) f.Dispose();
         return res;
     }
 
