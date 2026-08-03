@@ -100,6 +100,12 @@ internal static class Program
         // 메시지 루프(블로킹) — 종료 시까지
         System.Windows.Forms.Application.Run(tray);
 
+        // 종료 워치독: 정리가 어딘가에서 걸리거나(드라이버 dispose 등) 정리 후에도 포그라운드
+        // 스레드(Interception 수신 루프 등)가 남아 프로세스가 안 죽는 경우가 있었다 — 그러면
+        // 업데이트 교체가 스테이지의 15초 강제종료까지 늘어져 '멈춘 것처럼' 보인다.
+        // 메시지 루프가 끝난 시점부터 5초 안에는 무조건 프로세스를 끝낸다.
+        new Thread(() => { Thread.Sleep(5000); Environment.Exit(0); }) { IsBackground = true }.Start();
+
         try { widgets.CloseAll(); } catch { /* ignore */ } // 위젯 창 정리
         try { overlay.Close(); } catch { /* ignore */ }   // 오버레이 창 정리
         try { watcher.Dispose(); } catch { /* ignore */ } // 위치 지킴이 정리

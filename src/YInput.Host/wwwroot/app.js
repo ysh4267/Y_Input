@@ -1150,11 +1150,11 @@ function connectWs() {
   ws.onopen = () => {
     $('ws-dot').className = 'ws-dot on';
     if (wsWasDown) {
-      wsWasDown = false;
-      // 업데이트 교체·재시작 후 새 인스턴스에 재연결됨 — 버전/업데이트 상태를
-      // '업데이트 확인'을 누른 것처럼 자동 새로고침(사이드탭 텍스트 갱신).
-      loadVersion();
-      onUpdateCheck().catch(() => {});
+      // 서버 재시작(업데이트 교체 포함) 후 새 인스턴스에 재연결됨 — 열린 컨트롤 창을
+      // 통째로 새로고침해 최신 UI(JS/CSS)를 적용한다. 새로고침 후 업데이트 확인을
+      // 1회 실행하도록 sessionStorage 플래그로 전달(init에서 소비).
+      try { sessionStorage.setItem('yi-recheck-update', '1'); } catch { /* 무시 */ }
+      location.reload();
     }
   };
   ws.onclose = () => { wsWasDown = true; $('ws-dot').className = 'ws-dot off'; if (!shuttingDown) setTimeout(connectWs, 1500); };
@@ -1348,6 +1348,16 @@ async function init() {
   } else {
     editor.open(null); // 기본: 새 매크로 추가 모드로 시작
   }
+  // 업데이트 재시작 → 자동 새로고침으로 다시 로드된 경우: 업데이트 확인을 1회 실행해
+  // 사이드탭의 버전/업데이트 상태가 '최신 상태 (현재 x.y.z)'로 바로 갱신되게 한다.
+  try {
+    if (sessionStorage.getItem('yi-recheck-update')) {
+      sessionStorage.removeItem('yi-recheck-update');
+      log('info', '업데이트 완료 — 화면을 새로고침했고 업데이트 상태를 확인합니다.');
+      loadVersion();
+      onUpdateCheck().catch(() => {});
+    }
+  } catch { /* 무시 */ }
   log('info', 'Y Input UI 준비됨.');
 }
 

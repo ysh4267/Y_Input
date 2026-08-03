@@ -40,9 +40,10 @@ internal static class UpdateFinalizer
                 try
                 {
                     using var op = Process.GetProcessById(oldPid);
-                    if (!op.WaitForExit(15000))
+                    // 옛 프로세스는 그레이스풀 정리 후 종료 워치독(5초)이 반드시 끝낸다 — 9초면 충분.
+                    if (!op.WaitForExit(9000))
                     {
-                        Log("옛 프로세스가 15초 후에도 살아있음 → 강제 종료");
+                        Log("옛 프로세스가 9초 후에도 살아있음 → 강제 종료");
                         try { op.Kill(); op.WaitForExit(4000); } catch (Exception ex) { Log("강제 종료 실패: " + ex.Message); }
                     }
                 }

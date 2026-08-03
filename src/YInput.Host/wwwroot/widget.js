@@ -245,8 +245,10 @@ function onStatus(s) {
   if (!playing) { resetTimeline($('w-prog')); delayAnim = null; lastP = null; idleTimeReadout(); }
   applyAppearance(); // 재생=녹색 / 정지 시 원래색
 }
+let wsWasDown = false; // 서버 재시작(업데이트) 감지용
 function connectWs() {
   const ws = new WebSocket(`ws://${location.host}/ws?widget=1`); // 위젯 표시 → 서버가 '메인 UI' 수에서 제외
+  ws.onopen = () => { if (wsWasDown) location.reload(); }; // 업데이트 재시작 후 위젯도 최신 UI로 새로고침
   ws.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'progress') showProgress(msg.data);
@@ -254,7 +256,7 @@ function connectWs() {
     else if (msg.type === 'macrosChanged') loadMacro(); // 이름/켜짐/모양 갱신(삭제 시 창 닫힘)
     else if (msg.type === 'shutdown') toNative('close');
   };
-  ws.onclose = () => setTimeout(connectWs, 1200);
+  ws.onclose = () => { wsWasDown = true; setTimeout(connectWs, 1200); };
   ws.onerror = () => { try { ws.close(); } catch { /* */ } };
 }
 
