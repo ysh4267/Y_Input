@@ -453,7 +453,7 @@ public static class ApiEndpoints
     private sealed record OverlayTargetBody(string? Process = null);
     private sealed record WatcherBody(string? Process = null, int? TolerancePx = null,
                                       double? MsPerPx = null, int? MaxCorrectionMs = null, double? MinScore = null,
-                                      int? MiniTolerancePx = null, double? MsPerMiniPx = null);
+                                      double? MiniTolerancePx = null, double? MsPerMiniPx = null);
     private sealed record RegionBody(int X = 0, int Y = 0, int W = 0, int H = 0);
     private sealed record RecordStartBody(
         bool Keyboard = true,

@@ -20,7 +20,8 @@ public sealed class WatcherSettings
     public int MiniY { get; set; }
     public int MiniW { get; set; }
     public int MiniH { get; set; }
-    public int MiniTolerancePx { get; set; } = 1;
+    /// <summary>미니맵 허용오차(px). 점은 서브픽셀 centroid로 재므로 1 미만도 의미 있다.</summary>
+    public double MiniTolerancePx { get; set; } = 0.6;
     public double MsPerMiniPx { get; set; } = 120; // 미니맵 1px ≈ 실좌표 수~십수 px → 홀드 비율 큼
 
     // 플레이어 점 색 임계(노랑) — UI 미노출, watcher.json 직접 수정으로 조정 가능
@@ -29,7 +30,7 @@ public sealed class WatcherSettings
     public int DotMaxB { get; set; } = 120;
 
     // 템플릿(파인 보정) 공통 파라미터
-    public int TolerancePx { get; set; } = 4;
+    public int TolerancePx { get; set; } = 2;
     public double MinScore { get; set; } = 0.60;
     public double MsPerPx { get; set; } = 12;
 
@@ -40,15 +41,16 @@ public sealed class WatcherSettings
     public int PatchOffsetY { get; set; } = 24;
 
     public int MaxHoldMs { get; set; } = 350;
-    public int SettleMs { get; set; } = 150;
+    /// <summary>탭 후 재측정까지 대기(ms) — 키를 뗀 뒤 캐릭터가 미끄러져 멈출 시간을 포함해야 정확히 잰다.</summary>
+    public int SettleMs { get; set; } = 220;
     public int MaxCorrectionMs { get; set; } = 6000;
 }
 
-/// <summary>블록(스팟)별 기준 위치 — 저장 시점의 미니맵 점 + 기준 화면 패치 rect + 학습된 방향 부호.</summary>
+/// <summary>블록(스팟)별 기준 위치 — 저장 시점의 미니맵 점(서브픽셀) + 기준 화면 패치 rect + 학습된 방향 부호.</summary>
 public sealed class SpotData
 {
-    public int DotX { get; set; }
-    public int DotY { get; set; }
+    public double DotX { get; set; }
+    public double DotY { get; set; }
     public int PatchX { get; set; }
     public int PatchY { get; set; }
     public int PatchW { get; set; }
@@ -69,6 +71,8 @@ public sealed class PositionWatcher : IDisposable
     private const ushort KeyDownE0 = 0x02, KeyUpE0 = 0x03;
     private const int SearchBandPx = 24;                  // 템플릿 탐색 Y 범위(저장 Y ± 이 값)
     private const double MinPatchStdDev = 8;              // 패치 대비 하한(단색·특징 부족 거부)
+    private const int MinTapMs = 28;                      // 최소 탭(이보다 짧으면 게임이 이동으로 안 받을 수 있음)
+    private const int FineNudgePx = 6;                    // 이 이하 잔여 오차는 비례 대신 최소 탭으로 미세 이동(오버슈트 방지)
 
     private readonly string _statePath;
     private readonly string _spotsDir;
@@ -94,7 +98,7 @@ public sealed class PositionWatcher : IDisposable
     public object Get() { lock (_gate) return Snapshot(_settings); }
 
     public object Update(string? process, int? tolerancePx, double? msPerPx,
-                         int? maxCorrectionMs, double? minScore, int? miniTolerancePx, double? msPerMiniPx)
+                         int? maxCorrectionMs, double? minScore, double? miniTolerancePx, double? msPerMiniPx)
     {
         object snap;
         lock (_gate)
@@ -104,7 +108,7 @@ public sealed class PositionWatcher : IDisposable
             if (msPerPx is double m && m > 0) _settings.MsPerPx = m;
             if (maxCorrectionMs is int mc && mc > 0) _settings.MaxCorrectionMs = mc;
             if (minScore is double ms && ms is > 0 and <= 1) _settings.MinScore = ms;
-            if (miniTolerancePx is int mt && mt >= 0) _settings.MiniTolerancePx = mt;
+            if (miniTolerancePx is double mt && mt >= 0) _settings.MiniTolerancePx = mt;
             if (msPerMiniPx is double mm && mm > 0) _settings.MsPerMiniPx = mm;
             Save(_settings);
             snap = Snapshot(_settings);
@@ -165,7 +169,7 @@ public sealed class PositionWatcher : IDisposable
             return new
             {
                 ok = true,
-                dotFound, dotX = dot.X, dotY = dot.Y,
+                dotFound, dotX = Math.Round(dot.X, 1), dotY = Math.Round(dot.Y, 1),
                 miniW = s.MiniW, miniH = s.MiniH,
                 patchW = patch.Width, patchH = patch.Height,
                 foreground = WindowLocator.IsForeground(s.Process),
@@ -245,7 +249,7 @@ public sealed class PositionWatcher : IDisposable
             return new
             {
                 exists = true,
-                dotX = s.Data.DotX, dotY = s.Data.DotY,
+                dotX = Math.Round(s.Data.DotX, 1), dotY = Math.Round(s.Data.DotY, 1),
                 patchX = s.Data.PatchX, patchY = s.Data.PatchY, patchW = s.Data.PatchW, patchH = s.Data.PatchH,
                 directionSign = s.Data.DirectionSign,
             };
@@ -269,7 +273,7 @@ public sealed class PositionWatcher : IDisposable
         if (spot is not { } sp) return new { error = "지정된 위치가 없습니다. [지정하기]로 저장하세요." };
 
         var dot = MeasureDot(s);
-        int? miniDx = dot is { } d ? d.X - sp.Data.DotX : null;
+        double? miniDx = dot is { } d ? Math.Round(d.X - sp.Data.DotX, 1) : null;
         double? score = null; int? dx = null;
         var pm = MeasurePatch(s, sp.Data, sp.Gray);
         if (pm is { } r) { dx = r.dx; score = r.score; }
@@ -302,34 +306,40 @@ public sealed class PositionWatcher : IDisposable
 
             for (int pass = 0; pass < 2; pass++) // 파인 후 미니맵이 다시 벗어나 있으면 1회 한해 코스부터 재시도
             {
-                // ── 1단계: 미니맵 코스 복귀 ──
+                // ── 1단계: 미니맵 코스 복귀(서브픽셀 점 기준) ──
                 var dot = MeasureDot(s);
                 if (dot is null) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 보정을 포기합니다."); return; }
-                int miniDx = dot.Value.X - spot.DotX;
+                double miniDx = dot.Value.X - spot.DotX;
+                double msPerMini = s.MsPerMiniPx; // 오버슈트가 보이면 즉석에서 줄여 수렴을 빠르게
+                double prevMiniDx = double.NaN;
 
                 while (Math.Abs(miniDx) > s.MiniTolerancePx && sw.ElapsedMilliseconds < s.MaxCorrectionMs)
                 {
                     ct.ThrowIfCancellationRequested();
                     if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 보정을 중단합니다."); return; }
-                    Status("coarse", $"미니맵 보정 중 (이탈 {miniDx:+0;-0}px)", miniDx: miniDx);
+                    Status("coarse", $"미니맵 보정 중 (이탈 {miniDx:+0.0;-0.0}px)");
                     // 점이 저장 위치보다 오른쪽(+) = 캐릭터가 오른쪽에 있음 → 왼쪽 키
                     ushort key = miniDx > 0 ? ScLeft : ScRight;
-                    await TapAsync(key, Math.Clamp(Math.Abs(miniDx) * s.MsPerMiniPx, 40, s.MaxHoldMs), ct).ConfigureAwait(false);
+                    await TapAsync(key, Math.Clamp(Math.Abs(miniDx) * msPerMini, MinTapMs, s.MaxHoldMs), ct).ConfigureAwait(false);
                     await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
                     dot = MeasureDot(s);
                     if (dot is null) { Status("fail", "보정 중 미니맵 점을 놓쳤습니다."); return; }
+                    prevMiniDx = miniDx;
                     miniDx = dot.Value.X - spot.DotX;
+                    // 부호가 뒤집혔다 = 목표를 지나침 → 다음 탭은 약하게(진동 방지)
+                    if (!double.IsNaN(prevMiniDx) && miniDx * prevMiniDx < 0) msPerMini *= 0.55;
                 }
-                if (Math.Abs(miniDx) > s.MiniTolerancePx) { Status("fail", $"보정 시간 초과(미니맵 이탈 {miniDx:+0;-0}px 남음)."); return; }
+                if (Math.Abs(miniDx) > s.MiniTolerancePx) { Status("fail", $"보정 시간 초과(미니맵 이탈 {miniDx:+0.0;-0.0}px 남음)."); return; }
 
-                // ── 2단계: 템플릿 파인 조정 ──
+                // ── 2단계: 템플릿 파인 조정(캐릭터 발판 기준 화면) ──
                 var pm = MeasurePatch(s, spot, patch);
                 if (pm is not { } m || m.score < s.MinScore)
-                { Status("done", "템플릿 매칭 실패 — 미니맵 보정까지만 수행했습니다.", miniDx: miniDx); return; }
+                { Status("done", "템플릿 매칭 실패 — 미니맵 보정까지만 수행했습니다."); return; }
 
                 int sign = spot.DirectionSign == 0 ? 1 : spot.DirectionSign; // 기본: 카메라-추적 가정
                 bool learning = spot.DirectionSign == 0;
                 int dx = m.dx;
+                double msPerPx = s.MsPerPx;
 
                 while (Math.Abs(dx) > s.TolerancePx && sw.ElapsedMilliseconds < s.MaxCorrectionMs)
                 {
@@ -338,10 +348,14 @@ public sealed class PositionWatcher : IDisposable
                     Status("fine", $"미세 보정 중 (이탈 {dx:+0;-0}px)", dx: dx, score: m.score);
                     // 카메라-추적: 배경 패치가 오른쪽(+)에 보이면 캐릭터가 왼쪽으로 간 것 → 오른쪽 키
                     ushort key = dx * sign > 0 ? ScRight : ScLeft;
-                    await TapAsync(key, Math.Clamp(Math.Abs(dx) * s.MsPerPx, 40, s.MaxHoldMs), ct).ConfigureAwait(false);
+                    // 잔여 오차가 작으면 비례 홀드 대신 최소 탭으로 콕콕 이동 — 오버슈트 없이 허용오차 안까지
+                    double hold = Math.Abs(dx) <= FineNudgePx
+                        ? MinTapMs
+                        : Math.Clamp(Math.Abs(dx) * msPerPx, MinTapMs, s.MaxHoldMs);
+                    await TapAsync(key, hold, ct).ConfigureAwait(false);
                     await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
 
-                    int prevAbs = Math.Abs(dx);
+                    int prevDx = dx;
                     pm = MeasurePatch(s, spot, patch);
                     if (pm is not { } m2 || m2.score < s.MinScore)
                     { Status("done", "미세 보정 중 매칭을 놓쳐 여기서 마칩니다."); return; }
@@ -350,9 +364,10 @@ public sealed class PositionWatcher : IDisposable
                     if (learning)
                     {
                         // 첫 탭 결과로 부호 학습: 편차가 커졌으면 반대 방향(맵 가장자리 = 카메라 고정 케이스)
-                        if (Math.Abs(dx) > prevAbs + 2) { sign = -sign; PersistSign(spotId!, spot, sign); learning = false; Status("fine", "이동 방향을 반대로 학습했습니다."); }
-                        else if (Math.Abs(dx) < prevAbs) { PersistSign(spotId!, spot, sign); learning = false; }
+                        if (Math.Abs(dx) > Math.Abs(prevDx) + 2) { sign = -sign; PersistSign(spotId!, spot, sign); learning = false; Status("fine", "이동 방향을 반대로 학습했습니다."); }
+                        else if (Math.Abs(dx) < Math.Abs(prevDx)) { PersistSign(spotId!, spot, sign); learning = false; }
                     }
+                    else if (dx * prevDx < 0) msPerPx *= 0.55; // 목표를 지나침 → 다음 탭 약하게(진동 방지)
                 }
 
                 if (Math.Abs(dx) > s.TolerancePx) { Status("fail", $"보정 시간 초과(잔여 이탈 {dx:+0;-0}px)."); return; }
@@ -401,8 +416,8 @@ public sealed class PositionWatcher : IDisposable
         catch { return null; }
     }
 
-    /// <summary>미니맵 영역만 캡처해 플레이어 점(미니맵 상대)을 찾는다. 창/점 없으면 null.</summary>
-    private Point? MeasureDot(WatcherSettings s)
+    /// <summary>미니맵 영역만 캡처해 플레이어 점(미니맵 상대, 서브픽셀)을 찾는다. 창/점 없으면 null.</summary>
+    private PointF? MeasureDot(WatcherSettings s)
     {
         if (!WindowLocator.TryGetWindowRect(s.Process, out var win)) return null;
         var rect = new Rectangle(win.X + s.MiniX, win.Y + s.MiniY, s.MiniW, s.MiniH);
@@ -475,8 +490,14 @@ public sealed class PositionWatcher : IDisposable
     // ---------- 영속 ----------
     private WatcherSettings Load()
     {
-        try { return File.Exists(_statePath) ? (JsonSerializer.Deserialize<WatcherSettings>(File.ReadAllText(_statePath)) ?? new()) : new(); }
+        WatcherSettings s;
+        try { s = File.Exists(_statePath) ? (JsonSerializer.Deserialize<WatcherSettings>(File.ReadAllText(_statePath)) ?? new()) : new(); }
         catch { return new(); }
+        // 구버전 기본값 마이그레이션(사용자가 직접 조정한 값은 유지) — 정밀도 개선 기본값으로 올린다.
+        if (s.MiniTolerancePx == 1) s.MiniTolerancePx = 0.6;
+        if (s.TolerancePx == 4) s.TolerancePx = 2;
+        if (s.SettleMs == 150) s.SettleMs = 220;
+        return s;
     }
 
     private void Save(WatcherSettings s)
