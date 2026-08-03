@@ -665,24 +665,33 @@ public sealed class PositionWatcher : IDisposable
                     var spaceSw = Stopwatch.StartNew(); // 취소 타이머 기준점(마지막 입력 = 이 스페이스)
                     await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
 
-                    // 스페이스가 씹혀 퍼즐이 안 뜨는 경우 — 1초 안에 배너가 안 보이면 1회 재시도.
+                    // 스페이스가 씹혀 퍼즐이 안 뜨는 경우 — 1초 안에 배너/화살표가 안 보이면 1회 재시도.
                     // 배너가 보이는 동안의 스페이스는 '오답 입력'이라, 반드시 안 떴을 때만 누른다.
+                    // 배너(어두워짐 포함)와 화살표 줄 두 신호로 확인하고, 재시도 직전 한 번 더 최종 확인.
+                    bool PuzzleVisible(Bitmap fa, Bitmap fb) =>
+                        RuneArrowDetector.PuzzlePresent(fa, fb, beforeCrop, precropped: true)
+                        || RuneArrowDetector.AnalyzeFrame(fb, beforeCrop, precropped: true) is not null;
+                    async Task<bool> CheckVisibleAsync()
+                    {
+                        using var oa = ScreenCapture.Capture(screenCrop);
+                        await PreciseDelay.WaitAsync(110, ct).ConfigureAwait(false);
+                        using var ob = ScreenCapture.Capture(screenCrop);
+                        return PuzzleVisible(oa, ob);
+                    }
                     bool opened = false;
                     while (!opened && spaceSw.ElapsedMilliseconds < 1000)
                     {
                         ct.ThrowIfCancellationRequested();
-                        try
-                        {
-                            using var oa = ScreenCapture.Capture(screenCrop);
-                            await PreciseDelay.WaitAsync(110, ct).ConfigureAwait(false);
-                            using var ob = ScreenCapture.Capture(screenCrop);
-                            opened = RuneArrowDetector.PuzzlePresent(oa, ob, beforeCrop, precropped: true);
-                        }
+                        try { opened = await CheckVisibleAsync().ConfigureAwait(false); }
                         catch { await PreciseDelay.WaitAsync(100, ct).ConfigureAwait(false); }
                     }
                     if (!opened)
                     {
-                        Note("퍼즐이 1초 내 안 보임 — 스페이스 재시도");
+                        try { opened = await CheckVisibleAsync().ConfigureAwait(false); } catch { } // 최종 확인
+                    }
+                    if (!opened)
+                    {
+                        Note("퍼즐이 1초 내 안 보임(재확인 포함) — 스페이스 재시도");
                         await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
                         spaceSw.Restart();
                         await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);

@@ -109,13 +109,15 @@ internal static class RuneArrowDetector
         if (!TryRegion(frameB, precropped, out var region)) return false;
         int w = region.Width, h = region.Height;
 
-        var vsBefore = RowDiffCounts(bannerRef, frameB, region, DiffMin); // 발동 전과 다른가
-        var vsNow = RowDiffCounts(frameA, frameB, region, DiffMin);       // 지금 움직이는가
+        var (vsBefore, lumBefore, lumNow) = RowStats(bannerRef, frameB, region, DiffMin); // 발동 전 대비
+        var (vsNow, _, _) = RowStats(frameA, frameB, region, DiffMin);                    // 지금 움직임
         int wide = (int)(w * BannerWideFrac), still = (int)(w * 0.05);
         int run = 0;
         for (int y = 0; y < h; y++)
         {
-            if (vsBefore[y] >= wide && vsNow[y] <= still)
+            // 배너 행 = 발동 전과 넓게 다르면서, (지금 정지) 또는 (뚜렷이 어두워짐 — 반투명 배너 너머로
+            // 몹·이펙트가 비쳐 '정지'가 깨지는 맵 대비: 어두운 띠가 덮이면 행 평균 밝기가 떨어진다)
+            if (vsBefore[y] >= wide && (vsNow[y] <= still || lumBefore[y] - lumNow[y] >= 10))
             {
                 if (++run >= BannerMinRows) return true;
             }
@@ -124,11 +126,13 @@ internal static class RuneArrowDetector
         return false;
     }
 
-    /// <summary>행별 픽셀 차이 개수(|ΔR|+|ΔG|+|ΔB| ≥ min).</summary>
-    private static int[] RowDiffCounts(Bitmap a, Bitmap b, Rectangle region, int min)
+    /// <summary>행별 픽셀 차이 개수(|ΔR|+|ΔG|+|ΔB| ≥ min)와 행 평균 밝기(a·b 각각).</summary>
+    private static (int[] Diff, double[] LumA, double[] LumB) RowStats(Bitmap a, Bitmap b, Rectangle region, int min)
     {
         int w = region.Width, h = region.Height;
         var counts = new int[h];
+        var lumA = new double[h];
+        var lumB = new double[h];
         var da = a.LockBits(region, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
         var db = b.LockBits(region, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
         try
@@ -139,19 +143,23 @@ internal static class RuneArrowDetector
                 {
                     byte* ra = (byte*)da.Scan0 + y * da.Stride;
                     byte* rb = (byte*)db.Scan0 + y * db.Stride;
-                    int c = 0;
+                    int c = 0; long sa = 0, sb2 = 0;
                     for (int x = 0; x < w; x++)
                     {
                         int i4 = x * 4;
                         int d = Math.Abs(ra[i4] - rb[i4]) + Math.Abs(ra[i4 + 1] - rb[i4 + 1]) + Math.Abs(ra[i4 + 2] - rb[i4 + 2]);
                         if (d >= min) c++;
+                        sa += ra[i4] + ra[i4 + 1] + ra[i4 + 2];
+                        sb2 += rb[i4] + rb[i4 + 1] + rb[i4 + 2];
                     }
                     counts[y] = c;
+                    lumA[y] = sa / (3.0 * w);
+                    lumB[y] = sb2 / (3.0 * w);
                 }
             }
         }
         finally { a.UnlockBits(da); b.UnlockBits(db); }
-        return counts;
+        return (counts, lumA, lumB);
     }
 
     // ---------- 공통 파이프라인 ----------
