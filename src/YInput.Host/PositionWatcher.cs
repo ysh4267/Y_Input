@@ -179,30 +179,28 @@ public sealed class PositionWatcher : IDisposable
             var cands = MinimapDetector.FindDots(_liveFrame, mini, s.DotMinR, s.DotMinG, s.DotMaxB);
             bool dotFound = cands.Count > 0;
             var dot = dotFound ? MinimapDetector.Pick(cands).Center : PointF.Empty;
-            var patch = ClampRect(AutoPatchRect(s, _liveFrame.Width, _liveFrame.Height), _liveFrame.Width, _liveFrame.Height);
             return new
             {
                 ok = true,
                 dotFound, dotX = Math.Round(dot.X, 1), dotY = Math.Round(dot.Y, 1),
                 dotCandidates = cands.Count, // 2개 이상이면 UI가 '마커가 내 캐릭터인지 확인' 경고
                 miniW = s.MiniW, miniH = s.MiniH,
-                patchW = patch.Width, patchH = patch.Height,
+                frameW = _liveFrame.Width, frameH = _liveFrame.Height, // 클릭 좌표 환산·오버레이 배율용
+                patchW = s.PatchW, patchH = s.PatchH,                  // 앵커 중심 저장 영역 오버레이 크기
                 foreground = WindowLocator.IsForeground(s.Process),
             };
         }
     }
 
-    /// <summary>마지막 Live() 프레임에서 미리보기 크롭 PNG. what = "minimap" | "patch" | "check".</summary>
+    /// <summary>마지막 Live() 프레임에서 미리보기 PNG. what = "frame"(전체) | "minimap"(크롭).</summary>
     public byte[]? LiveCrop(string what)
     {
         lock (_gate)
         {
             if (_liveFrame is null) return null;
+            if (what == "frame") return ScreenCapture.ToPng(_liveFrame);
             var s = _settings;
-            var r = what == "minimap"
-                ? new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH)
-                : AutoPatchRect(s, _liveFrame.Width, _liveFrame.Height);
-            r = ClampRect(r, _liveFrame.Width, _liveFrame.Height);
+            var r = ClampRect(new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH), _liveFrame.Width, _liveFrame.Height);
             if (r.Width <= 0 || r.Height <= 0) return null;
             using var crop = _liveFrame.Clone(r, _liveFrame.PixelFormat);
             return ScreenCapture.ToPng(crop);
@@ -212,7 +210,7 @@ public sealed class PositionWatcher : IDisposable
     // ---------- 스팟(블록별 기준 위치) ----------
     /// <summary>확정 — 지금 이 순간의 화면을 새로 캡처해 미니맵 점 + 자동 패치 영역을 스팟으로 저장한다.
     /// (블록 확장 카드에서 실시간 미리보기를 보다가 [확정]을 눌렀을 때)</summary>
-    public object CaptureSpot(string id)
+    public object CaptureSpot(string id, int? anchorX = null, int? anchorY = null)
     {
         RequireValidId(id);
         lock (_gate)
@@ -225,13 +223,18 @@ public sealed class PositionWatcher : IDisposable
             if (!MinimapDetector.TryFindPlayerDot(frame, mini, out var dot, s.DotMinR, s.DotMinG, s.DotMaxB))
                 throw new ArgumentException("미니맵에서 플레이어 노란 점을 찾지 못했습니다. 미니맵이 펼쳐져 있고 가려지지 않았는지 확인하세요.");
 
-            var rect = ClampRect(AutoPatchRect(s, frame.Width, frame.Height), frame.Width, frame.Height);
-            if (rect.Width < 16 || rect.Height < 16) throw new ArgumentException("기준 영역을 잡을 수 없습니다(창이 너무 작음).");
+            // 앵커 = 사용자가 지정 카드에서 클릭한 캐릭터 위치(창 상대). 카메라 레이지 무브 때문에
+            // 캐릭터가 화면 중앙에 있다는 보장이 없어, 중앙 가정 대신 앵커 중심으로 자른다.
+            var anchor = new Point(
+                Math.Clamp(anchorX ?? frame.Width / 2, 0, frame.Width - 1),
+                Math.Clamp(anchorY ?? frame.Height / 2, 0, frame.Height - 1));
+            var rect = ClampRect(RectAround(s, anchor), frame.Width, frame.Height);
+            if (rect.Width < 16 || rect.Height < 16) throw new ArgumentException("기준 영역을 잡을 수 없습니다(창 가장자리에 너무 가깝습니다).");
 
             using var patchBmp = frame.Clone(rect, frame.PixelFormat);
             var gray = TemplateMatcher.ToGray(patchBmp);
             if (TemplateMatcher.StdDev(gray) < MinPatchStdDev)
-                throw new ArgumentException("캐릭터 발밑 배경의 특징이 부족합니다(거의 단색). 무늬 있는 지형 위에서 확정하세요.");
+                throw new ArgumentException("선택 위치 주변의 특징이 부족합니다(거의 단색). 무늬 있는 지형이 함께 잡히게 캐릭터를 클릭하세요.");
 
             var spot = new SpotData
             {
@@ -247,10 +250,9 @@ public sealed class PositionWatcher : IDisposable
         return GetSpot(id);
     }
 
-    /// <summary>자동 기준 패치 rect — 창 정중앙, 캐릭터가 '포함'된 주변 지형.
-    /// 카메라-추적 시 캐릭터가 화면 중앙에 오므로 이 영역이 캐릭터+발판 기준이 된다.</summary>
-    private static Rectangle AutoPatchRect(WatcherSettings s, int w, int h) =>
-        new(w / 2 - s.PatchW / 2, h / 2 - s.PatchH / 2, s.PatchW, s.PatchH);
+    /// <summary>앵커(캐릭터 위치) 중심의 기준 패치 rect.</summary>
+    private static Rectangle RectAround(WatcherSettings s, Point anchor) =>
+        new(anchor.X - s.PatchW / 2, anchor.Y - s.PatchH / 2, s.PatchW, s.PatchH);
 
     /// <summary>스팟 정보(블록 카드 표시용). 없으면 exists=false.</summary>
     public object GetSpot(string id)

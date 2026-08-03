@@ -294,16 +294,17 @@ public static class ApiEndpoints
                 ? Results.NotFound(new { error = "저장된 위치가 없습니다." })
                 : Results.File(png, "image/png"));
         }));
-        // 확정: 지금 화면을 캡처해 이 블록의 기준 위치로 저장(확장 카드의 [확정] 버튼)
-        app.MapPost("/api/watcher/spots/{id}/capture", (string id) => Guard(() =>
-            Task.FromResult(Results.Json(watcher.CaptureSpot(id)))));
+        // 확정: 지금 화면을 캡처해 이 블록의 기준 위치로 저장(확장 카드의 [확정] 버튼).
+        // body {x,y} = 사용자가 클릭한 캐릭터 앵커(창 상대) — 카메라 레이지 무브로 캐릭터가 중앙에 없을 수 있음.
+        app.MapPost("/api/watcher/spots/{id}/capture", (string id, RegionBody? b) => Guard(() =>
+            Task.FromResult(Results.Json(watcher.CaptureSpot(id, b?.X, b?.Y)))));
         app.MapPost("/api/watcher/spots/{id}/test", (string id) => Guard(() =>
             Task.FromResult(Results.Json(watcher.TestSpot(id)))));
         // 실시간 미리보기(확장 카드 폴링): JSON 측정값 → 같은 프레임의 미니맵/패치 크롭 PNG
         app.MapGet("/api/watcher/live", () => Results.Json(watcher.Live()));
         app.MapGet("/api/watcher/live/{what}", (string what) =>
         {
-            if (what is not ("minimap" or "patch")) return Results.NotFound();
+            if (what is not ("minimap" or "frame")) return Results.NotFound();
             var png = watcher.LiveCrop(what);
             return png is null ? Results.NotFound(new { error = "미리보기 프레임이 없습니다." }) : Results.File(png, "image/png");
         });

@@ -416,44 +416,74 @@ export function createEditor({ log, onSaved, getStatus, getMacros, openMinimapPi
     const bMini = document.createElement('button'); bMini.className = 'btn ghost sm'; bMini.type = 'button';
     bMini.textContent = '미니맵 영역 지정'; bMini.hidden = true;
 
+    // 게임 화면 전체 실시간 뷰 — 캐릭터를 '클릭'해 앵커를 찍는다.
+    // 카메라 레이지 무브 때문에 캐릭터가 화면 중앙에 있다는 보장이 없어서 중앙 자동 가정을 쓰지 않는다.
     const panel = document.createElement('div'); panel.className = 'spot-live';
-    const miniWrap = document.createElement('span'); miniWrap.className = 'spot-mini-wrap';
-    const mimg = document.createElement('img'); mimg.className = 'spot-mini'; mimg.alt = '미니맵 실시간';
-    const marker = document.createElement('span'); marker.className = 'spot-dot-marker'; marker.hidden = true;
-    miniWrap.append(mimg, marker);
-    const pcol = document.createElement('span'); pcol.className = 'spot-patch-col';
-    const pimg = document.createElement('img'); pimg.className = 'spot-patch'; pimg.alt = '저장될 기준 화면';
-    const plabel = document.createElement('span'); plabel.className = 'muted'; plabel.textContent = '저장될 기준 — 캐릭터 + 주변 지형';
-    pcol.append(pimg, plabel);
+    const frameWrap = document.createElement('span'); frameWrap.className = 'spot-frame-wrap';
+    const fimg = document.createElement('img'); fimg.className = 'spot-frame'; fimg.alt = '게임 화면 실시간'; fimg.draggable = false;
+    const cross = document.createElement('span'); cross.className = 'spot-anchor'; cross.hidden = true;
+    const box = document.createElement('span'); box.className = 'spot-anchor-box'; box.hidden = true;
+    frameWrap.append(fimg, cross, box);
+    panel.append(frameWrap);
     const stat = document.createElement('div'); stat.className = 'spot-stat muted';
-    stat.textContent = '캐릭터를 서 있을 자리에 두고 [이 위치로 확정]을 누르세요…';
-    panel.append(miniWrap, pcol);
+    stat.textContent = '게임 화면에서 내 캐릭터를 클릭해 위치를 찍으세요…';
+    bConfirm.disabled = true; // 앵커(캐릭터 클릭) 전에는 확정 불가 — 엉뚱한 곳 저장 방지
 
     let busy = false;
+    let anchor = null;   // 창 px 기준 캐릭터 앵커 {x, y}
+    let liveInfo = null; // 마지막 live 측정값(frameW/H, patchW/H, 점 정보)
+
+    const drawAnchor = () => {
+      if (!anchor || !liveInfo) { cross.hidden = true; box.hidden = true; return; }
+      const px = (anchor.x / liveInfo.frameW * 100) + '%';
+      const py = (anchor.y / liveInfo.frameH * 100) + '%';
+      cross.style.left = px; cross.style.top = py; cross.hidden = false;
+      box.style.left = px; box.style.top = py;
+      box.style.width = (liveInfo.patchW / liveInfo.frameW * 100) + '%';
+      box.style.height = (liveInfo.patchH / liveInfo.frameH * 100) + '%';
+      box.hidden = false;
+      if (!busy) bConfirm.disabled = false;
+    };
+
+    frameWrap.addEventListener('click', (evc) => {
+      if (!liveInfo) return;
+      const r = fimg.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return;
+      anchor = {
+        x: Math.round(Math.min(Math.max(evc.clientX - r.left, 0), r.width) / r.width * liveInfo.frameW),
+        y: Math.round(Math.min(Math.max(evc.clientY - r.top, 0), r.height) / r.height * liveInfo.frameH),
+      };
+      drawAnchor();
+      updateStat();
+    });
+
+    const updateStat = () => {
+      if (!liveInfo) return;
+      const dotTxt = liveInfo.dotFound
+        ? `미니맵 (${liveInfo.dotX}, ${liveInfo.dotY})`
+        : '미니맵 점 미탐지 — 미니맵이 펼쳐져 있는지 확인';
+      const warn = liveInfo.dotCandidates > 1 ? ` · ⚠ 노란 점 후보 ${liveInfo.dotCandidates}개` : '';
+      stat.textContent = anchor
+        ? `${dotTxt}${warn} — 사각형이 캐릭터와 주변 지형을 감싸면 [이 위치로 확정]을 누르세요`
+        : `${dotTxt}${warn} — 게임 화면에서 내 캐릭터를 클릭해 위치를 찍으세요`;
+    };
+
     const poll = async () => {
       if (busy || spotExpandedUid !== step._uid) return;
       try {
         const live = await api.watcherLive();
         if (spotExpandedUid !== step._uid) return; // 폴링 중 접힘
         if (!live.ok) {
-          marker.hidden = true;
+          liveInfo = null; cross.hidden = true; box.hidden = true; bConfirm.disabled = true;
           bMini.hidden = !live.needMinimap;
           stat.textContent = live.error + (live.needMinimap ? ' — [미니맵 영역 지정]을 먼저 해주세요.' : '');
           return;
         }
         bMini.hidden = true;
-        const ts = Date.now();
-        mimg.src = '/api/watcher/live/minimap?ts=' + ts;
-        pimg.src = '/api/watcher/live/patch?ts=' + ts;
-        if (live.dotFound) {
-          marker.hidden = false;
-          marker.style.left = (live.dotX / live.miniW * 100) + '%';
-          marker.style.top = (live.dotY / live.miniH * 100) + '%';
-        } else marker.hidden = true;
-        stat.textContent = live.dotFound
-          ? `현재 미니맵 위치 (${live.dotX}, ${live.dotY}) — 게임에서 캐릭터를 움직여 자리를 잡고 확정하세요`
-            + (live.dotCandidates > 1 ? ` · ⚠ 노란 점 후보 ${live.dotCandidates}개 — 미니맵 마커가 내 캐릭터 위에 있는지 확인하세요` : '')
-          : '미니맵에서 플레이어 점을 찾지 못했습니다 — 미니맵이 펼쳐져 있는지, 미니맵 영역이 맞는지 확인하세요';
+        liveInfo = live;
+        fimg.src = '/api/watcher/live/frame?ts=' + Date.now();
+        drawAnchor();
+        updateStat();
       } catch (err) { stat.textContent = '미리보기 실패: ' + err.message; }
     };
     spotLiveTimer = setInterval(poll, 800);
@@ -461,16 +491,16 @@ export function createEditor({ log, onSaved, getStatus, getMacros, openMinimapPi
 
     bConfirm.onclick = async (e) => {
       e.stopPropagation();
-      if (busy) return;
+      if (busy || !anchor) return;
       busy = true; bConfirm.disabled = true; stat.textContent = '현재 위치 저장 중…';
       try {
         // 확정할 때마다 새 스팟 id — 블록을 복제해도 서로 다른 자리를 가질 수 있다
         const id = (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2)).replace(/[^0-9a-zA-Z-]/g, '');
-        await api.watcherSpotCapture(id);
+        await api.watcherSpotCapture(id, anchor);
         pushUndo();
         ev.spotId = id;
         spotExpandedUid = null;
-        log('info', '위치 보정 블록: 현재 위치를 확정했습니다.');
+        log('info', '위치 보정 블록: 캐릭터 위치를 확정했습니다.');
         renderSteps();
       } catch (err) {
         busy = false; bConfirm.disabled = false;
