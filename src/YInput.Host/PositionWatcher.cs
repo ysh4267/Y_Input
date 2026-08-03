@@ -370,7 +370,12 @@ public sealed class PositionWatcher : IDisposable
         double? score = null; int? dx = null;
         var pm = MeasurePatch(s, sp.Data, sp.Gray);
         if (pm is { } r) { dx = r.dx; score = r.score; }
-        return new { dotFound = dot is not null, miniDx, patchFound = score >= s.MinScore, dx, score };
+        return new
+        {
+            dotFound = dot is not null, miniDx,
+            inPlace = miniDx is { } m && Math.Abs(m) <= s.MiniTolerancePx, // 서있어야 할 위치에 있는가
+            patchFound = score >= s.MinScore, dx, score,
+        };
     }
 
     // ---------- 보정(재생 훅) ----------

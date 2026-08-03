@@ -375,9 +375,13 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
         const r = await api.watcherSpotTest(ev.spotId);
         if (r.error) { info.textContent = r.error; return; }
         const sg = (v) => (v > 0 ? '+' : '') + v;
-        const parts = [r.dotFound ? `미니맵 이탈 ${sg(r.miniDx)}px` : '미니맵 점 미탐지'];
+        const parts = [];
+        // 서있어야 할 위치 기준으로 지금 어느 방향에 얼마나 있는지
+        if (!r.dotFound) parts.push('미니맵 점 미탐지 — 위치를 잴 수 없음');
+        else if (r.inPlace) parts.push(`✅ 제자리 (미니맵 오차 ${sg(r.miniDx)}px)`);
+        else parts.push(`📍 기준 위치보다 ${r.miniDx > 0 ? '오른쪽 →' : '← 왼쪽'}으로 ${Math.abs(r.miniDx).toFixed(1)}px(미니맵) 벗어남`);
         if (r.score != null)
-          parts.push(`서있음 ${(r.score * 100).toFixed(0)}%${r.patchFound ? ' ✓' : ' ✗'}` + (r.patchFound ? ` · 화면 이탈 ${sg(r.dx)}px` : ''));
+          parts.push(`서있음 ${(r.score * 100).toFixed(0)}%${r.patchFound ? ' ✓' : ' ✗'}` + (r.patchFound ? ` · 화면 미세오차 ${sg(r.dx)}px` : ''));
         info.textContent = parts.join(' · ');
       } catch (err) { info.textContent = err.message; }
     };
