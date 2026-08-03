@@ -621,7 +621,7 @@ public sealed class PositionWatcher : IDisposable
                 {
                     if (attempt > 0) Status("rune", "퍼즐이 안 보여 스페이스를 다시 누릅니다");
                     await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
-                    await PreciseDelay.WaitAsync(1200, ct).ConfigureAwait(false); // 퍼즐 UI 등장 대기
+                    await PreciseDelay.WaitAsync(1400, ct).ConfigureAwait(false); // 퍼즐 UI 등장+페이드인 대기
                     arrows = await DetectArrowsAsync(s, beforeFrame, saveShot: true, ct).ConfigureAwait(false);
                     if (arrows is null)
                     {
@@ -680,14 +680,17 @@ public sealed class PositionWatcher : IDisposable
                 if (f is not null) frames.Add(f);
             }
             if (frames.Count == 0) return null;
-            if (saveShot) FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(frames[^1]));
+            if (saveShot)
+            {
+                // 오답·실패를 오프라인 재현할 수 있게 판정에 쓴 프레임을 항상 보존(--rune-analyze 다중 입력)
+                FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(frames[^1]));
+                for (int i = 0; i < frames.Count; i++)
+                    FileLog.SavePng($"rune-frame-{i}", ScreenCapture.ToPng(frames[i]));
+            }
             var res = frames.Count >= 2 ? RuneArrowDetector.FindArrowsAnimated(frames, beforeSpace) : null;
             if (res is not null) { FileLog.Write("info", "[위치보정:rune] 퍼즐 인식 경로: 애니메이션 차분"); return res; }
             res = RuneArrowDetector.FindArrows(frames[^1], beforeSpace, beforeSpace);
             if (res is not null) FileLog.Write("info", "[위치보정:rune] 퍼즐 인식 경로: 발동 전 차분 폴백");
-            else if (saveShot) // 인식 실패 — 오프라인 재현용으로 샘플 프레임 전부 보존(--rune-analyze 다중 입력)
-                for (int i = 0; i < frames.Count; i++)
-                    FileLog.SavePng($"rune-frame-{i}", ScreenCapture.ToPng(frames[i]));
             return res;
         }
         finally { foreach (var f in frames) f.Dispose(); }
