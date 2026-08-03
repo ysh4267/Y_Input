@@ -365,15 +365,19 @@ public sealed class PositionWatcher : IDisposable
         lock (_gate) { s = Clone(_settings); spot = ResolveSpot(id); }
         if (spot is not { } sp) return new { error = "지정된 위치가 없습니다. [지정하기]로 저장하세요." };
 
-        var dot = MeasureDot(s, new PointF((float)sp.Data.DotX, (float)sp.Data.DotY)); // 저장 위치 근처 우선(다른 블롭 배제)
-        double? miniDx = dot is { } d ? Math.Round(d.X - sp.Data.DotX, 1) : null;
+        var cands = MeasureDots(s);
+        int candCount = cands?.Count ?? 0;
+        double? miniDx = null;
+        if (cands is { Count: > 0 })
+            miniDx = Math.Round(MinimapDetector.Pick(cands, new PointF((float)sp.Data.DotX, (float)sp.Data.DotY)).Center.X - sp.Data.DotX, 1);
         double? score = null; int? dx = null;
         var pm = MeasurePatch(s, sp.Data, sp.Gray);
         if (pm is { } r) { dx = r.dx; score = r.score; }
         return new
         {
-            dotFound = dot is not null, miniDx,
+            dotFound = miniDx is not null, miniDx,
             inPlace = miniDx is { } m && Math.Abs(m) <= s.MiniTolerancePx, // 서있어야 할 위치에 있는가
+            dotCandidates = candCount, // 2개 이상 = 오인 가능(재생 보정은 프로브 이동으로 자동 식별)
             patchFound = score >= s.MinScore, dx, score,
         };
     }
@@ -403,9 +407,22 @@ public sealed class PositionWatcher : IDisposable
 
             for (int pass = 0; pass < 2; pass++) // 파인 후 미니맵이 다시 벗어나 있으면 1회 한해 코스부터 재시도
             {
-                // ── 1단계: 미니맵 코스 복귀 — 방향키를 '누른 채' 걸으며 주기 측정, 도착 직전/지나침에 뗀다 ──
-                var dot = MeasureDot(s, new PointF((float)spot.DotX, (float)spot.DotY));
-                if (dot is null) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 보정을 포기합니다."); return; }
+                // ── 1단계: 내 캐릭터 점 식별 — 노란 블롭이 여러 개면(NPC 마커 등) 살짝 걸어보고
+                //           '움직인' 블롭을 내 캐릭터로 잠근다(마커·타인 점은 안 움직임) ──
+                var dots0 = MeasureDots(s);
+                if (dots0 is null || dots0.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 보정을 포기합니다."); return; }
+                PointF? dot;
+                if (dots0.Count == 1) dot = dots0[0].Center;
+                else
+                {
+                    Status("coarse", $"노란 블롭 {dots0.Count}개 — 살짝 이동해 내 캐릭터를 식별합니다");
+                    await TapAsync(ScLeft, 90, ct).ConfigureAwait(false); // 왼쪽으로 프로브(어차피 보정으로 되돌아옴)
+                    await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
+                    var dots1 = MeasureDots(s);
+                    if (dots1 is null || dots1.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 보정을 포기합니다."); return; }
+                    dot = IdentifyMovedLeft(dots0, dots1)
+                          ?? MinimapDetector.Pick(dots1, new PointF((float)spot.DotX, (float)spot.DotY)).Center;
+                }
                 double miniDx = dot.Value.X - spot.DotX;
                 double releaseEarly = Math.Max(s.MiniTolerancePx, 1.2); // 키를 뗀 뒤 관성 미끄러짐 여유분
 
@@ -489,8 +506,8 @@ public sealed class PositionWatcher : IDisposable
 
                 if (Math.Abs(dx) > s.TolerancePx) { Status("fail", $"보정 시간 초과(잔여 이탈 {dx:+0;-0}px)."); return; }
 
-                // 파인 탭 도중 크게 밀렸을 수 있으니 미니맵 재확인 — 벗어났으면 한 번만 처음부터
-                var recheck = MeasureDot(s, new PointF((float)spot.DotX, (float)spot.DotY));
+                // 파인 탭 도중 크게 밀렸을 수 있으니 미니맵 재확인(직전 추적 위치 기준) — 벗어났으면 한 번만 처음부터
+                var recheck = MeasureDot(s, dot);
                 if (pass == 0 && recheck is { } rd && Math.Abs(rd.X - spot.DotX) > s.MiniTolerancePx) continue;
 
                 // 패치가 캐릭터 포함 지형이므로 최종 매칭 성공 = 그 자리에 제대로 서 있음
@@ -546,13 +563,41 @@ public sealed class PositionWatcher : IDisposable
     /// 창/점/미니맵 미지정이면 null. near = 직전(또는 저장) 위치(미니맵 상대) — 추적으로 다른 점으로 튀는 것을 막는다.</summary>
     private PointF? MeasureDot(WatcherSettings s, PointF? near = null)
     {
+        var cands = MeasureDots(s);
+        if (cands is null || cands.Count == 0) return null;
+        return MinimapDetector.Pick(cands, near).Center; // 미니맵 상대 좌표
+    }
+
+    /// <summary>고정 미니맵 영역 안의 점 후보 블롭 전체(미니맵 상대). 창/미니맵 미지정이면 null.</summary>
+    private List<DotCandidate>? MeasureDots(WatcherSettings s)
+    {
         if (s.MiniW <= 0) return null;
         using var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return null;
         var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
-        var cands = MinimapDetector.FindDots(frame, mini, s.DotMinR, s.DotMinG, s.DotMaxB);
-        if (cands.Count == 0) return null;
-        return MinimapDetector.Pick(cands, near).Center; // 미니맵 상대 좌표
+        return MinimapDetector.FindDots(frame, mini, s.DotMinR, s.DotMinG, s.DotMaxB);
+    }
+
+    /// <summary>프로브 이동(왼쪽 90ms) 전/후 블롭을 근접 매칭해 '왼쪽으로 움직인' 블롭을 찾는다 =
+    /// 내 캐릭터. NPC 마커·다른 유저 점은 프로브에 반응하지 않는다. 없으면 null.</summary>
+    private static PointF? IdentifyMovedLeft(List<DotCandidate> before, List<DotCandidate> after)
+    {
+        PointF? best = null; double bestDx = -0.6; // 이보다 더 왼쪽으로 움직인 블롭만 인정
+        foreach (var b in after)
+        {
+            DotCandidate? nearest = null; double nd = double.MaxValue;
+            foreach (var a in before)
+            {
+                double d = (a.Center.X - b.Center.X) * (a.Center.X - b.Center.X)
+                         + (a.Center.Y - b.Center.Y) * (a.Center.Y - b.Center.Y);
+                if (d < nd) { nd = d; nearest = a; }
+            }
+            if (nearest is not { } a2) continue;
+            double dx = b.Center.X - a2.Center.X;
+            double dy = Math.Abs(b.Center.Y - a2.Center.Y);
+            if (dx <= bestDx && dy <= 2.0) { bestDx = dx; best = b.Center; }
+        }
+        return best;
     }
 
     /// <summary>프레임의 패치 Y ± 밴드에서 템플릿 매칭. dx = 현재 매칭 X − 저장 X.</summary>

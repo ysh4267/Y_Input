@@ -71,8 +71,12 @@ internal static class MinimapDetector
                 if (py < h - 1 && mask[p + w] && !seen[p + w]) { seen[p + w] = true; stack.Push(p + w); }
             }
             int bw = maxX - minX + 1, bh = maxY - minY + 1;
-            if (count >= MinBlobArea && count <= MaxBlobArea && bw <= MaxBlobBox && bh <= MaxBlobBox)
-                list.Add(new DotCandidate(new PointF((float)sumX / count + ox, (float)sumY / count + oy), count, bw, bh));
+            if (count < MinBlobArea || count > MaxBlobArea || bw > MaxBlobBox || bh > MaxBlobBox) continue;
+            // 모양 필터: 플레이어 점은 '둥근 점' — 삼각형 마커(채움 낮음)·글자 조각(길쭉)을 배제
+            double fill = (double)count / (bw * bh);        // 원형 ≈ 0.78, 삼각형 ≈ 0.5
+            if (count >= 6 && fill < 0.55) continue;        // 아주 작은 점(수 px)은 채움 판정이 불안정 → 면제
+            if (Math.Max(bw, bh) > 2 * Math.Min(bw, bh)) continue;
+            list.Add(new DotCandidate(new PointF((float)sumX / count + ox, (float)sumY / count + oy), count, bw, bh));
         }
         return list;
     }

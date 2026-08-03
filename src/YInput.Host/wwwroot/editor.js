@@ -380,6 +380,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
         if (!r.dotFound) parts.push('미니맵 점 미탐지 — 위치를 잴 수 없음');
         else if (r.inPlace) parts.push(`✅ 제자리 (미니맵 오차 ${sg(r.miniDx)}px)`);
         else parts.push(`📍 기준 위치보다 ${r.miniDx > 0 ? '오른쪽 →' : '← 왼쪽'}으로 ${Math.abs(r.miniDx).toFixed(1)}px(미니맵) 벗어남`);
+        if (r.dotCandidates > 1) parts.push(`⚠ 노란 블롭 ${r.dotCandidates}개 — 다른 점을 잡았을 수 있음(재생 보정은 살짝 이동해 자동 식별)`);
         if (r.score != null)
           parts.push(`서있음 ${(r.score * 100).toFixed(0)}%${r.patchFound ? ' ✓' : ' ✗'}` + (r.patchFound ? ` · 화면 미세오차 ${sg(r.dx)}px` : ''));
         info.textContent = parts.join(' · ');
