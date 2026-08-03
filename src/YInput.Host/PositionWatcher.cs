@@ -389,9 +389,10 @@ public sealed class PositionWatcher : IDisposable
             // 영원히 고정되어 캐릭터가 어디에 있든 같은 이탈값이 나온다.
             var picked = MinimapDetector.Pick(cands);
             miniDx = Math.Round(picked.Center.X - sp.Data.DotX, 1);
+            var shot = SaveShot("test");
             FileLog.Write("info",
                 $"[테스트] 저장=({sp.Data.DotX:0.0},{sp.Data.DotY:0.0}) 선택=({picked.Center.X:0.0},{picked.Center.Y:0.0}) miniDx={miniDx:+0.0;-0.0} " +
-                $"후보 {cands.Count}개: {string.Join(" ", cands.Select(c => $"({c.Center.X:0.0},{c.Center.Y:0.0} a{c.Area} {c.BoxW}x{c.BoxH})"))}");
+                $"후보 {cands.Count}개: {string.Join(" ", cands.Select(c => $"({c.Center.X:0.0},{c.Center.Y:0.0} a{c.Area} {c.BoxW}x{c.BoxH})"))}{(shot is null ? "" : $" shot={shot}")}");
         }
         double? score = null; int? dx = null;
         var pm = MeasurePatch(s, sp.Data, sp.Gray);
@@ -434,9 +435,10 @@ public sealed class PositionWatcher : IDisposable
                 //           '움직인' 블롭을 내 캐릭터로 잠근다(마커·타인 점은 안 움직임) ──
                 var dots0 = MeasureDots(s);
                 if (dots0 is null || dots0.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 보정을 포기합니다."); return; }
+                var idShot = SaveShot("identify");
                 FileLog.Write("info",
                     $"[위치보정:식별] 저장=({spot.DotX:0.0},{spot.DotY:0.0}) " +
-                    $"후보 {dots0.Count}개: {string.Join(" ", dots0.Select(c => $"({c.Center.X:0.0},{c.Center.Y:0.0} a{c.Area} {c.BoxW}x{c.BoxH})"))}");
+                    $"후보 {dots0.Count}개: {string.Join(" ", dots0.Select(c => $"({c.Center.X:0.0},{c.Center.Y:0.0} a{c.Area} {c.BoxW}x{c.BoxH})"))}{(idShot is null ? "" : $" shot={idShot}")}");
                 PointF? dot;
                 if (dots0.Count == 1) dot = dots0[0].Center;
                 else
@@ -565,6 +567,7 @@ public sealed class PositionWatcher : IDisposable
             _liveFrame?.Dispose(); _liveFrame = null;
             _lastFrame?.Dispose(); _lastFrame = null;
         }
+        lock (_dbgGate) { _dbgFrame?.Dispose(); _dbgFrame = null; }
         _sem.Dispose();
     }
 
@@ -609,10 +612,30 @@ public sealed class PositionWatcher : IDisposable
     private List<DotCandidate>? MeasureDots(WatcherSettings s)
     {
         if (s.MiniW <= 0) return null;
-        using var frame = CaptureGameFrame(s.Process, out _);
+        var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return null;
         var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
-        return MinimapDetector.FindDots(frame, mini, s.DotMinR, s.DotMinG, s.DotMaxB);
+        var dots = MinimapDetector.FindDots(frame, mini, s.DotMinR, s.DotMinG, s.DotMaxB);
+        KeepDebugFrame(frame); // 소유권 이전 — 이 측정 시점의 화면을 로그 스냅샷용으로 보관
+        return dots;
+    }
+
+    // ---------- 로그 스냅샷(진단) ----------
+    private Bitmap? _dbgFrame;               // 마지막 측정에 쓴 프레임 — 로그가 찍히는 순간의 화면
+    private readonly object _dbgGate = new();
+
+    private void KeepDebugFrame(Bitmap frame)
+    {
+        lock (_dbgGate) { _dbgFrame?.Dispose(); _dbgFrame = frame; }
+    }
+
+    /// <summary>마지막 측정 프레임을 logs\shots\에 저장하고 파일명을 반환(로그 줄에 연결). 없으면 null.</summary>
+    private string? SaveShot(string tag)
+    {
+        Bitmap? clone;
+        try { lock (_dbgGate) { if (_dbgFrame is null) return null; clone = new Bitmap(_dbgFrame); } }
+        catch { return null; }
+        return FileLog.SaveShot(clone, tag);
     }
 
     /// <summary>프로브 이동(왼쪽 90ms) 전/후 블롭을 근접 매칭해 '왼쪽으로 움직인' 블롭을 찾는다 =
@@ -640,16 +663,17 @@ public sealed class PositionWatcher : IDisposable
     /// <summary>프레임의 패치 Y ± 밴드에서 템플릿 매칭. dx = 현재 매칭 X − 저장 X.</summary>
     private (int dx, double score)? MeasurePatch(WatcherSettings s, SpotData spot, GrayImage patch)
     {
-        using var frame = CaptureGameFrame(s.Process, out _);
+        var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return null;
         int y0 = Math.Max(0, spot.PatchY - SearchBandPx);
         int y1 = Math.Min(frame.Height, spot.PatchY + spot.PatchH + SearchBandPx);
-        if (y1 - y0 < spot.PatchH || frame.Width < spot.PatchW) return null;
+        if (y1 - y0 < spot.PatchH || frame.Width < spot.PatchW) { KeepDebugFrame(frame); return null; }
 
         using var band = frame.Clone(new Rectangle(0, y0, frame.Width, y1 - y0), frame.PixelFormat);
         var gray = TemplateMatcher.ToGray(band);
         var search = new Rectangle(0, 0, gray.Width - patch.Width + 1, gray.Height - patch.Height + 1);
         var m = TemplateMatcher.Match(gray, patch, search);
+        KeepDebugFrame(frame); // 소유권 이전 — 이 측정 시점의 화면을 로그 스냅샷용으로 보관
         return (m.X - spot.PatchX, m.Score); // 밴드는 창 X=0부터라 X는 창 상대 그대로
     }
 
@@ -687,7 +711,8 @@ public sealed class PositionWatcher : IDisposable
     private void Status(string state, string message, int? miniDx = null, int? dx = null, double? score = null)
     {
         _hub.Broadcast("watcherStatus", new { state, message, miniDx, dx, score });
-        FileLog.Write(state is "fail" ? "warn" : "info", $"[위치보정:{state}] {message}");
+        var shot = SaveShot(state); // 이 로그 시점의 화면을 logs\shots\에 저장해 나중에 짝지어 본다
+        FileLog.Write(state is "fail" ? "warn" : "info", $"[위치보정:{state}] {message}{(shot is null ? "" : $" shot={shot}")}");
     }
 
     private void Broadcast() { lock (_gate) _hub.Broadcast("watcherSettings", Snapshot(_settings)); }
