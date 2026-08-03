@@ -69,6 +69,10 @@ internal sealed class OverlayWindow : Form
     // 폰트(픽셀 단위로 DPI 영향 최소화)
     private static readonly Font NameFont = new("Segoe UI", 12.5f, FontStyle.Bold, GraphicsUnit.Pixel);
     private static readonly Font LoopFont = new("Segoe UI", 11f, FontStyle.Regular, GraphicsUnit.Pixel);
+    private static readonly Font DebugTitleFont = new("Segoe UI", 10.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private static readonly Font DebugFont = new("Consolas", 11f, FontStyle.Regular, GraphicsUnit.Pixel);
+
+    private List<string> _debug = new(); // 디버그 섹션 — 매크로가 송출한 최근 키 입력
 
     public OverlayWindow()
     {
@@ -107,6 +111,16 @@ internal sealed class OverlayWindow : Form
         rows ??= new();
         if (rows.SequenceEqual(_rows)) return; // 동일 프레임 → 스킵(위치 갱신은 250ms poll이 처리)
         _rows = rows;
+        _bmpDirty = true;
+        if (_armed) Refresh2();
+    }
+
+    /// <summary>디버그 섹션 — 매크로가 송출한 최근 키 목록(룬 퍼즐 오입력 등 원인 추적용).</summary>
+    public void SetDebugKeys(List<string> lines)
+    {
+        lines ??= new();
+        if (lines.SequenceEqual(_debug)) return;
+        _debug = lines;
         _bmpDirty = true;
         if (_armed) Refresh2();
     }
@@ -189,8 +203,24 @@ internal sealed class OverlayWindow : Form
                 widths[i] = w; if (w > maxW) maxW = w;
             }
         }
-        int W = maxW + M * 2;
-        int H = _rows.Count * pillH + Math.Max(0, _rows.Count - 1) * RowGap + M * 2;
+        // 디버그(최근 송출 키) 패널 크기
+        int dbgW = 0, dbgLineH = 0, dbgTitleH = 0, dbgH = 0;
+        const int DbgPad = 10;
+        if (_debug.Count > 0)
+        {
+            using var gd = Graphics.FromImage(probe);
+            dbgTitleH = (int)Math.Ceiling(DebugTitleFont.GetHeight(gd));
+            dbgLineH = (int)Math.Ceiling(DebugFont.GetHeight(gd));
+            dbgW = (int)Math.Ceiling(gd.MeasureString("디버그 — 최근 송출 키", DebugTitleFont).Width);
+            foreach (var l in _debug)
+                dbgW = Math.Max(dbgW, (int)Math.Ceiling(gd.MeasureString(l, DebugFont).Width));
+            dbgW += DbgPad * 2;
+            dbgH = DbgPad * 2 + dbgTitleH + 4 + _debug.Count * dbgLineH;
+        }
+
+        int W = Math.Max(maxW, dbgW) + M * 2;
+        int H = _rows.Count * pillH + Math.Max(0, _rows.Count - 1) * RowGap
+                + (dbgH > 0 ? (_rows.Count > 0 ? RowGap : 0) + dbgH : 0) + M * 2;
         W = Math.Max(W, 40); H = Math.Max(H, 40);
 
         var bmp = new Bitmap(W, H, PixelFormat.Format32bppArgb);
@@ -227,6 +257,29 @@ internal sealed class OverlayWindow : Form
             g.DrawString(row.Loop, LoopFont, loopBrush, tx, ty + nameH);
 
             y += pillH + RowGap;
+        }
+
+        // 디버그 섹션 — 매크로가 송출한 최근 키(위=과거, 아래=최신)
+        if (dbgH > 0)
+        {
+            var panel = new Rectangle(M, y, Math.Max(maxW, dbgW), dbgH);
+            using (var path = Rounded(panel, 10))
+            {
+                using var fill = new SolidBrush(Color.FromArgb(165, 10, 13, 20));
+                g.FillPath(fill, path);
+                using var border = new Pen(Color.FromArgb(36, 255, 255, 255), 1f);
+                g.DrawPath(border, path);
+            }
+            float dy = y + DbgPad;
+            using (var titleBrush = new SolidBrush(Color.FromArgb(235, 192, 132, 252)))
+                g.DrawString("디버그 — 최근 송출 키", DebugTitleFont, titleBrush, M + DbgPad, dy);
+            dy += dbgTitleH + 4;
+            using var lineBrush = new SolidBrush(Color.FromArgb(225, 214, 220, 230));
+            foreach (var l in _debug)
+            {
+                g.DrawString(l, DebugFont, lineBrush, M + DbgPad, dy);
+                dy += dbgLineH;
+            }
         }
         return bmp;
     }

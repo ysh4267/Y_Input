@@ -53,6 +53,10 @@ public sealed class InputBackend : IInputSink, IInputSource, IDisposable
     public void ConnectGamepad() => Gamepad.Connect();
     public void DisconnectGamepad() => Gamepad.Disconnect();
 
+    /// <summary>매크로 재생·위치 보정·룬 사용 등으로 실제 '송출된' 입력(성공 시) —
+    /// 오버레이 디버그 표시 등 관찰용. 송출 경로에 영향을 주지 않는다.</summary>
+    public event EventHandler<InputEvent>? Sent;
+
     // ---- IInputSink (재생) ----
     public void Send(InputEvent e)
     {
@@ -62,12 +66,14 @@ public sealed class InputBackend : IInputSink, IInputSource, IDisposable
             case MouseEvent me: KeyboardMouse.SendMouse(me); break;
             case TextEvent te: KeyboardMouse.SendText(te); break;
             case GamepadEvent ge: Gamepad.Send(ge); break;
-            case DelayEvent: break; // no-op — 대기는 MacroStep.DelayBeforeMs가 담당
-            case LoopStartEvent: break; // no-op — 반복 제어는 Player가 담당
-            case LoopEndEvent: break;   // no-op — 반복 제어는 Player가 담당
-            case PositionCorrectEvent: break; // no-op — 위치 보정은 Player 훅(Host)이 담당
+            case DelayEvent: return; // no-op — 대기는 MacroStep.DelayBeforeMs가 담당
+            case LoopStartEvent: return; // no-op — 반복 제어는 Player가 담당
+            case LoopEndEvent: return;   // no-op — 반복 제어는 Player가 담당
+            case PositionCorrectEvent: return; // no-op — 위치 보정은 Player 훅(Host)이 담당
+            case RuneUseEvent: return;         // no-op — 룬 사용은 Player 훅(Host)이 담당
             default: throw new NotSupportedException($"지원하지 않는 이벤트 타입: {e.GetType().Name}");
         }
+        Sent?.Invoke(this, e);
     }
 
     public void Dispose()

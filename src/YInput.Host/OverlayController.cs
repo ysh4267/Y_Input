@@ -1,7 +1,9 @@
 using System.Drawing;
 using System.Text.Json;
+using YInput.Core.Models;
 using YInput.Engine;
 using YInput.Host.Services;
+using YInput.Input;
 
 namespace YInput.Host;
 
@@ -40,19 +42,66 @@ public sealed class OverlayController : IDisposable
     private readonly System.Threading.Timer _pump; // 재생 중 ~30fps 렌더 펌프(이벤트 코얼레싱)
     private volatile bool _pumpOn;
 
-    public OverlayController(SynchronizationContext ui, string dataRoot, SocketHub hub, MacroService service, ProgressBroadcaster progress)
+    private readonly InputBackend? _backend;
+    // 디버그 — 매크로가 송출한 최근 키 입력(오버레이 디버그 섹션 표시용)
+    private readonly LinkedList<string> _sentKeys = new();
+    private const int MaxSentKeys = 10;
+
+    public OverlayController(SynchronizationContext ui, string dataRoot, SocketHub hub, MacroService service, ProgressBroadcaster progress, InputBackend? backend = null)
     {
         _ui = ui;
         _statePath = Path.Combine(dataRoot, "overlay.json");
         _hub = hub;
         _service = service;
         _progress = progress;
+        _backend = backend;
         _settings = Load();
 
         _progress.Progressed += OnProgress;
         _progress.Ended += OnEnded;
         _service.StatusChanged += OnStatus;
+        if (_backend is not null) _backend.Sent += OnInputSent;
         _pump = new System.Threading.Timer(_ => PumpTick(), null, Timeout.Infinite, Timeout.Infinite);
+    }
+
+    /// <summary>매크로가 송출한 키를 디버그 목록에 기록 — 룬 퍼즐 오입력 등 원인 추적용.
+    /// 렌더는 펌프(~30fps)가 코얼레싱하고, 펌프가 꺼져 있으면 즉시 1회 반영한다.</summary>
+    private void OnInputSent(object? sender, InputEvent e)
+    {
+        if (e is not KeyboardEvent ke) return; // 키보드만 — 마우스 이동 등은 노이즈
+        string line = $"{DateTime.Now:HH:mm:ss.fff}  {KeyLabel(ke.Code, (ke.State & 0x02) != 0)} {(ke.IsKeyUp ? "뗌" : "누름")}";
+        lock (_gate)
+        {
+            _sentKeys.AddLast(line);
+            while (_sentKeys.Count > MaxSentKeys) _sentKeys.RemoveFirst();
+        }
+        if (!_pumpOn) PushRows();
+    }
+
+    /// <summary>스캔코드(set 1) → 표시 이름. 흔한 키만 이름, 나머지는 SC 표기.</summary>
+    private static string KeyLabel(ushort sc, bool e0)
+    {
+        if (e0) return sc switch
+        {
+            0x48 => "↑", 0x50 => "↓", 0x4B => "←", 0x4D => "→",
+            0x1C => "NumEnter", 0x1D => "RCtrl", 0x38 => "RAlt",
+            0x52 => "Ins", 0x53 => "Del", 0x47 => "Home", 0x4F => "End", 0x49 => "PgUp", 0x51 => "PgDn",
+            _ => $"E0-{sc:X2}",
+        };
+        return sc switch
+        {
+            0x01 => "Esc", 0x0E => "BS", 0x0F => "Tab", 0x1C => "Enter", 0x1D => "Ctrl",
+            0x2A => "Shift", 0x36 => "RShift", 0x38 => "Alt", 0x39 => "Space", 0x3A => "Caps",
+            >= 0x3B and <= 0x44 => "F" + (sc - 0x3A), 0x57 => "F11", 0x58 => "F12",
+            0x02 => "1", 0x03 => "2", 0x04 => "3", 0x05 => "4", 0x06 => "5",
+            0x07 => "6", 0x08 => "7", 0x09 => "8", 0x0A => "9", 0x0B => "0",
+            0x10 => "Q", 0x11 => "W", 0x12 => "E", 0x13 => "R", 0x14 => "T",
+            0x15 => "Y", 0x16 => "U", 0x17 => "I", 0x18 => "O", 0x19 => "P",
+            0x1E => "A", 0x1F => "S", 0x20 => "D", 0x21 => "F", 0x22 => "G",
+            0x23 => "H", 0x24 => "J", 0x25 => "K", 0x26 => "L",
+            0x2C => "Z", 0x2D => "X", 0x2E => "C", 0x2F => "V", 0x30 => "B", 0x31 => "N", 0x32 => "M",
+            _ => $"SC{sc:X2}",
+        };
     }
 
     public OverlaySettings Get() { lock (_gate) return Clone(_settings); }
@@ -88,6 +137,7 @@ public sealed class OverlayController : IDisposable
         try { _progress.Progressed -= OnProgress; } catch { }
         try { _progress.Ended -= OnEnded; } catch { }
         try { _service.StatusChanged -= OnStatus; } catch { }
+        try { if (_backend is not null) _backend.Sent -= OnInputSent; } catch { }
         try { _pump.Dispose(); } catch { }
         try { _ui.Send(_ => { try { _window?.Close(); } catch { } _window = null; }, null); } catch { }
     }
@@ -214,7 +264,9 @@ public sealed class OverlayController : IDisposable
     private void PushRows()
     {
         var rows = BuildRows();
-        _ui.Post(_ => _window?.SetRows(rows), null);
+        List<string> keys;
+        lock (_gate) keys = _sentKeys.ToList();
+        _ui.Post(_ => { if (_window is null) return; _window.SetDebugKeys(keys); _window.SetRows(rows); }, null);
     }
 
     private List<OverlayRow> BuildRows()

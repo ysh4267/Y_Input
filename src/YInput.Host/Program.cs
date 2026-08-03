@@ -86,7 +86,7 @@ internal static class Program
         var uiSync = new System.Windows.Forms.WindowsFormsSynchronizationContext();
         SynchronizationContext.SetSynchronizationContext(uiSync);
         var widgets = new WidgetManager(uiSync, url, dataRoot, service);
-        var overlay = new OverlayController(uiSync, dataRoot, hub, service, progress); // 인게임 오버레이(GDI+ 레이어드)
+        var overlay = new OverlayController(uiSync, dataRoot, hub, service, progress, backend); // 인게임 오버레이(GDI+ 레이어드)
         var watcher = new PositionWatcher(dataRoot, hub, backend); // 위치 지킴이('위치 보정' 스텝의 실제 수행자)
         service.PositionCorrectHook = watcher.CorrectAsync;
         service.RuneUseHook = watcher.RuneUseAsync;
