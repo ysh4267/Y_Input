@@ -113,7 +113,6 @@ function wtSetStatus(msg, isErr) {
 function renderWatcher(s) {
   if (!s) return;
   wtSettings = s;
-  const en = $('wt-enabled'); if (en) en.checked = !!s.enabled;
   const tol = $('wt-tol'); if (tol && document.activeElement !== tol) tol.value = s.tolerancePx;
   const mx = $('wt-maxms'); if (mx && document.activeElement !== mx) mx.value = s.maxCorrectionMs;
   const img = $('wt-patch'); const info = $('wt-info');
@@ -1303,10 +1302,6 @@ function wire() {
   $('ov-enabled').onchange = onOverlayEnabled;
   $('ov-add').onclick = onOverlayAdd;
   $('ov-refresh').onclick = loadOverlayWindows;
-  $('wt-enabled').onchange = async () => {
-    try { renderWatcher(await api.setWatcher({ enabled: $('wt-enabled').checked })); }
-    catch (e) { log('error', e.message); }
-  };
   $('wt-winlist').onchange = async () => {
     const p = $('wt-winlist').value; if (!p) return;
     try { renderWatcher(await api.setWatcher({ process: p })); } catch (e) { log('error', e.message); }

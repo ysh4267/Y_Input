@@ -32,9 +32,9 @@ public sealed class Player
     public event EventHandler<PlaybackProgress>? Progress;
     public event EventHandler<Exception>? Failed;
 
-    /// <summary>매 반복 사이클 시작 전(첫 사이클 제외) 호출되는 비동기 훅 — 위치 보정 등. 인자 = 사이클 번호.
-    /// 취소는 OCE로 전파되어 재생이 정지 경로를 탄다. null이면 동작 불변.</summary>
-    public Func<int, CancellationToken, Task>? BeforeCycle { get; set; }
+    /// <summary>'위치 보정' 스텝(<see cref="PositionCorrectEvent"/>) 도달 시 호출되는 비동기 훅
+    /// (Host의 PositionWatcher.CorrectAsync가 주입됨). 취소는 OCE로 전파되어 정지 경로를 탄다. null이면 no-op.</summary>
+    public Func<CancellationToken, Task>? PositionCorrect { get; set; }
 
     public Player(IInputSink sink) => _sink = sink;
 
@@ -79,9 +79,6 @@ public sealed class Player
             var steps = macro.Steps;
             for (int loop = 0; loop < loops && !ct.IsCancellationRequested; loop++)
             {
-                if (loop > 0 && BeforeCycle is not null)
-                    await BeforeCycle(loop, ct).ConfigureAwait(false);
-
                 // 반복(Loop) 블록을 스택으로 해석: LoopStart/End를 짝지어 본문을 Count회 반복(중첩 가능).
                 var loopStack = new Stack<(int bodyStart, int total, int remaining)>();
                 int ip = 0;
@@ -104,6 +101,13 @@ public sealed class Player
                                 else ip++;
                             }
                             else ip++; // 짝 없는 끝 → 무시
+                            break;
+                        case PositionCorrectEvent:
+                            // 위치 보정 스텝 — Host 훅이 미니맵+템플릿으로 자리 이탈을 되돌린다(훅 없으면 no-op).
+                            Progress?.Invoke(this, new PlaybackProgress(loop, ip, steps.Count, 0, SnapshotLoops(loopStack)));
+                            if (PositionCorrect is not null)
+                                await PositionCorrect(ct).ConfigureAwait(false);
+                            ip++;
                             break;
                         case DelayEvent de:
                             // 대기는 '지연' 블록에서만 발생(속도·휴머나이즈 적용). 다른 블록은 즉시 실행.

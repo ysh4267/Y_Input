@@ -101,6 +101,7 @@
                 <button class="pal-item" data-type="text" draggable="true"><span class="pal-ico type-text">🔤</span> 텍스트</button>
                 <button class="pal-item" data-type="loop" draggable="true"><span class="pal-ico type-loopStart">🔁</span> 반복 (N회)</button>
                 <button class="pal-item" data-type="macroRef" draggable="true"><span class="pal-ico type-macroRef">🧩</span> 매크로 실행</button>
+                <button class="pal-item" data-type="positionCorrect" draggable="true"><span class="pal-ico type-positionCorrect">🧭</span> 위치 보정 <span class="pal-sub">자리 이탈 복귀</span></button>
               </aside>
 
               <div class="steps-wrap">
@@ -207,8 +208,7 @@
       </section>
       <section class="drawer-sec">
         <h3>위치 지킴이</h3>
-        <p class="hint">매크로 <b>반복 사이마다</b> 캐릭터가 저장된 자리에서 벗어나 있으면 <b>미니맵</b>으로 대략 복귀시키고, 저장해둔 <b>기준 화면</b>과 대조해 미세 조정합니다. 게임 창이 전면일 때만 동작합니다.</p>
-        <label class="sync-toggle"><input id="wt-enabled" type="checkbox"> 위치 지킴이 켜기</label>
+        <p class="hint">매크로 편집기에서 <b>🧭 위치 보정</b> 블록을 원하는 위치에 넣으면, 재생이 그 블록에 도달했을 때 캐릭터가 저장된 자리에서 벗어나 있는지 확인해 <b>미니맵</b>으로 대략 복귀시키고 저장해둔 <b>기준 화면</b>과 대조해 미세 조정합니다. 여기서는 기준 위치만 저장·관리합니다. 게임 창이 전면일 때만 동작합니다.</p>
         <div class="row" style="margin-top:10px">
           <select id="wt-winlist" class="ov-select"></select>
           <button id="wt-win-refresh" class="btn ghost sm" title="실행 중 창 목록 새로고침">↻</button>

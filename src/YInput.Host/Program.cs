@@ -79,8 +79,8 @@ internal static class Program
         SynchronizationContext.SetSynchronizationContext(uiSync);
         var widgets = new WidgetManager(uiSync, url, dataRoot, service);
         var overlay = new OverlayController(uiSync, dataRoot, hub, service, progress); // 인게임 오버레이(GDI+ 레이어드)
-        var watcher = new PositionWatcher(dataRoot, hub, backend); // 위치 지킴이(반복 사이클 사이 자리 보정)
-        service.CycleHook = watcher.CorrectAsync;
+        var watcher = new PositionWatcher(dataRoot, hub, backend); // 위치 지킴이('위치 보정' 스텝의 실제 수행자)
+        service.PositionCorrectHook = watcher.CorrectAsync;
 
         var app = BuildWebApp(service, hub, sync, widgets, overlay, watcher, url);
         app.StartAsync().GetAwaiter().GetResult();

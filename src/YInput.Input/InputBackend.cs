@@ -65,6 +65,7 @@ public sealed class InputBackend : IInputSink, IInputSource, IDisposable
             case DelayEvent: break; // no-op — 대기는 MacroStep.DelayBeforeMs가 담당
             case LoopStartEvent: break; // no-op — 반복 제어는 Player가 담당
             case LoopEndEvent: break;   // no-op — 반복 제어는 Player가 담당
+            case PositionCorrectEvent: break; // no-op — 위치 보정은 Player 훅(Host)이 담당
             default: throw new NotSupportedException($"지원하지 않는 이벤트 타입: {e.GetType().Name}");
         }
     }

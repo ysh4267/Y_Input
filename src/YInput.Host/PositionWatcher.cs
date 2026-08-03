@@ -12,7 +12,6 @@ namespace YInput.Host;
 /// <summary>위치 지킴이 설정(파일 영속 대상). 좌표는 모두 게임 창 상대(px).</summary>
 public sealed class WatcherSettings
 {
-    public bool Enabled { get; set; }
     public string Process { get; set; } = "maplestory";
 
     // 미니맵(코스 보정): 영역 + 저장 시점 플레이어 점(미니맵 상대)
@@ -83,13 +82,12 @@ public sealed class PositionWatcher : IDisposable
     // ---------- 조회/설정 ----------
     public object Get() { lock (_gate) return Snapshot(_settings); }
 
-    public object Update(bool? enabled, string? process, int? tolerancePx, double? msPerPx,
+    public object Update(string? process, int? tolerancePx, double? msPerPx,
                          int? maxCorrectionMs, double? minScore, int? miniTolerancePx, double? msPerMiniPx)
     {
         object snap;
         lock (_gate)
         {
-            if (enabled is bool en) _settings.Enabled = en;
             if (!string.IsNullOrWhiteSpace(process)) _settings.Process = Normalize(process);
             if (tolerancePx is int t && t >= 0) _settings.TolerancePx = t;
             if (msPerPx is double m && m > 0) _settings.MsPerPx = m;
@@ -199,14 +197,15 @@ public sealed class PositionWatcher : IDisposable
     }
 
     /// <summary>
-    /// 반복 사이클 사이 보정(Player.BeforeCycle → MacroService.CycleHook). 취소(정지)는 OCE로 전파해
-    /// 재생을 즉시 멈추고, 그 외 오류는 삼켜 다음 사이클을 계속한다. 어떤 경로로도 방향키가 눌린 채 남지 않는다.
+    /// '위치 보정' 스텝의 실제 수행(Player.PositionCorrect 훅). 취소(정지)는 OCE로 전파해
+    /// 재생을 즉시 멈추고, 그 외 오류는 삼켜 재생을 계속한다. 어떤 경로로도 방향키가 눌린 채 남지 않는다.
+    /// 기준 위치(미니맵+패치)가 저장돼 있지 않으면 no-op.
     /// </summary>
     public async Task CorrectAsync(CancellationToken ct)
     {
         WatcherSettings s; GrayImage? patch;
         lock (_gate) { s = Clone(_settings); patch = _patchGray; }
-        if (!s.Enabled || s.MiniW <= 0 || patch is null || s.PatchW <= 0) return;
+        if (s.MiniW <= 0 || patch is null || s.PatchW <= 0) return;
         if (!_sem.Wait(0)) return; // 다른 매크로가 이미 보정 중 → 스킵
 
         try
@@ -356,7 +355,6 @@ public sealed class PositionWatcher : IDisposable
 
     private object Snapshot(WatcherSettings s) => new
     {
-        enabled = s.Enabled,
         process = s.Process,
         hasMinimap = s.MiniW > 0,
         hasPatch = s.PatchW > 0 && File.Exists(_patchPath),
@@ -390,7 +388,7 @@ public sealed class PositionWatcher : IDisposable
 
     private static WatcherSettings Clone(WatcherSettings s) => new()
     {
-        Enabled = s.Enabled, Process = s.Process,
+        Process = s.Process,
         MiniX = s.MiniX, MiniY = s.MiniY, MiniW = s.MiniW, MiniH = s.MiniH,
         DotX = s.DotX, DotY = s.DotY, MiniTolerancePx = s.MiniTolerancePx, MsPerMiniPx = s.MsPerMiniPx,
         DotMinR = s.DotMinR, DotMinG = s.DotMinG, DotMaxB = s.DotMaxB,

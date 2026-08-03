@@ -273,7 +273,7 @@ public static class ApiEndpoints
         // ---- 위치 지킴이(반복 사이클 사이 자리 보정: 미니맵 코스 + 템플릿 파인) ----
         app.MapGet("/api/watcher", () => Results.Json(watcher.Get()));
         app.MapPost("/api/watcher", (WatcherBody? b) => Results.Json(
-            watcher.Update(b?.Enabled, b?.Process, b?.TolerancePx, b?.MsPerPx,
+            watcher.Update(b?.Process, b?.TolerancePx, b?.MsPerPx,
                            b?.MaxCorrectionMs, b?.MinScore, b?.MiniTolerancePx, b?.MsPerMiniPx)));
         // 게임 창 새 캡처(영역 지정 모달용). 창 없으면 409.
         app.MapGet("/api/watcher/frame", () => Guard(() =>
@@ -438,7 +438,7 @@ public static class ApiEndpoints
     private sealed record WidgetBody(string? Id = null);
     private sealed record OverlayBody(bool? Enabled = null);
     private sealed record OverlayTargetBody(string? Process = null);
-    private sealed record WatcherBody(bool? Enabled = null, string? Process = null, int? TolerancePx = null,
+    private sealed record WatcherBody(string? Process = null, int? TolerancePx = null,
                                       double? MsPerPx = null, int? MaxCorrectionMs = null, double? MinScore = null,
                                       int? MiniTolerancePx = null, double? MsPerMiniPx = null);
     private sealed record RegionBody(int X = 0, int Y = 0, int W = 0, int H = 0);

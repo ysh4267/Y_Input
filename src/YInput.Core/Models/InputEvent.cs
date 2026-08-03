@@ -15,6 +15,7 @@ namespace YInput.Core.Models;
 [JsonDerivedType(typeof(LoopStartEvent), "loopStart")]
 [JsonDerivedType(typeof(LoopEndEvent), "loopEnd")]
 [JsonDerivedType(typeof(MacroRefEvent), "macroRef")]
+[JsonDerivedType(typeof(PositionCorrectEvent), "positionCorrect")]
 public abstract class InputEvent
 {
     /// <summary>사람이 읽을 수 있는 요약(에디터 표시용).</summary>
@@ -129,6 +130,17 @@ public sealed class LoopEndEvent : InputEvent
 {
     [JsonIgnore]
     public override string Summary => "Loop end";
+}
+
+/// <summary>
+/// 위치 보정 블록 — 재생이 이 스텝에 도달하면 캐릭터가 저장된 자리(미니맵 점 + 기준 화면)에서
+/// 벗어났는지 확인하고 방향키로 되돌린 뒤 다음 스텝으로 진행한다. 실제 보정은 Host의
+/// PositionWatcher가 수행하며(Player에 훅으로 주입), 기준 위치가 저장돼 있지 않으면 no-op.
+/// </summary>
+public sealed class PositionCorrectEvent : InputEvent
+{
+    [JsonIgnore]
+    public override string Summary => "위치 보정";
 }
 
 /// <summary>

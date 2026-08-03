@@ -45,8 +45,8 @@ public sealed class MacroService
     /// <summary>로컬 매크로 변경 후 호출(Program이 GitHubSync.SchedulePush로 연결) — 동기화 푸시 예약.</summary>
     public Action? MacrosChanged { get; set; }
 
-    /// <summary>반복 사이클 사이에 실행할 훅(Program이 PositionWatcher.CorrectAsync로 연결) — 위치 보정.</summary>
-    public Func<CancellationToken, Task>? CycleHook { get; set; }
+    /// <summary>'위치 보정' 스텝에서 실행할 훅(Program이 PositionWatcher.CorrectAsync로 연결).</summary>
+    public Func<CancellationToken, Task>? PositionCorrectHook { get; set; }
 
     private void NotifyChanged() => MacrosChanged?.Invoke();
 
@@ -204,7 +204,7 @@ public sealed class MacroService
 
         var macro = _library.Load(id) ?? throw new FileNotFoundException("매크로를 찾을 수 없습니다: " + id);
         var player = new Player(_backend); // 매크로마다 독립 Player → 서로 비동기·동시 재생
-        if (CycleHook is { } hook) player.BeforeCycle = (_, ct) => hook(ct); // 반복 사이클 사이 위치 보정
+        player.PositionCorrect = PositionCorrectHook; // '위치 보정' 스텝 도달 시 실행
         // 진행 보고는 스텝마다(최대 ~1000/s) 오므로, ProgressBroadcaster가 매크로별 최신값만 ~60Hz로 합쳐 전송한다.
         player.Progress += (_, p) => _progress.Report(id, p);
         player.Failed += (_, ex) => Log("error", $"재생 오류({macro.Name}): {ex.Message}");

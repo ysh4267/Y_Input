@@ -15,7 +15,7 @@ function hotkeyToString(t) {
   return p.join('+');
 }
 
-const TYPE_NAME = { keyboard: '키', mouse: '마우스', gamepad: '패드', text: '텍스트', delay: '지연', loopStart: '반복', loopEnd: '반복', macroRef: '매크로' };
+const TYPE_NAME = { keyboard: '키', mouse: '마우스', gamepad: '패드', text: '텍스트', delay: '지연', loopStart: '반복', loopEnd: '반복', macroRef: '매크로', positionCorrect: '위치' };
 const fmtMs = (ms) => ms >= 1000 ? (ms / 1000).toFixed(2) + ' s' : Math.round(ms) + ' ms';
 const REDUCE_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -346,6 +346,10 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
         updateStats();
       };
       td.append(labelTag('실행'), sel);
+    } else if (t === 'positionCorrect') {
+      const span = document.createElement('span'); span.className = 'muted';
+      span.textContent = '저장된 자리에서 벗어났으면 미니맵+기준 화면으로 복귀 (☰ 메뉴 → 위치 지킴이에서 위치 저장)';
+      td.append(span);
     }
   }
 
@@ -619,6 +623,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
         { delayBeforeMs: 0, event: km.loopStartEvent(2) },
         { delayBeforeMs: 0, event: km.loopEndEvent() }];
       case 'macroRef': return [{ delayBeforeMs: 0, event: { '$type': 'macroRef', macroId: '', name: '' } }];
+      case 'positionCorrect': return [{ delayBeforeMs: 0, event: { '$type': 'positionCorrect' } }];
       case 'record': return [{ delayBeforeMs: 0, event: { '$type': 'record', delayMode: 'record', fixedMs: 50, targets: { keyboard: true, mouseButtons: false, mouseMove: false, mouseWheel: false, gamepad: false } } }];
       default: return [];
     }

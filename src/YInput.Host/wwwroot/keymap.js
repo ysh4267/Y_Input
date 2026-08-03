@@ -300,11 +300,12 @@ export function summarizeEvent(ev) {
     case 'loopStart': return `반복 시작 ×${ev.count}`;
     case 'loopEnd': return '반복 끝';
     case 'macroRef': return `매크로 실행 "${ev.name || ev.macroId || '?'}"`;
+    case 'positionCorrect': return '위치 보정 — 자리 이탈 시 복귀';
     default: return ev['$type'] || '?';
   }
 }
 
 export const TYPE_ICON = {
   keyboard: '⌨', mouse: '🖱', gamepad: '🎮', text: '🔤', delay: '⏱',
-  loopStart: '🔁', loopEnd: '🏁', macroRef: '🧩',
+  loopStart: '🔁', loopEnd: '🏁', macroRef: '🧩', positionCorrect: '🧭',
 };
