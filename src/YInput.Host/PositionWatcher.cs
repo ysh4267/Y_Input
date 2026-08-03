@@ -658,7 +658,7 @@ public sealed class PositionWatcher : IDisposable
                             catch { /* 일시적 캡처 실패 — 다음 폴링 */ }
                             if (open) await PreciseDelay.WaitAsync(250, ct).ConfigureAwait(false);
                         }
-                        if (open) { SaveRuneShots(); Status("fail", "퍼즐이 닫히지 않아 재발동을 포기합니다."); return; }
+                        if (open) { SaveRuneShots(beforeCrop); Status("fail", "퍼즐이 닫히지 않아 재발동을 포기합니다."); return; }
                         await PreciseDelay.WaitAsync(300, ct).ConfigureAwait(false);
                     }
                     await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
@@ -669,7 +669,7 @@ public sealed class PositionWatcher : IDisposable
                 }
                 if (arrows is null)
                 {
-                    SaveRuneShots(); // 실패 재현용 — 시간 제약이 끝났으니 이제 저장
+                    SaveRuneShots(beforeCrop); // 실패 재현용 — 시간 제약이 끝났으니 이제 저장
                     Status("fail", "룬 퍼즐 화살표를 인식하지 못했습니다 — 직접 입력해 주세요(logs\\rune-puzzle.png 확인).");
                     return;
                 }
@@ -684,7 +684,7 @@ public sealed class PositionWatcher : IDisposable
                 }
                 var seq = string.Join(" ", arrows.Select(a => a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' }));
                 Status("rune", $"퍼즐 인식: {seq} — 입력했습니다");
-                SaveRuneShots(); // 판정에 쓴 버스트 저장(오답 재현용)
+                SaveRuneShots(beforeCrop); // 판정에 쓴 버스트 저장(오답 재현용)
 
                 // 입력 후 퍼즐이 사라졌는지 확인 — 남아 있으면 인식이 틀렸을 가능성
                 await PreciseDelay.WaitAsync(900, ct).ConfigureAwait(false);
@@ -737,6 +737,14 @@ public sealed class PositionWatcher : IDisposable
             res = RuneArrowDetector.FindArrows(frames[^1], beforeCrop, beforeCrop, precropped: true);
             if (res is not null) FileLog.Write("info", "[위치보정:rune] 퍼즐 인식 경로: 발동 전 차분 폴백");
         }
+        if (res is null && frames.Count > 0)
+        {
+            // 차분 없이 채도 마스크만 — 발동 전 캡처(PrintWindow)와 판정 캡처(화면 복사)의 미세한
+            // 픽셀 차이로 차분이 오염되면 위 두 경로가 실패한다(23:33 실행). 배너 밴드·간격·크기·
+            // 정렬 검사가 오탐 줄을 막으므로 채도 단독으로도 두 맵 실측 프레임에서 정답을 냈다.
+            res = RuneArrowDetector.FindArrows(frames[^1], null, beforeCrop, precropped: true);
+            if (res is not null) FileLog.Write("info", "[위치보정:rune] 퍼즐 인식 경로: 채도 단독 폴백");
+        }
         // 진단 보관은 '첫 버스트'(퍼즐이 확실히 열려 있던 순간) — 이후 버스트가 덮어쓰지 않는다
         if (_runeShots.Count == 0) _runeShots.AddRange(frames);
         else foreach (var f in frames) f.Dispose();
@@ -745,13 +753,14 @@ public sealed class PositionWatcher : IDisposable
 
     /// <summary>마지막 판정 버스트를 logs\rune-frame-N.png·rune-puzzle.png로 저장(오답·실패 재현용,
     /// --rune-analyze 다중 입력). PNG 인코딩이 느려 반드시 판정·입력이 끝난 뒤에 호출한다.</summary>
-    private void SaveRuneShots()
+    private void SaveRuneShots(Bitmap? beforeCrop = null)
     {
         if (_runeShots.Count == 0) return;
         FileLog.DeletePngs("rune-frame-"); // 이전 실행 잔재(프레임 수·크기가 다르면 재현 분석이 깨진다)
         for (int i = 0; i < _runeShots.Count; i++)
             FileLog.SavePng($"rune-frame-{i}", ScreenCapture.ToPng(_runeShots[i]));
         FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(_runeShots[^1]));
+        if (beforeCrop is not null) FileLog.SavePng("rune-before", ScreenCapture.ToPng(beforeCrop)); // 차분 기준 재현용
     }
 
     private void ClearRuneShots()
