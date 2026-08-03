@@ -424,7 +424,12 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
     const dotMark = document.createElement('span'); dotMark.className = 'spot-dot-marker'; dotMark.hidden = true;
     dotMark.title = '감지된 미니맵 캐릭터 점';
     frameWrap.append(fimg, cross, box, dotMark);
-    panel.append(frameWrap);
+    // 자동 감지된 미니맵 확대 미리보기(감지 점 중심 크롭 — 서버가 마커까지 그려서 내려줌)
+    const miniCol = document.createElement('span'); miniCol.className = 'spot-mini-col'; miniCol.hidden = true;
+    const miniImg = document.createElement('img'); miniImg.className = 'spot-mini-view'; miniImg.alt = '감지된 미니맵'; miniImg.draggable = false;
+    const miniLabel = document.createElement('span'); miniLabel.className = 'muted'; miniLabel.textContent = '감지된 미니맵 (확대)';
+    miniCol.append(miniImg, miniLabel);
+    panel.append(frameWrap, miniCol);
     const stat = document.createElement('div'); stat.className = 'spot-stat muted';
     stat.textContent = '게임 화면에서 내 캐릭터를 클릭해 위치를 찍으세요…';
     bConfirm.disabled = true; // 앵커(캐릭터 클릭) 전에는 확정 불가 — 엉뚱한 곳 저장 방지
@@ -474,18 +479,21 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
         const live = await api.watcherLive();
         if (spotExpandedUid !== step._uid) return; // 폴링 중 접힘
         if (!live.ok) {
-          liveInfo = null; cross.hidden = true; box.hidden = true; dotMark.hidden = true; bConfirm.disabled = true;
+          liveInfo = null; cross.hidden = true; box.hidden = true; dotMark.hidden = true; miniCol.hidden = true; bConfirm.disabled = true;
           stat.textContent = live.error;
           return;
         }
         liveInfo = live;
-        fimg.src = '/api/watcher/live/frame?ts=' + Date.now();
+        const ts = Date.now();
+        fimg.src = '/api/watcher/live/frame?ts=' + ts;
         // 화면 전체 스캔으로 감지된 캐릭터 점(미니맵이 어디 있든) — 노란 마커로 표시
         if (live.dotFound) {
           dotMark.style.left = (live.dotX / live.frameW * 100) + '%';
           dotMark.style.top = (live.dotY / live.frameH * 100) + '%';
           dotMark.hidden = false;
-        } else dotMark.hidden = true;
+          miniImg.src = '/api/watcher/live/mini?ts=' + ts;
+          miniCol.hidden = false;
+        } else { dotMark.hidden = true; miniCol.hidden = true; }
         drawAnchor();
         updateStat();
       } catch (err) { stat.textContent = '미리보기 실패: ' + err.message; }

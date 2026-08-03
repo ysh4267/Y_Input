@@ -133,7 +133,8 @@ public sealed class PositionWatcher : IDisposable
     }
 
     // ---------- 실시간 미리보기(블록 확장 카드) ----------
-    private Bitmap? _liveFrame; // 마지막 Live() 캡처 — live/minimap·live/patch 크롭이 같은 프레임을 사용
+    private Bitmap? _liveFrame;  // 마지막 Live() 캡처 — live/frame·live/mini가 같은 프레임을 사용
+    private PointF? _liveDot;    // 마지막 Live()에서 감지된 캐릭터 점(창 상대) — 미니맵 확대 미리보기 중심
 
     /// <summary>현재 게임 화면을 캡처해 미니맵 점·자동 패치 rect를 계산한다(키 입력 없음).
     /// 이어지는 <see cref="LiveCrop"/>이 이 프레임에서 미리보기 이미지를 잘라낸다.</summary>
@@ -154,6 +155,7 @@ public sealed class PositionWatcher : IDisposable
                                                  s.DotMinR, s.DotMinG, s.DotMaxB);
             bool dotFound = cands.Count > 0;
             var dot = dotFound ? MinimapDetector.Pick(cands).Center : PointF.Empty;
+            _liveDot = dotFound ? dot : null;
             return new
             {
                 ok = true,
@@ -170,6 +172,25 @@ public sealed class PositionWatcher : IDisposable
     public byte[]? LiveFrame()
     {
         lock (_gate) return _liveFrame is null ? null : ScreenCapture.ToPng(_liveFrame);
+    }
+
+    /// <summary>자동 감지된 미니맵 확대 미리보기 — 감지된 캐릭터 점을 중심으로 잘라 마커(노란 링)를
+    /// 그려서 반환. 점 미탐지/프레임 없음이면 null.</summary>
+    public byte[]? LiveMini()
+    {
+        lock (_gate)
+        {
+            if (_liveFrame is null || _liveDot is not { } dot) return null;
+            const int W = 180, H = 130; // 점 주변 확대 영역(창 px)
+            var r = ClampRect(new Rectangle((int)dot.X - W / 2, (int)dot.Y - H / 2, W, H),
+                              _liveFrame.Width, _liveFrame.Height);
+            if (r.Width <= 0 || r.Height <= 0) return null;
+            using var crop = _liveFrame.Clone(r, _liveFrame.PixelFormat);
+            using (var g = Graphics.FromImage(crop))
+            using (var pen = new Pen(Color.FromArgb(255, 216, 59), 2f))
+                g.DrawEllipse(pen, dot.X - r.X - 5, dot.Y - r.Y - 5, 10, 10);
+            return ScreenCapture.ToPng(crop);
+        }
     }
 
     // ---------- 스팟(블록별 기준 위치) ----------

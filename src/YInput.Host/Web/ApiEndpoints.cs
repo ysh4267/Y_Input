@@ -298,6 +298,12 @@ public static class ApiEndpoints
             var png = watcher.LiveFrame();
             return png is null ? Results.NotFound(new { error = "미리보기 프레임이 없습니다." }) : Results.File(png, "image/png");
         });
+        // 자동 감지된 미니맵 확대 미리보기(감지 점 중심 크롭 + 마커)
+        app.MapGet("/api/watcher/live/mini", () =>
+        {
+            var png = watcher.LiveMini();
+            return png is null ? Results.NotFound(new { error = "감지된 점이 없습니다." }) : Results.File(png, "image/png");
+        });
 
         // ---- WebSocket ----
         app.Map("/ws", async (HttpContext ctx) =>
