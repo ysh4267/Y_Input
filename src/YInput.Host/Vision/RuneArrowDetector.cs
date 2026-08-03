@@ -11,11 +11,13 @@ internal readonly record struct ArrowSample(PointF Center, char Dir, bool[] Sig)
 
 /// <summary>
 /// 룬 발동(스페이스) 후 화면 상단 배너 아래에 뜨는 방향키 퍼즐(화살표 4개)을 인식한다.
-/// 화살표는 채도 높은 초록·주황 그라데이션의 작은 셰브론 글리프(실측 스크린샷 기준 ~20~30px).
-/// 색 그라데이션은 애니메이션이라 프레임마다 위치가 달라 색 순서로 방향을 정하지 않는다. 대신:
-///  ① 발동 직전 프레임과의 차분으로 '새로 나타난' 픽셀만 남기고(배경 나무·이펙트 배제)
-///  ② 채도 높은 초록/웜톤(주황·빨강·노랑) 픽셀을 블롭으로 묶어 한 줄(4개)을 고른 뒤
-///  ③ 블롭 가장자리 프로파일로 분류 — 화살표(셰브론)의 꼭짓점은 가리키는 쪽 가장자리의
+/// 화살표는 채도 높은 작은 글리프(~20~30px)인데 <b>색은 룬마다 다르고</b> 그라데이션도
+/// 애니메이션이라, 특정 색을 가정하지 않는다. 대신:
+///  ① 발동 직전 프레임과의 차분으로 '새로 나타난' 픽셀만 남기고(배경·이펙트 배제)
+///  ② 안내 배너("룬을 해방하려면…" — 가로로 넓게 변한 띠)를 찾아 그 아래 좁은 밴드로
+///     탐색을 제한하고(캐릭터 주변 데미지 숫자 같은 '한 줄 4개' 오탐 배제)
+///  ③ 채도 높은(색상 불문) 픽셀 블롭에서 한 줄 4개를 고른 뒤
+///  ④ 블롭 가장자리 프로파일로 분류 — 화살표의 꼭짓점은 가리키는 쪽 가장자리의
 ///     '가운데'가 바깥보다 볼록하게 튀어나온다.
 /// </summary>
 internal static class RuneArrowDetector
@@ -25,6 +27,11 @@ internal static class RuneArrowDetector
     private const double RegionY0 = 0.02, RegionY1 = 0.60;
 
     private const int DiffMin = 60;      // 발동 전후 프레임 차이(|ΔR|+|ΔG|+|ΔB|) 임계
+    private const int VividMax = 130;    // 채도 판정: 최대 채널 밝기 하한
+    private const int VividSat = 60;     // 채도 판정: (최대-최소) 하한 — 색상 자체는 특정하지 않는다
+    private const double BannerWideFrac = 0.30; // 안내 배너 판정: 가로 이 비율 이상 변한 행
+    private const int BannerMinRows = 6;        // 그런 행이 연속 이만큼 = 배너
+    private const double ArrowBandFrac = 0.22;  // 배너 상단부터 화면 높이의 이 비율 안에서만 화살표 탐색
     private const int MinPieceArea = 12; // 블롭 조각 최소 픽셀(그라데이션·외곽선으로 쪼개짐 흡수)
     private const int MergePx = 18;      // 같은 화살표로 병합하는 조각 간 거리
     private const int MinArrowArea = 50, MaxArrowArea = 2500;
@@ -48,14 +55,15 @@ internal static class RuneArrowDetector
         if (before is not null && (before.Width != frame.Width || before.Height != frame.Height)) before = null;
 
         int w = region.Width, h = region.Height;
-        var mask = BuildMask(frame, before, region, w, h);
+        var mask = BuildMask(frame, before, region, w, h, out int bandY0, out int bandY1);
 
-        // 조각 블롭 → 근접 병합 → 화살표 크기 필터
+        // 조각 블롭 → 근접 병합 → 화살표 크기 필터 + 배너 아래 밴드 제한
         var pieces = FindBlobs(mask, w, h);
         var arrows0 = MergeNear(pieces);
         var cands = arrows0.Where(b =>
             b.Area is >= MinArrowArea and <= MaxArrowArea &&
-            b.W is >= MinArrowBox and <= MaxArrowBox && b.H is >= MinArrowBox and <= MaxArrowBox).ToList();
+            b.W is >= MinArrowBox and <= MaxArrowBox && b.H is >= MinArrowBox and <= MaxArrowBox &&
+            b.Cy >= bandY0 && b.Cy <= bandY1).ToList();
         if (cands.Count < 4) return null;
 
         // 같은 줄(Y ±RowBandPx)에 나열된 묶음 중 가장 큰 것에서 4개 선택(초과분은 면적 큰 순)
@@ -102,10 +110,14 @@ internal static class RuneArrowDetector
         return (double)same / a.Length >= minMatch;
     }
 
-    /// <summary>화살표 픽셀 마스크 — 채도 높은 초록/웜톤이고, before가 있으면 '변한' 픽셀만.</summary>
-    private static bool[] BuildMask(Bitmap frame, Bitmap? before, Rectangle region, int w, int h)
+    /// <summary>화살표 픽셀 마스크 — 채도 높은 픽셀(색상 불문)이고, before가 있으면 '변한' 픽셀만.
+    /// bandY0/Y1 = 화살표 탐색 허용 Y 범위(영역 상대). before 차분으로 안내 배너(가로로 넓게 변한
+    /// 띠)를 찾으면 그 상단부터 화면 높이 22% 아래까지로 제한 — 캐릭터 주변 데미지 숫자 배제.</summary>
+    private static bool[] BuildMask(Bitmap frame, Bitmap? before, Rectangle region, int w, int h,
+                                    out int bandY0, out int bandY1)
     {
         var mask = new bool[w * h];
+        var rowDiff = new int[h]; // 행별 '변한 픽셀' 수 — 배너 위치 추정용
         var data = frame.LockBits(region, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
         var dataB = before?.LockBits(region, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
         try
@@ -120,15 +132,16 @@ internal static class RuneArrowDetector
                     for (int x = 0; x < w; x++)
                     {
                         byte b = row[x * 4], g = row[x * 4 + 1], r = row[x * 4 + 2];
-                        // 네온 초록(머리/몸통) 또는 웜톤 주황·빨강·노랑(꼬리)
-                        bool colored = (g >= 130 && g - b >= 40 && g - r >= 10)
-                                    || (r >= 140 && r - b >= 50);
-                        if (colored && rowB is not null)
+                        bool changed = true;
+                        if (rowB is not null)
                         {
                             int d = Math.Abs(r - rowB[x * 4 + 2]) + Math.Abs(g - rowB[x * 4 + 1]) + Math.Abs(b - rowB[x * 4]);
-                            colored = d >= DiffMin; // 발동 전에도 있던 색(배경 나무 등)은 배제
+                            changed = d >= DiffMin;
+                            if (changed) rowDiff[y]++;
                         }
-                        mask[o + x] = colored;
+                        // 색상은 룬마다 달라 특정하지 않는다 — 밝고 채도 높은 픽셀 전부
+                        int max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
+                        mask[o + x] = changed && max >= VividMax && max - min >= VividSat;
                     }
                 }
             }
@@ -137,6 +150,18 @@ internal static class RuneArrowDetector
         {
             frame.UnlockBits(data);
             if (dataB is { } db2) before!.UnlockBits(db2);
+        }
+
+        // 안내 배너 탐색: 위에서부터 '가로로 넓게 변한' 행이 연속되는 첫 띠 — 화살표는 그 근처 아래.
+        bandY0 = 0; bandY1 = h - 1;
+        if (before is not null)
+        {
+            int wide = (int)(w * BannerWideFrac), run = 0;
+            for (int y = 0; y < h; y++)
+            {
+                if (rowDiff[y] >= wide) { if (++run >= BannerMinRows) { bandY0 = y - run + 1; bandY1 = Math.Min(h - 1, bandY0 + (int)(frame.Height * ArrowBandFrac)); break; } }
+                else run = 0;
+            }
         }
         return mask;
     }

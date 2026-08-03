@@ -688,6 +688,7 @@ public sealed class PositionWatcher : IDisposable
         var locked = new char?[4];
         var centers = new PointF[4];
         var runSig = new bool[4][]; var runDir = new char[4]; var runLen = new int[4]; var runStartMs = new long[4];
+        var runCtr = new PointF[4]; // 런 시작 시 중심 — 떠서 움직이는 오탐(데미지 숫자 등)은 잠기지 않게
         var votes = new Dictionary<char, int>[4];
         for (int j = 0; j < 4; j++) votes[j] = new Dictionary<char, int>();
         bool rowSeen = false, shotSaved = false, fastMode = false;
@@ -712,16 +713,17 @@ public sealed class PositionWatcher : IDisposable
                             centers[j] = row[j].Center;
                             if (locked[j] is not null) continue;
                             votes[j][row[j].Dir] = votes[j].GetValueOrDefault(row[j].Dir) + 1;
-                            // 멈춤 판정: '런 시작' 모양과 계속 같아야 함(느린 회전은 누적 드리프트로 깨짐)
-                            // + 최소 지속시간(중복 캡처 프레임 오판 방지)
+                            // 멈춤 판정: '런 시작' 모양·위치가 계속 같아야 함(느린 회전은 누적 드리프트로,
+                            // 떠오르는 데미지 숫자 등은 중심 이동으로 깨짐) + 최소 지속시간(중복 캡처 오판 방지)
                             if (runSig[j] is not null && runDir[j] == row[j].Dir
-                                && RuneArrowDetector.SigSimilar(runSig[j], row[j].Sig))
+                                && RuneArrowDetector.SigSimilar(runSig[j], row[j].Sig)
+                                && Math.Abs(row[j].Center.X - runCtr[j].X) <= 3 && Math.Abs(row[j].Center.Y - runCtr[j].Y) <= 3)
                             {
                                 runLen[j]++;
                                 if (runLen[j] >= ArrowStableRun && nowMs - runStartMs[j] >= ArrowStableMinMs)
                                 { locked[j] = runDir[j]; lockedCount++; }
                             }
-                            else { runSig[j] = row[j].Sig; runDir[j] = row[j].Dir; runLen[j] = 1; runStartMs[j] = nowMs; }
+                            else { runSig[j] = row[j].Sig; runDir[j] = row[j].Dir; runLen[j] = 1; runStartMs[j] = nowMs; runCtr[j] = row[j].Center; }
                         }
                     }
                     else if (!rowSeen && sw.ElapsedMilliseconds >= ArrowFindGraceMs)
