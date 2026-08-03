@@ -294,11 +294,19 @@ public static class ApiEndpoints
                 ? Results.NotFound(new { error = "저장된 위치가 없습니다." })
                 : Results.File(png, "image/png"));
         }));
-        app.MapPost("/api/watcher/spots/{id}/region", (string id, RegionBody? b) => Guard(() =>
-            Task.FromResult(b is null ? Results.BadRequest(new { error = "영역이 필요합니다." })
-                                      : Results.Json(watcher.SetSpotRegion(id, b.X, b.Y, b.W, b.H)))));
+        // 확정: 지금 화면을 캡처해 이 블록의 기준 위치로 저장(확장 카드의 [확정] 버튼)
+        app.MapPost("/api/watcher/spots/{id}/capture", (string id) => Guard(() =>
+            Task.FromResult(Results.Json(watcher.CaptureSpot(id)))));
         app.MapPost("/api/watcher/spots/{id}/test", (string id) => Guard(() =>
             Task.FromResult(Results.Json(watcher.TestSpot(id)))));
+        // 실시간 미리보기(확장 카드 폴링): JSON 측정값 → 같은 프레임의 미니맵/패치 크롭 PNG
+        app.MapGet("/api/watcher/live", () => Results.Json(watcher.Live()));
+        app.MapGet("/api/watcher/live/{what}", (string what) =>
+        {
+            if (what is not ("minimap" or "patch")) return Results.NotFound();
+            var png = watcher.LiveCrop(what);
+            return png is null ? Results.NotFound(new { error = "미리보기 프레임이 없습니다." }) : Results.File(png, "image/png");
+        });
 
         // ---- WebSocket ----
         app.Map("/ws", async (HttpContext ctx) =>

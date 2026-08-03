@@ -33,6 +33,12 @@ public sealed class WatcherSettings
     public double MinScore { get; set; } = 0.60;
     public double MsPerPx { get; set; } = 12;
 
+    // 자동 기준 패치 크기/위치 — 창 가로 중앙, 세로 중앙에서 아래로 오프셋(캐릭터 발판 부근).
+    // 카메라-추적 시 캐릭터가 화면 중앙에 오므로 그 발밑 지형이 기준이 된다. UI 미노출.
+    public int PatchW { get; set; } = 120;
+    public int PatchH { get; set; } = 64;
+    public int PatchOffsetY { get; set; } = 24;
+
     public int MaxHoldMs { get; set; } = 350;
     public int SettleMs { get; set; } = 150;
     public int MaxCorrectionMs { get; set; } = 6000;
@@ -136,26 +142,79 @@ public sealed class PositionWatcher : IDisposable
         lock (_gate) return Snapshot(_settings);
     }
 
+    // ---------- 실시간 미리보기(블록 확장 카드) ----------
+    private Bitmap? _liveFrame; // 마지막 Live() 캡처 — live/minimap·live/patch 크롭이 같은 프레임을 사용
+
+    /// <summary>현재 게임 화면을 캡처해 미니맵 점·자동 패치 rect를 계산한다(키 입력 없음).
+    /// 이어지는 <see cref="LiveCrop"/>이 이 프레임에서 미리보기 이미지를 잘라낸다.</summary>
+    public object Live()
+    {
+        lock (_gate)
+        {
+            var s = _settings;
+            if (s.MiniW <= 0) return new { ok = false, needMinimap = true, error = "미니맵 영역이 지정되지 않았습니다." };
+            if (!WindowLocator.TryGetWindowRect(s.Process, out var win))
+                return new { ok = false, needMinimap = false, error = $"'{s.Process}' 창을 찾을 수 없습니다." };
+
+            _liveFrame?.Dispose();
+            _liveFrame = ScreenCapture.Capture(win);
+
+            var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
+            bool dotFound = MinimapDetector.TryFindPlayerDot(_liveFrame, mini, out var dot, s.DotMinR, s.DotMinG, s.DotMaxB);
+            var patch = ClampRect(AutoPatchRect(s, _liveFrame.Width, _liveFrame.Height), _liveFrame.Width, _liveFrame.Height);
+            return new
+            {
+                ok = true,
+                dotFound, dotX = dot.X, dotY = dot.Y,
+                miniW = s.MiniW, miniH = s.MiniH,
+                patchW = patch.Width, patchH = patch.Height,
+                foreground = WindowLocator.IsForeground(s.Process),
+            };
+        }
+    }
+
+    /// <summary>마지막 Live() 프레임에서 미리보기 크롭 PNG. what = "minimap" | "patch".</summary>
+    public byte[]? LiveCrop(string what)
+    {
+        lock (_gate)
+        {
+            if (_liveFrame is null) return null;
+            var s = _settings;
+            var r = what == "minimap"
+                ? new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH)
+                : AutoPatchRect(s, _liveFrame.Width, _liveFrame.Height);
+            r = ClampRect(r, _liveFrame.Width, _liveFrame.Height);
+            if (r.Width <= 0 || r.Height <= 0) return null;
+            using var crop = _liveFrame.Clone(r, _liveFrame.PixelFormat);
+            return ScreenCapture.ToPng(crop);
+        }
+    }
+
     // ---------- 스팟(블록별 기준 위치) ----------
-    /// <summary>마지막 캡처 프레임에서 스팟의 기준 패치를 지정하고, 같은 프레임의 미니맵 점을 함께 저장한다.</summary>
-    public object SetSpotRegion(string id, int x, int y, int w, int h)
+    /// <summary>확정 — 지금 이 순간의 화면을 새로 캡처해 미니맵 점 + 자동 패치 영역을 스팟으로 저장한다.
+    /// (블록 확장 카드에서 실시간 미리보기를 보다가 [확정]을 눌렀을 때)</summary>
+    public object CaptureSpot(string id)
     {
         RequireValidId(id);
         lock (_gate)
         {
-            var frame = _lastFrame ?? throw new InvalidOperationException("먼저 화면을 캡처하세요.");
-            if (_settings.MiniW <= 0) throw new InvalidOperationException("먼저 미니맵 영역을 지정하세요.");
-            var rect = ClampRect(x, y, w, h, frame.Width, frame.Height);
-            if (rect.Width < 16 || rect.Height < 16) throw new ArgumentException("기준 영역이 너무 작습니다(최소 16×16px).");
+            var s = _settings;
+            if (s.MiniW <= 0) throw new InvalidOperationException("먼저 미니맵 영역을 지정하세요.");
+            if (!WindowLocator.TryGetWindowRect(s.Process, out var win))
+                throw new InvalidOperationException($"'{s.Process}' 창을 찾을 수 없습니다. 게임이 실행 중인지 확인하세요.");
 
-            var mini = new Rectangle(_settings.MiniX, _settings.MiniY, _settings.MiniW, _settings.MiniH);
-            if (!MinimapDetector.TryFindPlayerDot(frame, mini, out var dot, _settings.DotMinR, _settings.DotMinG, _settings.DotMaxB))
-                throw new ArgumentException("미니맵에서 플레이어 노란 점을 찾지 못했습니다. 미니맵이 가려지지 않았는지 확인하세요.");
+            using var frame = ScreenCapture.Capture(win);
+            var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
+            if (!MinimapDetector.TryFindPlayerDot(frame, mini, out var dot, s.DotMinR, s.DotMinG, s.DotMaxB))
+                throw new ArgumentException("미니맵에서 플레이어 노란 점을 찾지 못했습니다. 미니맵이 펼쳐져 있고 가려지지 않았는지 확인하세요.");
+
+            var rect = ClampRect(AutoPatchRect(s, frame.Width, frame.Height), frame.Width, frame.Height);
+            if (rect.Width < 16 || rect.Height < 16) throw new ArgumentException("기준 영역을 잡을 수 없습니다(창이 너무 작음).");
 
             using var patchBmp = frame.Clone(rect, frame.PixelFormat);
             var gray = TemplateMatcher.ToGray(patchBmp);
             if (TemplateMatcher.StdDev(gray) < MinPatchStdDev)
-                throw new ArgumentException("선택한 영역의 특징이 부족합니다(거의 단색). 무늬가 있는 지형·배경을 선택하세요.");
+                throw new ArgumentException("캐릭터 발밑 배경의 특징이 부족합니다(거의 단색). 무늬 있는 지형 위에서 확정하세요.");
 
             var spot = new SpotData
             {
@@ -170,6 +229,10 @@ public sealed class PositionWatcher : IDisposable
         }
         return GetSpot(id);
     }
+
+    /// <summary>자동 기준 패치 rect — 창 가로 중앙, 세로 중앙 + 오프셋(캐릭터 발판 부근).</summary>
+    private static Rectangle AutoPatchRect(WatcherSettings s, int w, int h) =>
+        new(w / 2 - s.PatchW / 2, h / 2 + s.PatchOffsetY, s.PatchW, s.PatchH);
 
     /// <summary>스팟 정보(블록 카드 표시용). 없으면 exists=false.</summary>
     public object GetSpot(string id)
@@ -310,7 +373,11 @@ public sealed class PositionWatcher : IDisposable
 
     public void Dispose()
     {
-        lock (_gate) { _lastFrame?.Dispose(); _lastFrame = null; }
+        lock (_gate)
+        {
+            _lastFrame?.Dispose(); _lastFrame = null;
+            _liveFrame?.Dispose(); _liveFrame = null;
+        }
         _sem.Dispose();
     }
 
@@ -387,6 +454,8 @@ public sealed class PositionWatcher : IDisposable
 
     private static Rectangle ClampRect(int x, int y, int w, int h, int maxW, int maxH) =>
         Rectangle.Intersect(new Rectangle(x, y, w, h), new Rectangle(0, 0, maxW, maxH));
+    private static Rectangle ClampRect(Rectangle r, int maxW, int maxH) =>
+        Rectangle.Intersect(r, new Rectangle(0, 0, maxW, maxH));
 
     private void Status(string state, string message, int? miniDx = null, int? dx = null, double? score = null) =>
         _hub.Broadcast("watcherStatus", new { state, message, miniDx, dx, score });
@@ -429,6 +498,7 @@ public sealed class PositionWatcher : IDisposable
         MiniTolerancePx = s.MiniTolerancePx, MsPerMiniPx = s.MsPerMiniPx,
         DotMinR = s.DotMinR, DotMinG = s.DotMinG, DotMaxB = s.DotMaxB,
         TolerancePx = s.TolerancePx, MinScore = s.MinScore, MsPerPx = s.MsPerPx,
+        PatchW = s.PatchW, PatchH = s.PatchH, PatchOffsetY = s.PatchOffsetY,
         MaxHoldMs = s.MaxHoldMs, SettleMs = s.SettleMs, MaxCorrectionMs = s.MaxCorrectionMs,
     };
 }
