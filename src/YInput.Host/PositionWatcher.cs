@@ -619,6 +619,9 @@ public sealed class PositionWatcher : IDisposable
                 List<RuneArrow>? arrows = null;
                 for (int attempt = 0; attempt < 2 && arrows is null; attempt++)
                 {
+                    // 발동·캡처 중에도 게임이 전면이어야 한다 — 다른 창이 덮이면 스페이스가 그 창으로
+                    // 들어가고 캡처에도 그 창이 찍힌다(20:37 실행: IDE가 덮여 인식 실패).
+                    if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 룬 발동을 중단합니다."); return; }
                     if (attempt > 0) Status("rune", "퍼즐이 안 보여 스페이스를 다시 누릅니다");
                     await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
                     await PreciseDelay.WaitAsync(1400, ct).ConfigureAwait(false); // 퍼즐 UI 등장+페이드인 대기
