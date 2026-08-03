@@ -43,8 +43,8 @@ public sealed class WatcherSettings
 
     public int MaxHoldMs { get; set; } = 350;
     /// <summary>탭 후 재측정까지 대기(ms) — 키를 뗀 뒤 캐릭터가 미끄러져 멈출 시간을 포함해야 정확히 잰다.</summary>
-    public int SettleMs { get; set; } = 350;
-    public int MaxCorrectionMs { get; set; } = 8000;
+    public int SettleMs { get; set; } = 500;
+    public int MaxCorrectionMs { get; set; } = 10000;
 }
 
 /// <summary>블록(스팟)별 기준 위치 — 저장 시점의 미니맵 점(서브픽셀) + 기준 화면 패치 rect + 학습된 방향 부호.</summary>
@@ -711,12 +711,12 @@ public sealed class PositionWatcher : IDisposable
         // 구버전 기본값 마이그레이션(사용자가 직접 조정한 값은 유지).
         if (s.MiniTolerancePx == 1) s.MiniTolerancePx = 0.6;
         if (s.TolerancePx == 4) s.TolerancePx = 2;
-        if (s.SettleMs is 150 or 220) s.SettleMs = 350; // 관성·가속 정지 대기 확대
+        if (s.SettleMs is 150 or 220 or 350) s.SettleMs = 500; // 관성·가속 정지 대기 확대
         // 패치를 '캐릭터 포함 창 중앙'으로 통합하면서 크기/임계 기본값 변경
         if (s.PatchW is 120 or 180) s.PatchW = 450; // 캐릭터 주변 범위 약 2.5배 확대
         if (s.PatchH is 64 or 140) s.PatchH = 340;
         if (s.MinScore == 0.60) s.MinScore = 0.55;
-        if (s.MaxCorrectionMs == 6000) s.MaxCorrectionMs = 8000; // 정지 대기(폴링) 도입으로 여유 확대
+        if (s.MaxCorrectionMs is 6000 or 8000) s.MaxCorrectionMs = 10000; // 정지 대기 확대에 맞춰 여유 확대
         return s;
     }
 
