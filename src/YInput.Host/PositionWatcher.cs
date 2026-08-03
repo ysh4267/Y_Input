@@ -616,15 +616,20 @@ public sealed class PositionWatcher : IDisposable
             var beforeFrame = CaptureGameFrame(s.Process, out _);
             try
             {
-                // 퍼즐은 스페이스 후 ~100ms 안에 열리고, '입력이 3초간 없으면' 자동 취소된다 —
-                // 열리자마자 판정을 시작하고, 실패해도 재발동 없이 취소 전(2초) 안에서 연속 재시도한다.
+                // 퍼즐은 스페이스 후 ~100ms 안에 열리고, '입력이 3초간 없으면' 자동 취소된다.
+                // 주의: 퍼즐이 열린 동안 스페이스를 또 누르면 '오답 입력'으로 처리돼 실패한다 —
+                // 발동당 스페이스는 딱 한 번, 재발동은 취소가 확실히 지난 뒤에만.
                 List<RuneArrow>? arrows = null;
                 for (int attempt = 0; attempt < 2 && arrows is null; attempt++)
                 {
                     // 발동·캡처 중에도 게임이 전면이어야 한다 — 다른 창이 덮이면 스페이스가 그 창으로
                     // 들어가고 캡처에도 그 창이 찍힌다(20:37 실행: IDE가 덮여 인식 실패).
                     if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 룬 발동을 중단합니다."); return; }
-                    if (attempt > 0) Status("rune", "퍼즐이 안 보여 스페이스를 다시 누릅니다");
+                    if (attempt > 0)
+                    {
+                        Status("rune", "퍼즐 인식 실패 — 무입력 취소(3초)를 기다렸다 다시 발동합니다");
+                        await PreciseDelay.WaitAsync(1500, ct).ConfigureAwait(false); // 2초 창 + 1.5초 = 취소 확정
+                    }
                     await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
                     await PreciseDelay.WaitAsync(150, ct).ConfigureAwait(false);
                     var winSw = Stopwatch.StartNew();
