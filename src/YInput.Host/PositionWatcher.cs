@@ -198,16 +198,21 @@ public sealed class PositionWatcher : IDisposable
         var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
         var r = ClampRect(new Rectangle(mini.X - 10, mini.Y - 10, mini.Width + 20, mini.Height + 20), frame.Width, frame.Height);
         if (r.Width <= 0 || r.Height <= 0) return null;
-        bool hasDot = MinimapDetector.TryFindPlayerDot(frame, mini, out var dotRel, s.DotMinR, s.DotMinG, s.DotMaxB);
+        var cands = MinimapDetector.FindDots(frame, mini, s.DotMinR, s.DotMinG, s.DotMaxB);
         using var crop = frame.Clone(r, frame.PixelFormat);
         using (var g = Graphics.FromImage(crop))
         {
             using var penMini = new Pen(Color.FromArgb(52, 211, 153), 1.6f);
             g.DrawRectangle(penMini, mini.X - r.X, mini.Y - r.Y, mini.Width - 1, mini.Height - 1);
-            if (hasDot)
+            if (cands.Count > 0)
             {
-                using var penDot = new Pen(Color.FromArgb(255, 216, 59), 2f);
-                g.DrawEllipse(penDot, mini.X + dotRel.X - r.X - 6, mini.Y + dotRel.Y - r.Y - 6, 12, 12);
+                var picked = MinimapDetector.Pick(cands).Center;
+                using var penOther = new Pen(Color.FromArgb(170, 255, 255, 255), 1.4f); // 흰 링 = 선택 안 된 다른 노란 블롭
+                foreach (var c in cands)
+                    if (c.Center != picked)
+                        g.DrawEllipse(penOther, mini.X + c.Center.X - r.X - 5, mini.Y + c.Center.Y - r.Y - 5, 10, 10);
+                using var penDot = new Pen(Color.FromArgb(255, 216, 59), 2f);           // 노란 링 = 내 캐릭터로 선택된 점
+                g.DrawEllipse(penDot, mini.X + picked.X - r.X - 6, mini.Y + picked.Y - r.Y - 6, 12, 12);
             }
         }
         return ScreenCapture.ToPng(crop);
@@ -216,6 +221,7 @@ public sealed class PositionWatcher : IDisposable
     // ---------- 실시간 미리보기(캐릭터 위치 지정 팝업) ----------
     private Bitmap? _liveFrame;  // 마지막 Live() 캡처 — live/frame·live/mini가 같은 프레임을 사용
     private PointF? _liveDot;    // 마지막 Live()에서 감지된 캐릭터 점(창 상대)
+    private List<DotCandidate>? _liveCands; // 마지막 Live()의 노란 블롭 후보 전체(창 상대)
 
     /// <summary>현재 게임 화면을 캡처해 미니맵 점·자동 패치 rect를 계산한다(키 입력 없음).
     /// 이어지는 <see cref="LiveCrop"/>이 이 프레임에서 미리보기 이미지를 잘라낸다.</summary>
@@ -240,6 +246,7 @@ public sealed class PositionWatcher : IDisposable
             bool dotFound = cands.Count > 0;
             var dot = dotFound ? MinimapDetector.Pick(cands).Center : PointF.Empty;
             _liveDot = dotFound ? dot : null;
+            _liveCands = cands;
             return new
             {
                 ok = true,
@@ -275,6 +282,13 @@ public sealed class PositionWatcher : IDisposable
             {
                 using var penMini = new Pen(Color.FromArgb(52, 211, 153), 1.6f); // 초록 = 고정된 미니맵 영역
                 g.DrawRectangle(penMini, mini.X - r.X, mini.Y - r.Y, mini.Width - 1, mini.Height - 1);
+                if (_liveCands is { } lc)
+                {
+                    using var penOther = new Pen(Color.FromArgb(170, 255, 255, 255), 1.4f); // 흰 링 = 다른 노란 블롭
+                    foreach (var c in lc)
+                        if (c.Center != dot)
+                            g.DrawEllipse(penOther, c.Center.X - r.X - 5, c.Center.Y - r.Y - 5, 10, 10);
+                }
                 using var penDot = new Pen(Color.FromArgb(255, 216, 59), 2f);    // 노랑 = 내 캐릭터 점
                 g.DrawEllipse(penDot, dot.X - r.X - 6, dot.Y - r.Y - 6, 12, 12);
             }
@@ -369,7 +383,16 @@ public sealed class PositionWatcher : IDisposable
         int candCount = cands?.Count ?? 0;
         double? miniDx = null;
         if (cands is { Count: > 0 })
-            miniDx = Math.Round(MinimapDetector.Pick(cands, new PointF((float)sp.Data.DotX, (float)sp.Data.DotY)).Center.X - sp.Data.DotX, 1);
+        {
+            // 미리보기(Live)와 같은 기준(점 크기 기반)으로 내 캐릭터 점을 고른다.
+            // '저장 위치에서 가장 가까운 블롭'으로 고르면 저장 지점 옆의 정지 블롭(마커 등)에
+            // 영원히 고정되어 캐릭터가 어디에 있든 같은 이탈값이 나온다.
+            var picked = MinimapDetector.Pick(cands);
+            miniDx = Math.Round(picked.Center.X - sp.Data.DotX, 1);
+            FileLog.Write("info",
+                $"[테스트] 저장=({sp.Data.DotX:0.0},{sp.Data.DotY:0.0}) 선택=({picked.Center.X:0.0},{picked.Center.Y:0.0}) miniDx={miniDx:+0.0;-0.0} " +
+                $"후보 {cands.Count}개: {string.Join(" ", cands.Select(c => $"({c.Center.X:0.0},{c.Center.Y:0.0} a{c.Area} {c.BoxW}x{c.BoxH})"))}");
+        }
         double? score = null; int? dx = null;
         var pm = MeasurePatch(s, sp.Data, sp.Gray);
         if (pm is { } r) { dx = r.dx; score = r.score; }
@@ -411,6 +434,9 @@ public sealed class PositionWatcher : IDisposable
                 //           '움직인' 블롭을 내 캐릭터로 잠근다(마커·타인 점은 안 움직임) ──
                 var dots0 = MeasureDots(s);
                 if (dots0 is null || dots0.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 보정을 포기합니다."); return; }
+                FileLog.Write("info",
+                    $"[위치보정:식별] 저장=({spot.DotX:0.0},{spot.DotY:0.0}) " +
+                    $"후보 {dots0.Count}개: {string.Join(" ", dots0.Select(c => $"({c.Center.X:0.0},{c.Center.Y:0.0} a{c.Area} {c.BoxW}x{c.BoxH})"))}");
                 PointF? dot;
                 if (dots0.Count == 1) dot = dots0[0].Center;
                 else
@@ -420,8 +446,8 @@ public sealed class PositionWatcher : IDisposable
                     await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
                     var dots1 = MeasureDots(s);
                     if (dots1 is null || dots1.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 보정을 포기합니다."); return; }
-                    dot = IdentifyMovedLeft(dots0, dots1)
-                          ?? MinimapDetector.Pick(dots1, new PointF((float)spot.DotX, (float)spot.DotY)).Center;
+                    // 폴백도 저장 위치 근접이 아닌 크기 기반 — 근접 선택은 정지 블롭에 고정될 수 있다.
+                    dot = IdentifyMovedLeft(dots0, dots1) ?? MinimapDetector.Pick(dots1).Center;
                 }
                 double miniDx = dot.Value.X - spot.DotX;
                 double releaseEarly = Math.Max(s.MiniTolerancePx, 1.2); // 키를 뗀 뒤 관성 미끄러짐 여유분
