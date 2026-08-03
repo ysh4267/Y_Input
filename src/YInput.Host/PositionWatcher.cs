@@ -665,10 +665,10 @@ public sealed class PositionWatcher : IDisposable
                     var spaceSw = Stopwatch.StartNew(); // 취소 타이머 기준점(마지막 입력 = 이 스페이스)
                     await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
 
-                    // 스페이스가 씹혀 퍼즐이 안 뜨는 경우 — 0.5초 안에 배너가 안 보이면 1회 재시도.
+                    // 스페이스가 씹혀 퍼즐이 안 뜨는 경우 — 1초 안에 배너가 안 보이면 1회 재시도.
                     // 배너가 보이는 동안의 스페이스는 '오답 입력'이라, 반드시 안 떴을 때만 누른다.
                     bool opened = false;
-                    while (!opened && spaceSw.ElapsedMilliseconds < 500)
+                    while (!opened && spaceSw.ElapsedMilliseconds < 1000)
                     {
                         ct.ThrowIfCancellationRequested();
                         try
@@ -682,7 +682,7 @@ public sealed class PositionWatcher : IDisposable
                     }
                     if (!opened)
                     {
-                        Note("퍼즐이 0.5초 내 안 보임 — 스페이스 재시도");
+                        Note("퍼즐이 1초 내 안 보임 — 스페이스 재시도");
                         await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
                         spaceSw.Restart();
                         await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
