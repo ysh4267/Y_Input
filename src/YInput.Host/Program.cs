@@ -90,6 +90,7 @@ internal static class Program
         var watcher = new PositionWatcher(dataRoot, hub, backend); // 위치 지킴이('위치 보정' 스텝의 실제 수행자)
         service.PositionCorrectHook = watcher.CorrectAsync;
         service.RuneUseHook = watcher.RuneUseAsync;
+        watcher.StatusChanged += overlay.OnWatcherStatus; // 진행 단계/결과 → 오버레이 디버그 섹션
         // 구버전 전역 미니맵 → 메이플 블록이 있는 매크로들로 1회 이관 후 정리(미니맵은 이제 매크로별)
         if (watcher.LegacyMinimap is { } lm)
         {

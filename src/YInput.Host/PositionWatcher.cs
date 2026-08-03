@@ -730,12 +730,12 @@ public sealed class PositionWatcher : IDisposable
         if (frames.Count >= 2)
         {
             res = RuneArrowDetector.FindArrowsAnimated(frames, beforeCrop, precropped: true);
-            if (res is not null) FileLog.Write("info", "[위치보정:rune] 퍼즐 인식 경로: 애니메이션 차분");
+            if (res is not null) Note("인식 경로 ①: 애니메이션 차분");
         }
         if (res is null && frames.Count > 0)
         {
             res = RuneArrowDetector.FindArrows(frames[^1], beforeCrop, beforeCrop, precropped: true);
-            if (res is not null) FileLog.Write("info", "[위치보정:rune] 퍼즐 인식 경로: 발동 전 차분 폴백");
+            if (res is not null) Note("인식 경로 ②: 발동 전 차분");
         }
         if (res is null && frames.Count > 0)
         {
@@ -743,8 +743,9 @@ public sealed class PositionWatcher : IDisposable
             // 픽셀 차이로 차분이 오염되면 위 두 경로가 실패한다(23:33 실행). 배너 밴드·간격·크기·
             // 정렬 검사가 오탐 줄을 막으므로 채도 단독으로도 두 맵 실측 프레임에서 정답을 냈다.
             res = RuneArrowDetector.FindArrows(frames[^1], null, beforeCrop, precropped: true);
-            if (res is not null) FileLog.Write("info", "[위치보정:rune] 퍼즐 인식 경로: 채도 단독 폴백");
+            if (res is not null) Note("인식 경로 ③: 채도 단독");
         }
+        if (res is null) Note($"버스트 인식 실패 — 3경로 모두 미인식 ({frames.Count}프레임)");
         // 진단 보관은 '첫 버스트'(퍼즐이 확실히 열려 있던 순간) — 이후 버스트가 덮어쓰지 않는다
         if (_runeShots.Count == 0) _runeShots.AddRange(frames);
         else foreach (var f in frames) f.Dispose();
@@ -886,10 +887,21 @@ public sealed class PositionWatcher : IDisposable
     private static Rectangle ClampRect(Rectangle r, int maxW, int maxH) =>
         Rectangle.Intersect(r, new Rectangle(0, 0, maxW, maxH));
 
+    /// <summary>상태 변화의 C# 구독용(오버레이 디버그 '진행 단계' 표시) — (state, message).</summary>
+    public event Action<string, string>? StatusChanged;
+
     private void Status(string state, string message, int? miniDx = null, int? dx = null, double? score = null)
     {
         _hub.Broadcast("watcherStatus", new { state, message, miniDx, dx, score });
         FileLog.Write(state is "fail" ? "warn" : "info", $"[위치보정:{state}] {message}");
+        try { StatusChanged?.Invoke(state, message); } catch { /* 구독자 오류 무시 */ }
+    }
+
+    /// <summary>진행 노트(로그+오버레이 디버그) — 룬 퍼즐 인식 경로·결과 등 세부 단계.</summary>
+    private void Note(string message)
+    {
+        FileLog.Write("info", "[위치보정:rune] " + message);
+        try { StatusChanged?.Invoke("note", message); } catch { /* 구독자 오류 무시 */ }
     }
 
     private void Broadcast() { lock (_gate) _hub.Broadcast("watcherSettings", Snapshot(_settings)); }

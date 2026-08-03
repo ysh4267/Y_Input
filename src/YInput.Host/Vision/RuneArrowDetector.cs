@@ -67,8 +67,13 @@ internal static class RuneArrowDetector
         for (int i = 0; i < mask.Length; i++) mask[i] &= changed[i];
         // 차분이 정지된 바 외곽선을 이미 지웠으므로 두께 필터는 생략 — 반투명 합성으로 작아진
         // 화살표 코어(2~3px 획)가 두께 필터에 지워지는 것이 20:24 인식 실패의 원인이었다.
-        return Detect(frame, bannerRef, mask, region, w, h, thinFilter: false);
+        return Detect(frame, bannerRef, mask, region, w, h, thinFilter: false, FullFrameH(frame, precropped));
     }
+
+    /// <summary>배너 밴드 길이 계산용 '원본 창 높이' — 입력이 퍼즐 영역 크롭이면 비율로 역산.
+    /// (크롭 높이를 그대로 쓰면 밴드가 95px로 줄어 화살표가 밴드 밖으로 걸러졌다 — 23:39 실행)</summary>
+    private static int FullFrameH(Bitmap frame, bool precropped) =>
+        precropped ? (int)(frame.Height / (RegionY1 - RegionY0)) : frame.Height;
 
     /// <summary>폴백 — 단일 프레임 + 발동 직전 프레임 차분(새로 나타난 채도 높은 픽셀)으로 인식.
     /// diffRef 없으면 채도 마스크만 사용(진단용). bannerRef = 탐색 밴드 제한.</summary>
@@ -86,7 +91,7 @@ internal static class RuneArrowDetector
             for (int i = 0; i < mask.Length; i++) mask[i] &= changed[i];
         }
         // 폴백 경로에는 바 외곽선이 남아 있어 두께 필터로 화살표와의 연결을 끊는다
-        return Detect(frame, bannerRef, mask, region, w, h, thinFilter: true);
+        return Detect(frame, bannerRef, mask, region, w, h, thinFilter: true, FullFrameH(frame, precropped));
     }
 
     /// <summary>퍼즐(안내 배너)이 지금 떠 있는지 — 열린 퍼즐에 스페이스를 다시 누르면 오답 입력이
@@ -155,10 +160,10 @@ internal static class RuneArrowDetector
         return region.Width >= 100 && region.Height >= 60;
     }
 
-    private static List<RuneArrow>? Detect(Bitmap frame, Bitmap? bannerRef, bool[] mask, Rectangle region, int w, int h, bool thinFilter)
+    private static List<RuneArrow>? Detect(Bitmap frame, Bitmap? bannerRef, bool[] mask, Rectangle region, int w, int h, bool thinFilter, int fullFrameH)
     {
         if (thinFilter) ThinFilter(mask, w, h);
-        var (bandY0, bandY1, bannerCx) = BannerBand(frame, bannerRef, region, w, h);
+        var (bandY0, bandY1, bannerCx) = BannerBand(frame, bannerRef, region, w, h, fullFrameH);
 
         var cands = MergeNear(FindBlobs(mask, w, h)).Where(b =>
             b.Area is >= MinArrowArea and <= MaxArrowArea &&
@@ -307,7 +312,7 @@ internal static class RuneArrowDetector
     /// <summary>안내 배너("룬을 해방하려면…") 탐색 — bannerRef 대비 '가로로 넓게 변한' 행이 연속되는
     /// 첫 띠의 상단부터 화면 높이 22% 아래까지를 화살표 밴드로 반환. CenterX = 배너 가로 중심
     /// (화살표 줄은 배너와 같은 축에 놓인다 — 우측 팝업창 등 오탐 줄 배제용). 못 찾으면 (전체, -1).</summary>
-    private static (int Y0, int Y1, double CenterX) BannerBand(Bitmap frame, Bitmap? bannerRef, Rectangle region, int w, int h)
+    private static (int Y0, int Y1, double CenterX) BannerBand(Bitmap frame, Bitmap? bannerRef, Rectangle region, int w, int h, int fullFrameH)
     {
         if (bannerRef is null || bannerRef.Width != frame.Width || bannerRef.Height != frame.Height) return (0, h - 1, -1);
         var changed = new bool[w * h];
@@ -324,7 +329,7 @@ internal static class RuneArrowDetector
                 if (++run >= BannerMinRows)
                 {
                     int y0 = y - run + 1;
-                    return (y0, Math.Min(h - 1, y0 + (int)(frame.Height * ArrowBandFrac)), (minX + maxX) / 2.0);
+                    return (y0, Math.Min(h - 1, y0 + (int)(fullFrameH * ArrowBandFrac)), (minX + maxX) / 2.0);
                 }
             }
             else run = 0;
@@ -339,9 +344,16 @@ internal static class RuneArrowDetector
     {
         var sb = new System.Text.StringBuilder();
         var frames = new List<Bitmap>();
+        Bitmap? beforeRef = null;
         try
         {
-            foreach (var p in pngPaths) frames.Add(new Bitmap(p));
+            // 'rune-before'가 포함된 파일은 발동 전 기준 프레임으로 사용(실전 경로 재현)
+            foreach (var p in pngPaths)
+            {
+                if (Path.GetFileName(p).Contains("rune-before", StringComparison.OrdinalIgnoreCase))
+                    beforeRef = new Bitmap(p);
+                else frames.Add(new Bitmap(p));
+            }
             // 크기가 다른 프레임(다른 실행의 잔재)은 차분에 못 쓴다 — 첫 프레임 크기 기준으로 필터
             int skipped = frames.RemoveAll(f => f.Width != frames[0].Width || f.Height != frames[0].Height);
             if (skipped > 0) sb.AppendLine($"크기 불일치 프레임 {skipped}개 제외");
@@ -391,6 +403,19 @@ internal static class RuneArrowDetector
                         var (dir, up, down, left, right) = ClassifyScores(b, w);
                         sb.AppendLine($"  ({region.X + b.Cx:0},{region.Y + b.Cy:0}) a{b.Area} {b.W}x{b.H} → {dir}  U{up:0.000} D{down:0.000} L{left:0.000} R{right:0.000}");
                     }
+                }
+
+                // 발동 전 프레임이 있으면 실전 3경로(애니메이션/발동 전 차분/채도 단독+배너)를 그대로 재현
+                if (beforeRef is not null)
+                {
+                    bool pre = frame.Width < 700 || frame.Height < 500;
+                    string Dirs(List<RuneArrow>? a) => a is null ? "실패"
+                        : string.Join(" ", a.Select(x => x.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' }));
+                    var band = BannerBand(frame, beforeRef, region, w, h, FullFrameH(frame, pre));
+                    sb.AppendLine($"— 실전 경로 재현 (배너 밴드 y {region.Y + band.Y0}..{region.Y + band.Y1}, 중심X {(band.CenterX >= 0 ? (region.X + band.CenterX).ToString("0") : "미탐지")}) —");
+                    sb.AppendLine($"  ① 애니메이션 차분: {(frames.Count >= 2 ? Dirs(FindArrowsAnimated(frames, beforeRef, pre)) : "프레임 부족")}");
+                    sb.AppendLine($"  ② 발동 전 차분:   {Dirs(FindArrows(frame, beforeRef, beforeRef, pre))}");
+                    sb.AppendLine($"  ③ 채도 단독:      {Dirs(FindArrows(frame, null, beforeRef, pre))}");
                 }
             }
         }

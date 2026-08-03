@@ -72,7 +72,8 @@ internal sealed class OverlayWindow : Form
     private static readonly Font DebugTitleFont = new("Segoe UI", 10.5f, FontStyle.Bold, GraphicsUnit.Pixel);
     private static readonly Font DebugFont = new("Consolas", 11f, FontStyle.Regular, GraphicsUnit.Pixel);
 
-    private List<string> _debug = new(); // 디버그 섹션 — 매크로가 송출한 최근 키 입력
+    private List<string> _debugStages = new(); // 디버그 — 위치 보정·룬 사용 진행 단계/결과
+    private List<string> _debugKeys = new();   // 디버그 — 매크로가 송출한 최근 키 입력
 
     public OverlayWindow()
     {
@@ -115,12 +116,13 @@ internal sealed class OverlayWindow : Form
         if (_armed) Refresh2();
     }
 
-    /// <summary>디버그 섹션 — 매크로가 송출한 최근 키 목록(룬 퍼즐 오입력 등 원인 추적용).</summary>
-    public void SetDebugKeys(List<string> lines)
+    /// <summary>디버그 섹션 — 진행 단계/결과 + 매크로가 송출한 최근 키(실패 원인 추적용).</summary>
+    public void SetDebugInfo(List<string> stages, List<string> keys)
     {
-        lines ??= new();
-        if (lines.SequenceEqual(_debug)) return;
-        _debug = lines;
+        stages ??= new(); keys ??= new();
+        if (stages.SequenceEqual(_debugStages) && keys.SequenceEqual(_debugKeys)) return;
+        _debugStages = stages;
+        _debugKeys = keys;
         _bmpDirty = true;
         if (_armed) Refresh2();
     }
@@ -203,19 +205,23 @@ internal sealed class OverlayWindow : Form
                 widths[i] = w; if (w > maxW) maxW = w;
             }
         }
-        // 디버그(최근 송출 키) 패널 크기
+        // 디버그 패널 크기 — 진행 단계 + 최근 송출 키 두 섹션
         int dbgW = 0, dbgLineH = 0, dbgTitleH = 0, dbgH = 0;
-        const int DbgPad = 10;
-        if (_debug.Count > 0)
+        const int DbgPad = 10, DbgSecGap = 8;
+        bool hasStages = _debugStages.Count > 0, hasKeys = _debugKeys.Count > 0;
+        if (hasStages || hasKeys)
         {
             using var gd = Graphics.FromImage(probe);
             dbgTitleH = (int)Math.Ceiling(DebugTitleFont.GetHeight(gd));
             dbgLineH = (int)Math.Ceiling(DebugFont.GetHeight(gd));
-            dbgW = (int)Math.Ceiling(gd.MeasureString("디버그 — 최근 송출 키", DebugTitleFont).Width);
-            foreach (var l in _debug)
+            dbgW = (int)Math.Ceiling(gd.MeasureString("디버그 — 진행 단계", DebugTitleFont).Width);
+            foreach (var l in _debugStages.Concat(_debugKeys))
                 dbgW = Math.Max(dbgW, (int)Math.Ceiling(gd.MeasureString(l, DebugFont).Width));
             dbgW += DbgPad * 2;
-            dbgH = DbgPad * 2 + dbgTitleH + 4 + _debug.Count * dbgLineH;
+            dbgH = DbgPad * 2;
+            if (hasStages) dbgH += dbgTitleH + 4 + _debugStages.Count * dbgLineH;
+            if (hasStages && hasKeys) dbgH += DbgSecGap;
+            if (hasKeys) dbgH += dbgTitleH + 4 + _debugKeys.Count * dbgLineH;
         }
 
         int W = Math.Max(maxW, dbgW) + M * 2;
@@ -259,7 +265,7 @@ internal sealed class OverlayWindow : Form
             y += pillH + RowGap;
         }
 
-        // 디버그 섹션 — 매크로가 송출한 최근 키(위=과거, 아래=최신)
+        // 디버그 섹션 — 진행 단계(위) + 최근 송출 키(아래), 각 목록은 위=과거·아래=최신
         if (dbgH > 0)
         {
             var panel = new Rectangle(M, y, Math.Max(maxW, dbgW), dbgH);
@@ -271,14 +277,20 @@ internal sealed class OverlayWindow : Form
                 g.DrawPath(border, path);
             }
             float dy = y + DbgPad;
-            using (var titleBrush = new SolidBrush(Color.FromArgb(235, 192, 132, 252)))
-                g.DrawString("디버그 — 최근 송출 키", DebugTitleFont, titleBrush, M + DbgPad, dy);
-            dy += dbgTitleH + 4;
+            using var titleBrush = new SolidBrush(Color.FromArgb(235, 192, 132, 252));
             using var lineBrush = new SolidBrush(Color.FromArgb(225, 214, 220, 230));
-            foreach (var l in _debug)
+            if (hasStages)
             {
-                g.DrawString(l, DebugFont, lineBrush, M + DbgPad, dy);
-                dy += dbgLineH;
+                g.DrawString("디버그 — 진행 단계", DebugTitleFont, titleBrush, M + DbgPad, dy);
+                dy += dbgTitleH + 4;
+                foreach (var l in _debugStages) { g.DrawString(l, DebugFont, lineBrush, M + DbgPad, dy); dy += dbgLineH; }
+                if (hasKeys) dy += DbgSecGap;
+            }
+            if (hasKeys)
+            {
+                g.DrawString("디버그 — 최근 송출 키", DebugTitleFont, titleBrush, M + DbgPad, dy);
+                dy += dbgTitleH + 4;
+                foreach (var l in _debugKeys) { g.DrawString(l, DebugFont, lineBrush, M + DbgPad, dy); dy += dbgLineH; }
             }
         }
         return bmp;

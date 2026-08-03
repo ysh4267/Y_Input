@@ -46,6 +46,22 @@ public sealed class OverlayController : IDisposable
     // 디버그 — 매크로가 송출한 최근 키 입력(오버레이 디버그 섹션 표시용)
     private readonly LinkedList<string> _sentKeys = new();
     private const int MaxSentKeys = 10;
+    // 디버그 — 위치 보정·룬 사용 진행 단계/결과(PositionWatcher.StatusChanged 구독)
+    private readonly LinkedList<string> _stageLines = new();
+    private const int MaxStageLines = 6;
+
+    /// <summary>위치 보정·룬 사용의 진행 단계·결과를 디버그 섹션에 표시(Program이 연결).</summary>
+    public void OnWatcherStatus(string state, string message)
+    {
+        if (message.Length > 52) message = message[..52] + "…";
+        string line = $"{DateTime.Now:HH:mm:ss.f} [{state}] {message}";
+        lock (_gate)
+        {
+            _stageLines.AddLast(line);
+            while (_stageLines.Count > MaxStageLines) _stageLines.RemoveFirst();
+        }
+        if (!_pumpOn) PushRows();
+    }
 
     public OverlayController(SynchronizationContext ui, string dataRoot, SocketHub hub, MacroService service, ProgressBroadcaster progress, InputBackend? backend = null)
     {
@@ -264,9 +280,9 @@ public sealed class OverlayController : IDisposable
     private void PushRows()
     {
         var rows = BuildRows();
-        List<string> keys;
-        lock (_gate) keys = _sentKeys.ToList();
-        _ui.Post(_ => { if (_window is null) return; _window.SetDebugKeys(keys); _window.SetRows(rows); }, null);
+        List<string> keys, stages;
+        lock (_gate) { keys = _sentKeys.ToList(); stages = _stageLines.ToList(); }
+        _ui.Post(_ => { if (_window is null) return; _window.SetDebugInfo(stages, keys); _window.SetRows(rows); }, null);
     }
 
     private List<OverlayRow> BuildRows()
