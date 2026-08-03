@@ -31,9 +31,12 @@ internal static class RuneArrowDetector
     private const int AnimDiffMin = 40;  // 시간차(애니메이션) 차분 임계 — 하이라이트는 변화가 은은할 수 있다
     private const int VividMax = 120;    // 채도 판정: 최대 채널 밝기 하한
     private const int VividSat = 45;     // 채도 판정: (최대-최소) 하한 — 반투명 합성으로 채도가 깎이므로 느슨하게
+    private const int VividSatStrict = 80; // 교집합 경로용 고채도 — 필 너머로 비치는 불꽃 잔광(둔탁한 웜톤)은
+                                           // 지우고 화살표(선명한 무지개)만 남긴다. 00:45 프레임 검증값
     private const double BannerWideFrac = 0.30; // 안내 배너 판정: 가로 이 비율 이상 변한 행
     private const int BannerMinRows = 6;        // 그런 행이 연속 이만큼 = 배너
-    private const double ArrowBandFrac = 0.22;  // 배너 상단부터 화면 높이의 이 비율 안에서만 화살표 탐색
+    private const double ArrowBandFrac = 0.15;  // 배너(어두운 띠) '하단'부터 창 높이의 이 비율 안에서만 화살표 탐색
+                                                // — 화살표 줄은 항상 텍스트 배너 띠 바로 아래(실측 ~30px)의 밝은 필 안
     private const int MinThick = 4;      // 얇은 구조 제거: 가로·세로 연속 두께 하한 — 화살표 코어(반투명
                                          // 합성으로 작아짐)는 살리고 1~3px 외곽선·궤적만 지운다
     private const int MinPieceArea = 4;  // 블롭 조각 최소 픽셀 — 반투명 합성으로 화살표가 점묘처럼
@@ -171,16 +174,68 @@ internal static class RuneArrowDetector
         return region.Width >= 100 && region.Height >= 60;
     }
 
-    /// <summary>한 프레임 분석(채도 단독 경로) — 화살표 4개의 방향 + 모양 시그니처.
-    /// 회전형 퍼즐(돌다가 정답 방향에서 잠깐 멈춤)은 호출자가 프레임을 연속 샘플링해
-    /// 시그니처·방향이 유지되는 구간(정지)에서 확정한다.</summary>
-    public static List<ArrowSample>? AnalyzeFrame(Bitmap frame, Bitmap? bannerRef, bool precropped = false)
+    /// <summary>단일 이전 프레임 편의 오버로드 — <see cref="AnalyzeFrame(Bitmap, IReadOnlyList{Bitmap}, Bitmap?, bool)"/> 참조.</summary>
+    public static List<ArrowSample>? AnalyzeFrame(Bitmap frame, Bitmap? prevFrame, Bitmap? bannerRef, bool precropped = false)
+        => AnalyzeFrame(frame, prevFrame is null ? [] : [prevFrame], bannerRef, precropped);
+
+    /// <summary>한 프레임 분석 — 화살표 4개의 방향 + 모양 시그니처. recent = 직전 프레임들(오래된 순).
+    /// 마스크를 단계별로 시도:
+    ///  ⓪ 채도 <b>교집합</b>(고채도 80 → 완화 45) + '발동 전과 다름' — 화살표는 정적 UI라 모든
+    ///     프레임에서 같은 자리가 계속 채도 높고, 흔들리는 불꽃·이펙트는 위치가 바뀌어 교집합에서
+    ///     탈락한다(00:45 불타는 맵: 이 경로만 정답 → ↑ ← ↓ 복원, 나머지는 전부 오염)
+    ///  ⓐ 채도 + '발동 전과 다름' + '직전 프레임과 정지' — 교집합이 실패한 경우(프레임 부족 등)
+    ///  ⓑ 채도 + '발동 전과 다름' — 회전 중 화살표(정지 조건에 안 걸림) 대비
+    ///  ⓒ 채도 단독 — 기준 프레임이 오염된 경우 최후 수단
+    /// 회전형은 호출자가 연속 샘플링해 시그니처·방향이 유지되는 구간(멈춤)에서 확정한다.</summary>
+    public static List<ArrowSample>? AnalyzeFrame(Bitmap frame, IReadOnlyList<Bitmap> recent, Bitmap? bannerRef, bool precropped = false)
     {
         if (!TryRegion(frame, precropped, out var region)) return null;
+        var prevs = recent.Where(p => p.Width == frame.Width && p.Height == frame.Height).ToList();
+        if (bannerRef is not null && (bannerRef.Width != frame.Width || bannerRef.Height != frame.Height)) bannerRef = null;
         int w = region.Width, h = region.Height;
-        var mask = VividMask(frame, region, w, h);
-        var row = DetectRow(frame, bannerRef, mask, region, w, h, thinFilter: true, FullFrameH(frame, precropped));
+        int fullH = FullFrameH(frame, precropped);
+
+        var vivid = VividMask(frame, region, w, h);
+        bool[]? diffBefore = null;
+        if (bannerRef is not null)
+        {
+            diffBefore = new bool[w * h];
+            AccumulateDiff(bannerRef, frame, region, w, h, DiffMin, diffBefore);
+        }
+
+        List<Blob>? row = null;
+        if (diffBefore is not null && prevs.Count >= 1)
+        {
+            foreach (int sat in (int[])[VividSatStrict, VividSat])
+            {
+                var mi = VividMask(frame, region, w, h, sat);
+                foreach (var p in prevs)
+                {
+                    var vp = VividMask(p, region, w, h, sat);
+                    for (int i = 0; i < mi.Length; i++) mi[i] &= vp[i];
+                }
+                for (int i = 0; i < mi.Length; i++) mi[i] &= diffBefore[i];
+                row = DetectRow(frame, bannerRef, mi, region, w, h, thinFilter: true, fullH);
+                if (row is not null) break;
+            }
+        }
+        if (row is null && diffBefore is not null && prevs.Count >= 1)
+        {
+            var moving = new bool[w * h];
+            AccumulateDiff(prevs[^1], frame, region, w, h, AnimDiffMin, moving);
+            var maskA = new bool[w * h];
+            for (int i = 0; i < maskA.Length; i++) maskA[i] = vivid[i] && diffBefore[i] && !moving[i];
+            row = DetectRow(frame, bannerRef, maskA, region, w, h, thinFilter: true, fullH);
+        }
+        if (row is null && diffBefore is not null)
+        {
+            var maskB = new bool[w * h];
+            for (int i = 0; i < maskB.Length; i++) maskB[i] = vivid[i] && diffBefore[i];
+            row = DetectRow(frame, bannerRef, maskB, region, w, h, thinFilter: true, fullH);
+        }
+        row ??= DetectRow(frame, bannerRef, (bool[])vivid.Clone(), region, w, h, thinFilter: true, fullH);
         if (row is null) return null;
+
         var result = new List<ArrowSample>(4);
         foreach (var b in row)
         {
@@ -203,6 +258,9 @@ internal static class RuneArrowDetector
         return result;
     }
 
+    /// <summary>진단 CLI에서만 설정 — DetectRow가 밴드·후보·선택 결과를 이 콜백으로 알린다.</summary>
+    internal static Action<string>? DiagLog;
+
     /// <summary>마스크에서 '화살표 줄' 블롭 4개 선택(왼쪽부터). 실패 시 null.</summary>
     private static List<Blob>? DetectRow(Bitmap frame, Bitmap? bannerRef, bool[] mask, Rectangle region, int w, int h, bool thinFilter, int fullFrameH)
     {
@@ -213,7 +271,10 @@ internal static class RuneArrowDetector
             b.Area is >= MinArrowArea and <= MaxArrowArea &&
             b.W is >= MinArrowBox and <= MaxArrowBox && b.H is >= MinArrowBox and <= MaxArrowBox &&
             b.Cy >= bandY0 && b.Cy <= bandY1).ToList();
-        return PickRow(cands, bannerCx, frame.Width);
+        var row = PickRow(cands, bannerCx, frame.Width);
+        DiagLog?.Invoke($"밴드 y{region.Y + bandY0}..{region.Y + bandY1} 중심X {(bannerCx >= 0 ? (region.X + bannerCx).ToString("0") : "-")} 후보 {cands.Count}"
+            + (row is null ? " → 줄 없음" : " → " + string.Join(" ", row.Select(b => $"({region.X + b.Cx:0},{region.Y + b.Cy:0})a{b.Area}"))));
+        return row;
     }
 
     // ---------- 모양 시그니처(회전 정지 판별) ----------
@@ -286,7 +347,7 @@ internal static class RuneArrowDetector
     /// <summary>밝고 채도 높은 '웜톤/초록' 픽셀 마스크. 화살표는 룬마다 색 배치가 달라도
     /// 빨강·주황·노랑·초록 무지개 그라데이션이라 차가운 색(파랑·청록)이 아니다 —
     /// 얼음 소용돌이·나뭇가지 등 파란 계열 배경 클러터를 픽셀 단계에서 배제한다.</summary>
-    private static bool[] VividMask(Bitmap frame, Rectangle region, int w, int h)
+    private static bool[] VividMask(Bitmap frame, Rectangle region, int w, int h, int satMin = VividSat)
     {
         var mask = new bool[w * h];
         var data = frame.LockBits(region, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
@@ -302,7 +363,7 @@ internal static class RuneArrowDetector
                     {
                         byte b = row[x * 4], g = row[x * 4 + 1], r = row[x * 4 + 2];
                         int max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
-                        mask[o + x] = max >= VividMax && max - min >= VividSat
+                        mask[o + x] = max >= VividMax && max - min >= satMin
                                       && (r >= b + 30 || g >= b + 30); // 파랑·청록 우세 픽셀 배제
                     }
                 }
@@ -371,32 +432,63 @@ internal static class RuneArrowDetector
             mask[i] = mask[i] && hRun[i] >= MinThick && vRun[i] >= MinThick;
     }
 
-    /// <summary>안내 배너("룬을 해방하려면…") 탐색 — bannerRef 대비 '가로로 넓게 변한' 행이 연속되는
-    /// 첫 띠의 상단부터 화면 높이 22% 아래까지를 화살표 밴드로 반환. CenterX = 배너 가로 중심
-    /// (화살표 줄은 배너와 같은 축에 놓인다 — 우측 팝업창 등 오탐 줄 배제용). 못 찾으면 (전체, -1).</summary>
+    /// <summary>안내 배너("룬을 해방하려면…") 탐색 — bannerRef 대비 '가로로 넓게 변한' 행 중
+    /// <b>가장 뚜렷이 어두워진 행(피크)</b>을 포함하는 연속 어두운 띠를 배너로 잡고, 그 띠의
+    /// <b>하단부터</b> 창 높이 15% 아래까지를 화살표 밴드로 반환. 화살표 줄은 항상 텍스트 배너
+    /// 띠 바로 아래 밝은 필 안에 있다 — 띠 '상단'부터 밴드를 잡으면 배너의 주황색 텍스트
+    /// 글리프("방향키")가 화살표 후보로 섞여 오답이 된다(00:45 불타는 맵: ④경로가 텍스트를
+    /// 화살표로 분류). '첫 어두워진 행' 대신 '피크 기준 상대 임계'를 쓰는 이유: 몹·불꽃으로
+    /// 화면 전체가 변하는 맵에서는 어두워짐≥8인 행이 배너 밖에도 산발해 첫 행이 엉뚱한 곳에
+    /// 걸린다. CenterX = 피크 행의 변한 픽셀 범위 중앙(화살표 줄 축 정렬 검증용). 못 찾으면 (전체, -1).</summary>
     private static (int Y0, int Y1, double CenterX) BannerBand(Bitmap frame, Bitmap? bannerRef, Rectangle region, int w, int h, int fullFrameH)
     {
         if (bannerRef is null || bannerRef.Width != frame.Width || bannerRef.Height != frame.Height) return (0, h - 1, -1);
-        var changed = new bool[w * h];
-        AccumulateDiff(bannerRef, frame, region, w, h, DiffMin, changed);
-        int wide = (int)(w * BannerWideFrac), run = 0;
+        var (diff, lumBefore, lumNow) = RowStats(bannerRef, frame, region, DiffMin);
+        int wide = (int)(w * BannerWideFrac);
+        var dark = new double[h];
+        double maxDark = 0; int peak = -1;
         for (int y = 0; y < h; y++)
         {
-            int cnt = 0, minX = w, maxX = -1;
-            int o = y * w;
-            for (int x = 0; x < w; x++)
-                if (changed[o + x]) { cnt++; if (x < minX) minX = x; if (x > maxX) maxX = x; }
-            if (cnt >= wide)
-            {
-                if (++run >= BannerMinRows)
-                {
-                    int y0 = y - run + 1;
-                    return (y0, Math.Min(h - 1, y0 + (int)(fullFrameH * ArrowBandFrac)), (minX + maxX) / 2.0);
-                }
-            }
-            else run = 0;
+            dark[y] = diff[y] >= wide ? lumBefore[y] - lumNow[y] : 0;
+            if (dark[y] > maxDark) { maxDark = dark[y]; peak = y; }
         }
-        return (0, h - 1, -1);
+        if (peak < 0 || maxDark < 8) return (0, h - 1, -1);
+
+        double thr = Math.Max(8.0, maxDark * 0.5);
+        int top = peak, bot = peak;
+        while (top > 0 && dark[top - 1] >= thr) top--;
+        while (bot < h - 1 && dark[bot + 1] >= thr) bot++;
+        if (bot - top + 1 < BannerMinRows) return (0, h - 1, -1);
+
+        double cx = RowChangedCenter(bannerRef, frame, region, peak);
+        int y0 = Math.Min(h - 1, bot + 1);
+        return (y0, Math.Min(h - 1, y0 + (int)(fullFrameH * ArrowBandFrac)), cx);
+    }
+
+    /// <summary>한 행에서 bannerRef 대비 변한 픽셀들의 가로 중앙.</summary>
+    private static double RowChangedCenter(Bitmap a, Bitmap b, Rectangle region, int y)
+    {
+        int w = region.Width;
+        var rowRect = new Rectangle(region.X, region.Y + y, w, 1);
+        var da = a.LockBits(rowRect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        var db = b.LockBits(rowRect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        try
+        {
+            unsafe
+            {
+                byte* ra = (byte*)da.Scan0;
+                byte* rb = (byte*)db.Scan0;
+                int minX = w, maxX = -1;
+                for (int x = 0; x < w; x++)
+                {
+                    int i4 = x * 4;
+                    int d = Math.Abs(ra[i4] - rb[i4]) + Math.Abs(ra[i4 + 1] - rb[i4 + 1]) + Math.Abs(ra[i4 + 2] - rb[i4 + 2]);
+                    if (d >= DiffMin) { if (x < minX) minX = x; if (x > maxX) maxX = x; }
+                }
+                return maxX < 0 ? w / 2.0 : (minX + maxX) / 2.0;
+            }
+        }
+        finally { a.UnlockBits(da); b.UnlockBits(db); }
     }
 
     /// <summary>진단 CLI(--rune-analyze) — 저장된 퍼즐 스크린샷으로 인식 과정을 재현해
@@ -471,13 +563,68 @@ internal static class RuneArrowDetector
                 if (beforeRef is not null)
                 {
                     bool pre = frame.Width < 700 || frame.Height < 500;
+                    // 행별 배너 신호 프로파일 — '넓게 변한' 행 연속 구간과 어두워짐 정도
+                    if (beforeRef.Width == frame.Width && beforeRef.Height == frame.Height)
+                    {
+                        var (dRows, lb, ln) = RowStats(beforeRef, frame, region, DiffMin);
+                        int wideThr = (int)(w * BannerWideFrac);
+                        sb.AppendLine($"— 행별 배너 신호 (폭변화 ≥{wideThr}px + 어두워짐 ≥8 구간) —");
+                        for (int y = 0; y < h;)
+                        {
+                            if (dRows[y] < wideThr || lb[y] - ln[y] < 8) { y++; continue; }
+                            int y0 = y; double dkSum = 0, dkMax = 0;
+                            while (y < h && dRows[y] >= wideThr && lb[y] - ln[y] >= 8)
+                            {
+                                double dk = lb[y] - ln[y];
+                                dkSum += dk; dkMax = Math.Max(dkMax, dk); y++;
+                            }
+                            sb.AppendLine($"  y {region.Y + y0}..{region.Y + y - 1} ({y - y0}행) 어두워짐 평균 {dkSum / (y - y0):0.0} 최대 {dkMax:0.0}");
+                        }
+                    }
                     string Dirs(List<RuneArrow>? a) => a is null ? "실패"
                         : string.Join(" ", a.Select(x => x.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' }));
+                    // ②경로 마스크(채도+발동 전 차분, 두께 필터 후)도 덤프 — 블롭 오염 원인 확인용
+                    {
+                        var m2 = VividMask(frame, region, w, h);
+                        var ch2 = new bool[w * h];
+                        AccumulateDiff(beforeRef, frame, region, w, h, DiffMin, ch2);
+                        for (int i = 0; i < m2.Length; i++) m2[i] &= ch2[i];
+                        ThinFilter(m2, w, h);
+                        SaveMaskPng(m2, w, h, pngPaths[0] + ".mask-diffbefore.png");
+                    }
                     var band = BannerBand(frame, beforeRef, region, w, h, FullFrameH(frame, pre));
                     sb.AppendLine($"— 실전 경로 재현 (배너 밴드 y {region.Y + band.Y0}..{region.Y + band.Y1}, 중심X {(band.CenterX >= 0 ? (region.X + band.CenterX).ToString("0") : "미탐지")}) —");
-                    sb.AppendLine($"  ① 애니메이션 차분: {(frames.Count >= 2 ? Dirs(FindArrowsAnimated(frames, beforeRef, pre)) : "프레임 부족")}");
-                    sb.AppendLine($"  ② 발동 전 차분:   {Dirs(FindArrows(frame, beforeRef, beforeRef, pre))}");
-                    sb.AppendLine($"  ③ 채도 단독:      {Dirs(FindArrows(frame, null, beforeRef, pre))}");
+                    DiagLog = s => sb.AppendLine($"      [{s}]");
+                    try
+                    {
+                        sb.AppendLine($"  ① 애니메이션 차분: {(frames.Count >= 2 ? Dirs(FindArrowsAnimated(frames, beforeRef, pre)) : "프레임 부족")}");
+                        sb.AppendLine($"  ② 발동 전 차분:   {Dirs(FindArrows(frame, beforeRef, beforeRef, pre))}");
+                        sb.AppendLine($"  ③ 채도 단독:      {Dirs(FindArrows(frame, null, beforeRef, pre))}");
+                        var af = AnalyzeFrame(frame, frames.GetRange(0, frames.Count - 1), beforeRef, pre);
+                        sb.AppendLine($"  ④ 프레임 분석(교집합→정지 게이트, 실전 경로): {(af is null ? "실패" : string.Join(" ", af.Select(x => x.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })))}");
+                        // ⑤ 실험: 채도 교집합 — 모든 프레임에서 '계속 채도 높음'(정적 UI) && 발동 전과 다름.
+                        //    흔들리는 불꽃은 프레임마다 위치가 바뀌어 교집합에서 탈락한다.
+                        if (frames.Count >= 2)
+                        {
+                            foreach (int sat in new[] { VividSat, 80 })
+                            {
+                                var mi = VividMask(frames[0], region, w, h, sat);
+                                for (int k = 1; k < frames.Count; k++)
+                                {
+                                    var vk = VividMask(frames[k], region, w, h, sat);
+                                    for (int i = 0; i < mi.Length; i++) mi[i] &= vk[i];
+                                }
+                                var chI = new bool[w * h];
+                                AccumulateDiff(beforeRef, frame, region, w, h, DiffMin, chI);
+                                for (int i = 0; i < mi.Length; i++) mi[i] &= chI[i];
+                                ThinFilter(mi, w, h);
+                                SaveMaskPng(mi, w, h, pngPaths[0] + $".mask-vivid-and-{sat}.png");
+                                var r5 = DetectRow(frame, beforeRef, mi, region, w, h, thinFilter: false, FullFrameH(frame, pre));
+                                sb.AppendLine($"  ⑤ 채도 교집합(sat{sat}): {(r5 is null ? "실패" : string.Join(" ", r5.Select(b => ClassifyScores(b, w).Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })))}");
+                            }
+                        }
+                    }
+                    finally { DiagLog = null; }
                 }
             }
         }

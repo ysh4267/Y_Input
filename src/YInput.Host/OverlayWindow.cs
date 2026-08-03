@@ -158,7 +158,9 @@ internal sealed class OverlayWindow : Form
 
         if (_bmpDirty || _bmp == null) { _bmp?.Dispose(); _bmp = BuildBitmap(); _bmpDirty = false; }
         int x = r.left + LeftMargin;
-        int y = r.top + (gh - _bmp.Height) / 2;
+        // 왼쪽 아래 배치 — 룬 퍼즐 인식이 캡처하는 상단 영역(창 높이 ~60%)을 가리지 않게.
+        // (중앙 배치 시절 디버그 패널이 캡처에 찍혀 인식을 오염시켰다 — 00:45 실행)
+        int y = Math.Max(r.top + 8, r.bottom - _bmp.Height - 8);
         if (!Visible) Show();
         PushBitmap(_bmp, x, y);
     }
