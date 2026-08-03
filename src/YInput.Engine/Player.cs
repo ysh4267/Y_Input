@@ -32,6 +32,10 @@ public sealed class Player
     public event EventHandler<PlaybackProgress>? Progress;
     public event EventHandler<Exception>? Failed;
 
+    /// <summary>매 반복 사이클 시작 전(첫 사이클 제외) 호출되는 비동기 훅 — 위치 보정 등. 인자 = 사이클 번호.
+    /// 취소는 OCE로 전파되어 재생이 정지 경로를 탄다. null이면 동작 불변.</summary>
+    public Func<int, CancellationToken, Task>? BeforeCycle { get; set; }
+
     public Player(IInputSink sink) => _sink = sink;
 
     /// <summary>지연(ms)에 속도 배율을 적용한 실제 대기 시간. (순수 함수 — 테스트 대상)</summary>
@@ -75,6 +79,9 @@ public sealed class Player
             var steps = macro.Steps;
             for (int loop = 0; loop < loops && !ct.IsCancellationRequested; loop++)
             {
+                if (loop > 0 && BeforeCycle is not null)
+                    await BeforeCycle(loop, ct).ConfigureAwait(false);
+
                 // 반복(Loop) 블록을 스택으로 해석: LoopStart/End를 짝지어 본문을 Count회 반복(중첩 가능).
                 var loopStack = new Stack<(int bodyStart, int total, int remaining)>();
                 int ip = 0;

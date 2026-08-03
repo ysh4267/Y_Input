@@ -69,4 +69,11 @@ export const api = {
   widgetList: () => request('GET', '/api/widget/list'),
   widgetOpen: (id) => request('POST', '/api/widget/open', { id }),
   widgetClose: (id) => request('POST', '/api/widget/close', { id }),
+
+  getWatcher: () => request('GET', '/api/watcher'),
+  setWatcher: (p) => request('POST', '/api/watcher', p),
+  watcherMinimap: (r) => request('POST', '/api/watcher/minimap', r),
+  watcherRegion: (r) => request('POST', '/api/watcher/region', r),
+  watcherClearPatch: () => request('DELETE', '/api/watcher/patch'),
+  watcherTest: () => request('POST', '/api/watcher/test'),
 };

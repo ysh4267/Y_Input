@@ -45,6 +45,9 @@ public sealed class MacroService
     /// <summary>로컬 매크로 변경 후 호출(Program이 GitHubSync.SchedulePush로 연결) — 동기화 푸시 예약.</summary>
     public Action? MacrosChanged { get; set; }
 
+    /// <summary>반복 사이클 사이에 실행할 훅(Program이 PositionWatcher.CorrectAsync로 연결) — 위치 보정.</summary>
+    public Func<CancellationToken, Task>? CycleHook { get; set; }
+
     private void NotifyChanged() => MacrosChanged?.Invoke();
 
     /// <summary>동기화가 원격 변경을 로컬에 반영한 뒤 호출 — 핫키 재등록 + 상태/목록 새로고침 방송(푸시는 다시 트리거하지 않음).</summary>
@@ -118,6 +121,7 @@ public sealed class MacroService
             listening = _listenActive,
             monitoring = _monitorActive,
             driver = new { interception = ds.InterceptionInstalled, vigem = ds.ViGEmInstalled, admin = ds.IsAdministrator },
+            dotnet = DotnetProbe.Query(), // .NET 런타임 상태(내장 여부·시스템 설치 여부·설치 링크)
             backend = new
             {
                 interceptionAvailable = _backend.InterceptionAvailable,
@@ -200,6 +204,7 @@ public sealed class MacroService
 
         var macro = _library.Load(id) ?? throw new FileNotFoundException("매크로를 찾을 수 없습니다: " + id);
         var player = new Player(_backend); // 매크로마다 독립 Player → 서로 비동기·동시 재생
+        if (CycleHook is { } hook) player.BeforeCycle = (_, ct) => hook(ct); // 반복 사이클 사이 위치 보정
         // 진행 보고는 스텝마다(최대 ~1000/s) 오므로, ProgressBroadcaster가 매크로별 최신값만 ~60Hz로 합쳐 전송한다.
         player.Progress += (_, p) => _progress.Report(id, p);
         player.Failed += (_, ex) => Log("error", $"재생 오류({macro.Name}): {ex.Message}");

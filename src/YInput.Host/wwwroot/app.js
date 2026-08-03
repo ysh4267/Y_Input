@@ -43,7 +43,7 @@ function openSettings() {
   requestAnimationFrame(() => ov.classList.add('open'));
   loadVersion();
   loadSyncConfig();
-  loadOverlayConfig();
+  loadOverlayConfig().then(loadWatcher); // 지킴이 창 목록은 오버레이 창 목록(ovWindows)을 재사용
 }
 
 // ---------- 게임 오버레이 설정 ----------
@@ -96,6 +96,179 @@ async function onOverlayEnabled() {
 async function onOverlayAdd() {
   const p = $('ov-winlist').value; if (!p) return;
   try { renderOverlayConfig(await api.overlayWhitelistAdd(p)); } catch (e) { log('error', e.message); }
+}
+
+// ---------- 위치 지킴이(반복 사이클 사이 자리 보정) ----------
+let wtSettings = null;   // 서버 설정 스냅샷
+let wtStep = 'patch';    // 모달 단계: 'minimap'(1단계) | 'patch'(2단계)
+let wtSel = null;        // 드래그 선택(표시 px 기준) {x,y,w,h}
+let wtFrameUrl = null;   // 캡처 프레임 blob URL(재캡처 시 해제)
+
+function wtSetStatus(msg, isErr) {
+  const el = $('wt-status'); if (!el) return;
+  el.textContent = msg;
+  el.classList.toggle('err', !!isErr);
+}
+
+function renderWatcher(s) {
+  if (!s) return;
+  wtSettings = s;
+  const en = $('wt-enabled'); if (en) en.checked = !!s.enabled;
+  const tol = $('wt-tol'); if (tol && document.activeElement !== tol) tol.value = s.tolerancePx;
+  const mx = $('wt-maxms'); if (mx && document.activeElement !== mx) mx.value = s.maxCorrectionMs;
+  const img = $('wt-patch'); const info = $('wt-info');
+  if (s.hasPatch) {
+    img.src = '/api/watcher/patch?ts=' + Date.now();
+    img.hidden = false;
+    info.innerHTML = `기준 위치 저장됨 · 미니맵 점 (${s.dotX}, ${s.dotY})${s.directionSign ? ' · 이동 방향 학습됨' : ''}`;
+  } else {
+    img.hidden = true;
+    info.textContent = s.hasMinimap
+      ? '미니맵은 지정됨 — 캐릭터를 자리에 세워두고 [현재 위치 저장]으로 기준 화면을 저장하세요.'
+      : '저장된 위치가 없습니다. 캐릭터를 원하는 자리에 세워두고 [현재 위치 저장]을 누르세요.';
+  }
+  renderWatcherWinSelect();
+}
+
+function renderWatcherWinSelect() {
+  const sel = $('wt-winlist'); if (!sel) return;
+  sel.innerHTML = '';
+  const cur = (wtSettings && wtSettings.process) || '';
+  const list = [...ovWindows];
+  if (cur && !list.some((w) => w.process.toLowerCase() === cur.toLowerCase()))
+    list.unshift({ process: cur, title: '(실행 안 됨)' });
+  if (!list.length) { sel.innerHTML = '<option value="">(실행 중 창 없음 — ↻ 새로고침)</option>'; return; }
+  for (const w of list) {
+    const o = document.createElement('option');
+    o.value = w.process;
+    o.textContent = w.title ? `${w.process} — ${w.title}` : w.process;
+    if (w.process.toLowerCase() === cur.toLowerCase()) o.selected = true;
+    sel.appendChild(o);
+  }
+}
+
+async function loadWatcher() {
+  try { renderWatcher(await api.getWatcher()); } catch { /* 무시 */ }
+}
+
+async function openWatcherModal(forceMinimap) {
+  try {
+    wtSetStatus('게임 화면 캡처 중…');
+    const res = await fetch('/api/watcher/frame?ts=' + Date.now());
+    if (!res.ok) {
+      let m = 'HTTP ' + res.status;
+      try { m = (await res.json()).error || m; } catch { /* 무시 */ }
+      throw new Error(m);
+    }
+    const blob = await res.blob();
+    if (wtFrameUrl) URL.revokeObjectURL(wtFrameUrl);
+    wtFrameUrl = URL.createObjectURL(blob);
+    $('wt-frame').src = wtFrameUrl;
+    wtStep = (forceMinimap || !(wtSettings && wtSettings.hasMinimap)) ? 'minimap' : 'patch';
+    wtClearSel();
+    updateWtModalHead();
+    $('wt-modal').hidden = false;
+    wtSetStatus('—');
+  } catch (e) { wtSetStatus('캡처 실패: ' + e.message, true); }
+}
+
+function updateWtModalHead() {
+  $('wt-modal-title').textContent = wtStep === 'minimap' ? '1단계 — 미니맵 영역' : '2단계 — 기준 화면';
+  $('wt-modal-hint').textContent = wtStep === 'minimap'
+    ? '미니맵 전체를 드래그로 감싸세요 (플레이어 노란 점이 보여야 합니다)'
+    : '캐릭터가 아니라, 캐릭터가 서 있는 발판 주변의 고정 지형·배경을 드래그하세요 (40~100px 권장)';
+}
+
+function wtClearSel() { wtSel = null; $('wt-sel').hidden = true; $('wt-apply').disabled = true; }
+function closeWatcherModal() { $('wt-modal').hidden = true; wtClearSel(); }
+
+function wireWatcherModal() {
+  const canvas = $('wt-canvas'), img = $('wt-frame'), box = $('wt-sel');
+  let start = null;
+  const pos = (ev) => {
+    const r = img.getBoundingClientRect();
+    return {
+      x: Math.min(Math.max(ev.clientX - r.left, 0), r.width),
+      y: Math.min(Math.max(ev.clientY - r.top, 0), r.height),
+    };
+  };
+  const drawSel = () => {
+    if (!wtSel) { box.hidden = true; return; }
+    const r = img.getBoundingClientRect(), c = canvas.getBoundingClientRect();
+    box.style.left = (wtSel.x + r.left - c.left) + 'px';
+    box.style.top = (wtSel.y + r.top - c.top) + 'px';
+    box.style.width = wtSel.w + 'px';
+    box.style.height = wtSel.h + 'px';
+    box.hidden = false;
+  };
+  canvas.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0) return;
+    start = pos(ev);
+    canvas.setPointerCapture(ev.pointerId);
+    wtSel = { x: start.x, y: start.y, w: 0, h: 0 };
+    $('wt-apply').disabled = true;
+    drawSel();
+  });
+  canvas.addEventListener('pointermove', (ev) => {
+    if (!start) return;
+    const p = pos(ev);
+    wtSel = { x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) };
+    drawSel();
+  });
+  canvas.addEventListener('pointerup', () => {
+    start = null;
+    if (wtSel && wtSel.w >= 8 && wtSel.h >= 8) $('wt-apply').disabled = false;
+  });
+  $('wt-apply').onclick = applyWtSelection;
+  $('wt-recapture').onclick = () => openWatcherModal(wtStep === 'minimap');
+  $('wt-modal-cancel').onclick = closeWatcherModal;
+}
+
+async function applyWtSelection() {
+  if (!wtSel) return;
+  const img = $('wt-frame');
+  // 표시 px → 창 px (프레임 원본 해상도) 환산
+  const scale = img.naturalWidth / img.getBoundingClientRect().width;
+  const rect = {
+    x: Math.round(wtSel.x * scale), y: Math.round(wtSel.y * scale),
+    w: Math.round(wtSel.w * scale), h: Math.round(wtSel.h * scale),
+  };
+  try {
+    if (wtStep === 'minimap') {
+      renderWatcher(await api.watcherMinimap(rect));
+      wtStep = 'patch';
+      wtClearSel();
+      updateWtModalHead();
+      wtSetStatus('미니맵 지정 완료 — 이어서 기준 화면을 드래그하세요.');
+    } else {
+      renderWatcher(await api.watcherRegion(rect));
+      closeWatcherModal();
+      wtSetStatus('현재 위치를 저장했습니다.');
+      log('info', '위치 지킴이: 현재 위치를 저장했습니다.');
+    }
+  } catch (e) { wtSetStatus(e.message, true); }
+}
+
+async function onWatcherTest() {
+  try {
+    wtSetStatus('측정 중…');
+    const r = await api.watcherTest();
+    if (r.error) { wtSetStatus(r.error, true); return; }
+    const sign = (v) => (v > 0 ? '+' : '') + v;
+    const parts = [];
+    parts.push(r.dotFound ? `미니맵 이탈 ${sign(r.miniDx)}px` : '미니맵 점 미탐지');
+    if (r.score != null)
+      parts.push(`매칭 ${(r.score * 100).toFixed(0)}%` + (r.patchFound ? ` · 화면 이탈 ${sign(r.dx)}px` : ' (임계 미달)'));
+    wtSetStatus(parts.join(' · '), !r.dotFound);
+  } catch (e) { wtSetStatus(e.message, true); }
+}
+
+function onWatcherStatus(d) {
+  if (!d) return;
+  wtSetStatus(d.message || '', d.state === 'fail');
+  if (d.state === 'fail' || d.state === 'skip') log('warn', '위치 지킴이: ' + d.message);
+  else if (d.state === 'done') log('info', '위치 지킴이: ' + d.message);
+  // coarse/fine 진행은 상태 줄만(로그 스팸 방지)
 }
 
 // ---------- 동기화(GitHub 비공개 저장소) ----------
@@ -188,6 +361,21 @@ function renderStatus(s) {
   $('d-interception').innerHTML = `${mark(d.interception)} ${d.interception ? '설치' : '미설치'}${b.interceptionAvailable ? '·가능' : ''}`;
   $('d-vigem').innerHTML = `${mark(d.vigem)} ${d.vigem ? '설치' : '미설치'}${b.gamepadConnected ? '·연결' : ''}`;
   $('d-admin').innerHTML = `${mark(d.admin)} ${d.admin ? '예' : '아니오'}`;
+
+  // .NET 런타임: 배포본은 내장(self-contained)이라 항상 동작 — 시스템 설치 여부는 별도 표시.
+  const dn = s.dotnet;
+  const dnHint = $('dotnet-hint');
+  if (dn) {
+    const appOk = dn.selfContained || dn.systemOk; // 앱 자체가 돌 수 있는 상태인가
+    const label = dn.selfContained
+      ? `내장 v${dn.major}${dn.systemOk ? ' · 시스템 설치됨' : ' · 시스템 미설치'}`
+      : (dn.systemOk ? `시스템 v${dn.major} 설치됨` : '미설치');
+    $('d-dotnet').innerHTML = `${mark(appOk)} ${label}`;
+    dnHint.innerHTML = dn.systemOk ? '' :
+      `시스템에 .NET ${dn.major} 런타임이 없습니다 — 개발 빌드(bin) 직접 실행 시 필요합니다. ` +
+      `<a class="sync-link" href="${dn.link}" target="_blank" rel="noopener">🔗 .NET ${dn.major} 설치 페이지</a>` +
+      (dn.selfContained ? ' (지금 실행 중인 배포본은 런타임 내장이라 영향 없음)' : '');
+  } else if (dnHint) dnHint.innerHTML = '';
 
   let hint = '';
   if (!b.interceptionAvailable) hint = 'Interception 미준비 — 설치 후 재부팅하세요.';
@@ -1004,6 +1192,8 @@ function connectWs() {
       case 'openEditor': openEditorFromWidget(msg.data.id); break; // 위젯 더블클릭 → 기존 창에서 편집 열기(중복 탭 방지)
       case 'syncStatus': if (!$('settings-overlay').hidden) renderSyncStatus(msg.data); break; // 동기화 진행/결과 실시간
       case 'overlaySettings': if (!$('settings-overlay').hidden) renderOverlayConfig(msg.data); break; // 오버레이 설정 실시간 동기화
+      case 'watcherSettings': if (!$('settings-overlay').hidden) renderWatcher(msg.data); break; // 위치 지킴이 설정 실시간 동기화
+      case 'watcherStatus': onWatcherStatus(msg.data); break; // 위치 보정 진행/결과
       case 'widgets': setPinned(msg.data.ids); break; // 열린 위젯 창 목록 → 핀 버튼 상태 동기화
       case 'shutdown': handleShutdown(); break;
     }
@@ -1113,6 +1303,31 @@ function wire() {
   $('ov-enabled').onchange = onOverlayEnabled;
   $('ov-add').onclick = onOverlayAdd;
   $('ov-refresh').onclick = loadOverlayWindows;
+  $('wt-enabled').onchange = async () => {
+    try { renderWatcher(await api.setWatcher({ enabled: $('wt-enabled').checked })); }
+    catch (e) { log('error', e.message); }
+  };
+  $('wt-winlist').onchange = async () => {
+    const p = $('wt-winlist').value; if (!p) return;
+    try { renderWatcher(await api.setWatcher({ process: p })); } catch (e) { log('error', e.message); }
+  };
+  $('wt-win-refresh').onclick = async () => { await loadOverlayWindows(); renderWatcherWinSelect(); };
+  $('wt-capture').onclick = () => openWatcherModal(false);
+  $('wt-minimap').onclick = () => openWatcherModal(true);
+  $('wt-test').onclick = onWatcherTest;
+  $('wt-clear').onclick = async () => {
+    try { renderWatcher(await api.watcherClearPatch()); wtSetStatus('저장된 위치를 삭제했습니다.'); }
+    catch (e) { log('error', e.message); }
+  };
+  $('wt-tol').onchange = async () => {
+    const v = parseInt($('wt-tol').value, 10);
+    if (Number.isFinite(v)) try { renderWatcher(await api.setWatcher({ tolerancePx: v })); } catch (e) { log('error', e.message); }
+  };
+  $('wt-maxms').onchange = async () => {
+    const v = parseInt($('wt-maxms').value, 10);
+    if (Number.isFinite(v)) try { renderWatcher(await api.setWatcher({ maxCorrectionMs: v })); } catch (e) { log('error', e.message); }
+  };
+  wireWatcherModal();
   $('btn-new').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-new-run').onclick = () => { editor.open(null); switchTab('edit'); };
   $('btn-import').onclick = () => $('file-import').click();

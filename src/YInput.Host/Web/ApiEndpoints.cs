@@ -11,7 +11,7 @@ namespace YInput.Host.Web;
 /// <summary>REST API + WebSocket 엔드포인트 매핑.</summary>
 public static class ApiEndpoints
 {
-    public static void MapApi(this WebApplication app, MacroService service, SocketHub hub, GitHubSync sync, WidgetManager widgets, OverlayController overlay)
+    public static void MapApi(this WebApplication app, MacroService service, SocketHub hub, GitHubSync sync, WidgetManager widgets, OverlayController overlay, PositionWatcher watcher)
     {
         // ---- 상태 ----
         app.MapGet("/api/status", () => Results.Json(service.GetStatusData()));
@@ -270,6 +270,31 @@ public static class ApiEndpoints
         app.MapPost("/api/overlay/whitelist/remove", (OverlayTargetBody? b) =>
             Results.Json(string.IsNullOrWhiteSpace(b?.Process) ? overlay.Get() : overlay.WhitelistRemove(b!.Process)));
 
+        // ---- 위치 지킴이(반복 사이클 사이 자리 보정: 미니맵 코스 + 템플릿 파인) ----
+        app.MapGet("/api/watcher", () => Results.Json(watcher.Get()));
+        app.MapPost("/api/watcher", (WatcherBody? b) => Results.Json(
+            watcher.Update(b?.Enabled, b?.Process, b?.TolerancePx, b?.MsPerPx,
+                           b?.MaxCorrectionMs, b?.MinScore, b?.MiniTolerancePx, b?.MsPerMiniPx)));
+        // 게임 창 새 캡처(영역 지정 모달용). 창 없으면 409.
+        app.MapGet("/api/watcher/frame", () => Guard(() =>
+        {
+            var png = watcher.CaptureFrame();
+            return Task.FromResult(Results.File(png, "image/png"));
+        }));
+        app.MapGet("/api/watcher/patch", () =>
+        {
+            var png = watcher.GetPatchPng();
+            return png is null ? Results.NotFound(new { error = "저장된 패치가 없습니다." }) : Results.File(png, "image/png");
+        });
+        app.MapPost("/api/watcher/minimap", (RegionBody? b) => Guard(() =>
+            Task.FromResult(b is null ? Results.BadRequest(new { error = "영역이 필요합니다." })
+                                      : Results.Json(watcher.SetMinimapRegion(b.X, b.Y, b.W, b.H)))));
+        app.MapPost("/api/watcher/region", (RegionBody? b) => Guard(() =>
+            Task.FromResult(b is null ? Results.BadRequest(new { error = "영역이 필요합니다." })
+                                      : Results.Json(watcher.SetRegion(b.X, b.Y, b.W, b.H)))));
+        app.MapDelete("/api/watcher/patch", () => Results.Json(watcher.ClearPatch()));
+        app.MapPost("/api/watcher/test", () => Guard(() => Task.FromResult(Results.Json(watcher.Test()))));
+
         // ---- WebSocket ----
         app.Map("/ws", async (HttpContext ctx) =>
         {
@@ -413,6 +438,10 @@ public static class ApiEndpoints
     private sealed record WidgetBody(string? Id = null);
     private sealed record OverlayBody(bool? Enabled = null);
     private sealed record OverlayTargetBody(string? Process = null);
+    private sealed record WatcherBody(bool? Enabled = null, string? Process = null, int? TolerancePx = null,
+                                      double? MsPerPx = null, int? MaxCorrectionMs = null, double? MinScore = null,
+                                      int? MiniTolerancePx = null, double? MsPerMiniPx = null);
+    private sealed record RegionBody(int X = 0, int Y = 0, int W = 0, int H = 0);
     private sealed record RecordStartBody(
         bool Keyboard = true,
         bool MouseButtons = true,
