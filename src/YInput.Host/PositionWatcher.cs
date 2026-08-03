@@ -669,26 +669,32 @@ public sealed class PositionWatcher : IDisposable
         return RuneArrowDetector.FindArrows(frame, before);
     }
 
-    // 퍼즐 샘플링 — 회전형 화살표(돌다가 정답 방향에서 잠깐 멈춤) 대응
-    private const int ArrowSampleMs = 130;       // 샘플 간격
-    private const int ArrowMaxSamples = 50;      // 총 ~6.5초
-    private const int ArrowStableRun = 3;        // 연속 이 횟수 같은 모양·방향 = 멈춤으로 확정
-    private const int ArrowFindGraceSamples = 6; // 초반 이 횟수 안에 화살표 줄을 못 찾으면 퍼즐 없음
+    // 퍼즐 샘플링 — 회전형 화살표(돌다가 정답 방향에서 '아주 잠깐' 멈춤) 대응.
+    // 정지형 판별 단계는 느긋하게 돌다가, 회전이 감지되면 고속 캡처로 전환해 멈춤 순간을 잡는다.
+    private const int ArrowSampleMs = 130;      // 정지형 판별 단계 샘플 간격
+    private const int ArrowStaticSamples = 6;   // 이 횟수 안에 정지형은 확정된다 — 못 하면 회전으로 보고 고속 전환
+    private const int ArrowFastGapMs = 5;       // 고속 모드 샘플 간격(캡처+분석 시간이 지배 — 실효 ~30-50ms)
+    private const int ArrowSolveBudgetMs = 9000;  // 전체 시간 예산(회전 멈춤 대기 포함)
+    private const int ArrowStableRun = 3;       // 연속 이 횟수 같은 모양·방향이어야 멈춤
+    private const int ArrowStableMinMs = 90;    // 멈춤 최소 지속시간 — 캡처가 게임 렌더(60fps)보다 빨라
+                                                // 같은 프레임을 중복으로 찍어도 '멈춤'으로 오판하지 않게
+    private const int ArrowFindGraceMs = 900;   // 이 시간 안에 화살표 줄을 못 찾으면 퍼즐 없음
 
-    /// <summary>퍼즐 화살표 4개의 방향 확정 — 프레임을 주기 샘플링해 화살표마다 '모양이 멈춘 구간'
-    /// (런 시작 시그니처·방향이 연속 유지)에서 확정한다. 정지형은 3샘플(~0.4초)에 바로 끝나고,
-    /// 회전형은 멈추는 순간을 기다린다. 시간 초과 시 다수결 폴백(멈춤 구간 표본이 가장 많다).</summary>
+    /// <summary>퍼즐 화살표 4개의 방향 확정 — 프레임을 샘플링해 화살표마다 '모양이 멈춘 구간'
+    /// (런 시작 시그니처·방향이 연속 유지 + 최소 지속시간)에서 확정한다. 정지형은 ~0.4초에 끝나고,
+    /// 회전형은 고속 캡처로 전환해 짧은 멈춤을 포착한다. 시간 초과 시 다수결 폴백.</summary>
     private async Task<List<RuneArrow>?> SolveArrowsAsync(WatcherSettings s, Bitmap? before, CancellationToken ct)
     {
         var locked = new char?[4];
         var centers = new PointF[4];
-        var runSig = new bool[4][]; var runDir = new char[4]; var runLen = new int[4];
+        var runSig = new bool[4][]; var runDir = new char[4]; var runLen = new int[4]; var runStartMs = new long[4];
         var votes = new Dictionary<char, int>[4];
         for (int j = 0; j < 4; j++) votes[j] = new Dictionary<char, int>();
-        bool rowSeen = false, shotSaved = false, spinNoted = false;
-        int lockedCount = 0;
+        bool rowSeen = false, shotSaved = false, fastMode = false;
+        int lockedCount = 0, sampleIdx = 0;
+        var sw = Stopwatch.StartNew();
 
-        for (int i = 0; i < ArrowMaxSamples && lockedCount < 4; i++)
+        while (sw.ElapsedMilliseconds < ArrowSolveBudgetMs && lockedCount < 4)
         {
             ct.ThrowIfCancellationRequested();
             using (var frame = CaptureGameFrame(s.Process, out _))
@@ -700,36 +706,47 @@ public sealed class PositionWatcher : IDisposable
                     {
                         if (!shotSaved) { FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(frame)); shotSaved = true; }
                         rowSeen = true;
+                        long nowMs = sw.ElapsedMilliseconds;
                         for (int j = 0; j < 4; j++)
                         {
                             centers[j] = row[j].Center;
                             if (locked[j] is not null) continue;
                             votes[j][row[j].Dir] = votes[j].GetValueOrDefault(row[j].Dir) + 1;
-                            // 멈춤 판정: '런 시작' 모양과 계속 같아야 함 — 느린 회전도 누적 드리프트로 걸러진다
+                            // 멈춤 판정: '런 시작' 모양과 계속 같아야 함(느린 회전은 누적 드리프트로 깨짐)
+                            // + 최소 지속시간(중복 캡처 프레임 오판 방지)
                             if (runSig[j] is not null && runDir[j] == row[j].Dir
                                 && RuneArrowDetector.SigSimilar(runSig[j], row[j].Sig))
                             {
-                                if (++runLen[j] >= ArrowStableRun) { locked[j] = runDir[j]; lockedCount++; }
+                                runLen[j]++;
+                                if (runLen[j] >= ArrowStableRun && nowMs - runStartMs[j] >= ArrowStableMinMs)
+                                { locked[j] = runDir[j]; lockedCount++; }
                             }
-                            else { runSig[j] = row[j].Sig; runDir[j] = row[j].Dir; runLen[j] = 1; }
+                            else { runSig[j] = row[j].Sig; runDir[j] = row[j].Dir; runLen[j] = 1; runStartMs[j] = nowMs; }
                         }
-                        if (!spinNoted && i >= ArrowStableRun + 1 && lockedCount < 4)
-                        { spinNoted = true; Status("rune", "화살표가 회전 중 — 멈추는 순간을 기다립니다"); }
                     }
-                    else if (!rowSeen && i + 1 >= ArrowFindGraceSamples)
+                    else if (!rowSeen && sw.ElapsedMilliseconds >= ArrowFindGraceMs)
                     {
                         FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(frame)); // 미탐지 원인 확인용
                         return null; // 퍼즐 자체가 안 떠 있음 → 호출자가 스페이스 재시도
                     }
                 }
             }
-            if (lockedCount < 4) await PreciseDelay.WaitAsync(ArrowSampleMs, ct).ConfigureAwait(false);
+            sampleIdx++;
+            // 정지형이면 여기까지 오기 전에 다 잠긴다 — 남았으면 회전 중: 고속 캡처로 멈춤 순간 포착
+            if (!fastMode && rowSeen && sampleIdx >= ArrowStaticSamples && lockedCount < 4)
+            {
+                fastMode = true;
+                Status("rune", "화살표가 회전 중 — 고속 캡처로 멈추는 순간을 포착합니다");
+            }
+            if (lockedCount < 4)
+                await PreciseDelay.WaitAsync(fastMode ? ArrowFastGapMs : ArrowSampleMs, ct).ConfigureAwait(false);
         }
         if (!rowSeen) return null;
 
         var result = new List<RuneArrow>(4);
         for (int j = 0; j < 4; j++)
         {
+            // 예산 내 멈춤을 못 잡은 화살표는 다수결 — 회전 중에도 멈춤 방향 표본이 가장 많다
             char? dir = locked[j] ?? (votes[j].Count > 0 ? votes[j].MaxBy(kv => kv.Value).Key : null);
             if (dir is not { } d) return null;
             result.Add(new RuneArrow(centers[j], d));
