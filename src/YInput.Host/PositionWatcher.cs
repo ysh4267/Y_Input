@@ -52,8 +52,11 @@ public sealed class SpotData
 {
     public double DotX { get; set; }
     public double DotY { get; set; }
-    /// <summary>점 좌표가 창(프레임) 상대인가 — false면 구버전(미니맵 영역 상대)이라 로드 시 변환한다.</summary>
+    /// <summary>(구버전 호환) 점 좌표가 창(프레임) 상대였는지 — DotRel 마이그레이션에 사용.</summary>
     public bool DotFrame { get; set; }
+    /// <summary>점 좌표가 '고정된 미니맵 영역 상대'인가(현행) — 미니맵 창을 옮기거나 다시 고정해도
+    /// 상대 좌표는 유효해서 이탈 방향이 뒤집히지 않는다. false면 로드 시 변환.</summary>
+    public bool DotRel { get; set; }
     public int PatchX { get; set; }
     public int PatchY { get; set; }
     public int PatchW { get; set; }
@@ -293,9 +296,9 @@ public sealed class PositionWatcher : IDisposable
                 ?? throw new InvalidOperationException($"'{s.Process}' 창을 찾을 수 없습니다. 게임이 실행 중인지 확인하세요.");
             // 고정된 미니맵 영역 안에서 점 탐지 — Live 미리보기와 같은 기준이라 마커와 일치.
             var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
-            if (!MinimapDetector.TryFindPlayerDot(frame, mini, out var dotRel, s.DotMinR, s.DotMinG, s.DotMaxB))
+            if (!MinimapDetector.TryFindPlayerDot(frame, mini, out var dot, s.DotMinR, s.DotMinG, s.DotMaxB))
                 throw new ArgumentException("고정된 미니맵 영역에서 플레이어 점을 찾지 못했습니다. 미니맵이 이동/접힘 상태인지 확인하세요.");
-            var dot = new PointF(dotRel.X + mini.X, dotRel.Y + mini.Y); // 창 상대
+            // dot은 미니맵 영역 '상대' 좌표 그대로 저장 — 미니맵을 옮기거나 다시 고정해도 유효
 
             // 앵커 = 사용자가 지정 카드에서 클릭한 캐릭터 위치(창 상대). 카메라 레이지 무브 때문에
             // 캐릭터가 화면 중앙에 있다는 보장이 없어, 중앙 가정 대신 앵커 중심으로 자른다.
@@ -312,7 +315,7 @@ public sealed class PositionWatcher : IDisposable
 
             var spot = new SpotData
             {
-                DotX = dot.X, DotY = dot.Y, DotFrame = true, // 창(프레임) 상대 좌표
+                DotX = dot.X, DotY = dot.Y, DotFrame = true, DotRel = true, // 미니맵 영역 상대 좌표
                 PatchX = rect.X, PatchY = rect.Y, PatchW = rect.Width, PatchH = rect.Height,
                 DirectionSign = 0, // 새 자리 → 파인 방향 재학습
             };
@@ -395,12 +398,11 @@ public sealed class PositionWatcher : IDisposable
 
             for (int pass = 0; pass < 2; pass++) // 파인 후 미니맵이 다시 벗어나 있으면 1회 한해 코스부터 재시도
             {
-                // ── 1단계: 미니맵 코스 복귀(서브픽셀 점 기준). 첫 측정은 저장 위치 근처 우선(다른 블롭 배제) ──
+                // ── 1단계: 미니맵 코스 복귀 — 방향키를 '누른 채' 걸으며 주기 측정, 도착 직전/지나침에 뗀다 ──
                 var dot = MeasureDot(s, new PointF((float)spot.DotX, (float)spot.DotY));
                 if (dot is null) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 보정을 포기합니다."); return; }
                 double miniDx = dot.Value.X - spot.DotX;
-                double msPerMini = s.MsPerMiniPx; // 오버슈트가 보이면 즉석에서 줄여 수렴을 빠르게
-                double prevMiniDx = double.NaN;
+                double releaseEarly = Math.Max(s.MiniTolerancePx, 1.2); // 키를 뗀 뒤 관성 미끄러짐 여유분
 
                 while (Math.Abs(miniDx) > s.MiniTolerancePx && sw.ElapsedMilliseconds < s.MaxCorrectionMs)
                 {
@@ -409,14 +411,32 @@ public sealed class PositionWatcher : IDisposable
                     Status("coarse", $"미니맵 보정 중 (이탈 {miniDx:+0.0;-0.0}px)");
                     // 점이 저장 위치보다 오른쪽(+) = 캐릭터가 오른쪽에 있음 → 왼쪽 키
                     ushort key = miniDx > 0 ? ScLeft : ScRight;
-                    await TapAsync(key, Math.Clamp(Math.Abs(miniDx) * msPerMini, MinTapMs, s.MaxHoldMs), ct).ConfigureAwait(false);
-                    await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
-                    dot = MeasureDot(s, dot); // 직전 위치 추적 — 다른 노란 점으로 안 튀게
-                    if (dot is null) { Status("fail", "보정 중 미니맵 점을 놓쳤습니다."); return; }
-                    prevMiniDx = miniDx;
+                    int dirSign = Math.Sign(miniDx);
+                    bool lostDot = false;
+                    _backend.Send(new KeyboardEvent { Code = key, State = KeyDownE0 });
+                    try
+                    {
+                        // 누른 채 연속 이동 — 걷는 동안 주기적으로 위치를 재며 도착 직전 또는 지나침에 뗀다
+                        while (sw.ElapsedMilliseconds < s.MaxCorrectionMs)
+                        {
+                            await PreciseDelay.WaitAsync(60, ct).ConfigureAwait(false);
+                            var d2 = MeasureDot(s, dot);
+                            if (d2 is null) { lostDot = true; break; } // 점 놓침 → 일단 멈추고 아래서 재평가
+                            dot = d2;
+                            miniDx = dot.Value.X - spot.DotX;
+                            if (Math.Sign(miniDx) != dirSign) break;      // 목표를 지나침
+                            if (Math.Abs(miniDx) <= releaseEarly) break;  // 도착 직전(관성 감안)
+                        }
+                    }
+                    finally { try { _backend.Send(new KeyboardEvent { Code = key, State = KeyUpE0 }); } catch { } }
+
+                    await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false); // 미끄러짐 정지 대기
+                    var d3 = MeasureDot(s, dot);
+                    if (d3 is null) { Status("fail", "보정 중 미니맵 점을 놓쳤습니다."); return; }
+                    _ = lostDot; // 홀드 중 일시적으로 놓쳤어도 정지 후 다시 찾았으면 계속
+                    dot = d3;
                     miniDx = dot.Value.X - spot.DotX;
-                    // 부호가 뒤집혔다 = 목표를 지나침 → 다음 탭은 약하게(진동 방지)
-                    if (!double.IsNaN(prevMiniDx) && miniDx * prevMiniDx < 0) msPerMini *= 0.55;
+                    // 아직 밖이면 새 방향으로 다시 홀드(지나쳤으면 자연히 반대 방향으로 짧게 되돌아온다)
                 }
                 if (Math.Abs(miniDx) > s.MiniTolerancePx) { Status("fail", $"보정 시간 초과(미니맵 이탈 {miniDx:+0.0;-0.0}px 남음)."); return; }
 
@@ -500,10 +520,12 @@ public sealed class PositionWatcher : IDisposable
             if (!File.Exists(json) || !File.Exists(png)) return null;
             var data = JsonSerializer.Deserialize<SpotData>(File.ReadAllText(json));
             if (data is null || data.PatchW <= 0) return null;
-            // 구버전 스팟(점 좌표가 미니맵 영역 상대) → 당시 미니맵 영역 원점을 더해 창 상대로 변환
-            if (!data.DotFrame)
+            // 마이그레이션 → 현행: 점 좌표는 '고정 미니맵 영역 상대'.
+            // 창 상대(DotFrame)였으면 현재 고정 영역 원점을 빼서 변환(미니맵을 옮겼다면 재지정 권장).
+            if (!data.DotRel)
             {
-                data.DotX += _settings.MiniX; data.DotY += _settings.MiniY; data.DotFrame = true;
+                if (data.DotFrame) { data.DotX -= _settings.MiniX; data.DotY -= _settings.MiniY; }
+                data.DotRel = true; data.DotFrame = true;
                 try { File.WriteAllText(json, JsonSerializer.Serialize(data)); } catch { /* 무시 */ }
             }
             GrayImage gray;
@@ -515,18 +537,17 @@ public sealed class PositionWatcher : IDisposable
         catch { return null; }
     }
 
-    /// <summary>프레임을 찍어 '고정된 미니맵 영역' 안에서 플레이어 점(창 상대, 서브픽셀)을 찾는다.
-    /// 창/점/미니맵 미지정이면 null. near = 직전(또는 저장) 위치 — 추적으로 다른 점으로 튀는 것을 막는다.</summary>
+    /// <summary>프레임을 찍어 '고정된 미니맵 영역' 안에서 플레이어 점(미니맵 상대, 서브픽셀)을 찾는다.
+    /// 창/점/미니맵 미지정이면 null. near = 직전(또는 저장) 위치(미니맵 상대) — 추적으로 다른 점으로 튀는 것을 막는다.</summary>
     private PointF? MeasureDot(WatcherSettings s, PointF? near = null)
     {
         if (s.MiniW <= 0) return null;
         using var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return null;
         var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
-        var cands = MinimapDetector.FindDots(frame, mini, s.DotMinR, s.DotMinG, s.DotMaxB)
-            .Select(c => c with { Center = new PointF(c.Center.X + mini.X, c.Center.Y + mini.Y) }).ToList();
+        var cands = MinimapDetector.FindDots(frame, mini, s.DotMinR, s.DotMinG, s.DotMaxB);
         if (cands.Count == 0) return null;
-        return MinimapDetector.Pick(cands, near).Center;
+        return MinimapDetector.Pick(cands, near).Center; // 미니맵 상대 좌표
     }
 
     /// <summary>프레임의 패치 Y ± 밴드에서 템플릿 매칭. dx = 현재 매칭 X − 저장 X.</summary>
