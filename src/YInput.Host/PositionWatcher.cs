@@ -686,10 +686,20 @@ public sealed class PositionWatcher : IDisposable
                 Status("rune", $"퍼즐 인식: {seq} — 입력했습니다");
                 SaveRuneShots(beforeCrop); // 판정에 쓴 버스트 저장(오답 재현용)
 
-                // 입력 후 퍼즐이 사라졌는지 확인 — 남아 있으면 인식이 틀렸을 가능성
+                // 입력 후 퍼즐(배너)이 사라졌는지 확인 — 화살표 재탐지는 룬 해제 이펙트를 오인할 수 있어
+                // 배너 잔존 여부로 판정한다(23:48 실행: 성공인데 이펙트를 화살표로 재탐지해 실패 경고).
                 await PreciseDelay.WaitAsync(900, ct).ConfigureAwait(false);
-                if (await DetectArrowsAsync(screenCrop, beforeCrop, ct).ConfigureAwait(false) is not null)
-                    Status("fail", "퍼즐 입력 후에도 화살표가 남아 있습니다 — 인식이 틀렸을 수 있어요(logs\\rune-puzzle.png 확인).");
+                bool stillOpen = false;
+                try
+                {
+                    using var va = ScreenCapture.Capture(screenCrop);
+                    await PreciseDelay.WaitAsync(180, ct).ConfigureAwait(false);
+                    using var vb = ScreenCapture.Capture(screenCrop);
+                    stillOpen = RuneArrowDetector.PuzzlePresent(va, vb, beforeCrop, precropped: true);
+                }
+                catch { /* 캡처 실패 — 검증 생략 */ }
+                if (stillOpen)
+                    Status("fail", "퍼즐 입력 후에도 퍼즐이 남아 있습니다 — 인식이 틀렸을 수 있어요(logs\\rune-puzzle.png 확인).");
                 else
                     Status("done", $"룬 사용 완료 (퍼즐 {seq})");
             }
