@@ -102,6 +102,75 @@ internal static class MinimapDetector
         return true;
     }
 
+    // ---------- 룬(보라 다이아) 아이콘 탐지 ----------
+    // 미니맵의 룬 아이콘은 보라·라벤더 계열 다이아 — B가 높고 G가 낮다. 파란 타 유저 점(R 낮음)·
+    // 초록 포탈·노란 점·빨간 마커와 색으로 구분된다.
+    private const int RuneMinBlobArea = 6;    // 다이아 코어만 잡혀도 인정
+    private const int RuneMaxBlobArea = 300;
+    private const int RuneMaxBlobBox = 24;
+
+    /// <summary>미니맵 영역에서 룬(보라 다이아) 아이콘 중심을 찾는다(minimapRect 상대, 서브픽셀).
+    /// 후보가 여럿이면 가장 큰 블롭. 없으면 null.</summary>
+    public static PointF? FindRuneIcon(Bitmap frame, Rectangle minimapRect)
+    {
+        var area = Rectangle.Intersect(minimapRect, new Rectangle(0, 0, frame.Width, frame.Height));
+        if (area.Width <= 0 || area.Height <= 0) return null;
+
+        int w = area.Width, h = area.Height;
+        var mask = new bool[w * h];
+        var data = frame.LockBits(area, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        try
+        {
+            unsafe
+            {
+                for (int y = 0; y < h; y++)
+                {
+                    byte* row = (byte*)data.Scan0 + y * data.Stride;
+                    int o = y * w;
+                    for (int x = 0; x < w; x++)
+                    {
+                        byte b = row[x * 4], g = row[x * 4 + 1], r = row[x * 4 + 2];
+                        // 보라·라벤더: 파랑 우세 + 빨강 동반 + 초록 낮음
+                        mask[o + x] = b >= 170 && r >= 100 && b - g >= 60;
+                    }
+                }
+            }
+        }
+        finally { frame.UnlockBits(data); }
+
+        var seen = new bool[w * h];
+        var stack = new Stack<int>();
+        float ox = area.X - minimapRect.X, oy = area.Y - minimapRect.Y;
+        PointF? best = null; int bestArea = 0;
+        for (int i = 0; i < mask.Length; i++)
+        {
+            if (!mask[i] || seen[i]) continue;
+            long sumX = 0, sumY = 0; int count = 0;
+            int minX = w, maxX = -1, minY = h, maxY = -1;
+            stack.Push(i); seen[i] = true;
+            while (stack.Count > 0)
+            {
+                int p = stack.Pop();
+                int px = p % w, py = p / w;
+                sumX += px; sumY += py; count++;
+                if (px < minX) minX = px; if (px > maxX) maxX = px;
+                if (py < minY) minY = py; if (py > maxY) maxY = py;
+                if (px > 0 && mask[p - 1] && !seen[p - 1]) { seen[p - 1] = true; stack.Push(p - 1); }
+                if (px < w - 1 && mask[p + 1] && !seen[p + 1]) { seen[p + 1] = true; stack.Push(p + 1); }
+                if (py > 0 && mask[p - w] && !seen[p - w]) { seen[p - w] = true; stack.Push(p - w); }
+                if (py < h - 1 && mask[p + w] && !seen[p + w]) { seen[p + w] = true; stack.Push(p + w); }
+            }
+            int bw = maxX - minX + 1, bh = maxY - minY + 1;
+            if (count < RuneMinBlobArea || count > RuneMaxBlobArea || bw > RuneMaxBlobBox || bh > RuneMaxBlobBox) continue;
+            if (count > bestArea)
+            {
+                bestArea = count;
+                best = new PointF((float)sumX / count + ox, (float)sumY / count + oy);
+            }
+        }
+        return best;
+    }
+
     // ---------- 검은 창(미니맵 패널) 기반 탐지 ----------
     // 실제 미니맵 창 구조(스크린샷 확인): 어두운 제목줄 + 어두운 테두리 안에 흰 테두리의 '컬러 맵'이
     // 들어있다 — 즉 속이 꽉 찬 검은 상자가 아니라 '어두운 프레임(액자)' 모양이다. 그래서 채움 비율

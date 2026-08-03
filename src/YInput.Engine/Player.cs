@@ -37,6 +37,10 @@ public sealed class Player
     /// 취소는 OCE로 전파되어 정지 경로를 탄다. null이면 no-op.</summary>
     public Func<string?, CancellationToken, Task>? PositionCorrect { get; set; }
 
+    /// <summary>'룬 사용' 스텝(<see cref="RuneUseEvent"/>) 도달 시 호출되는 비동기 훅
+    /// (Host의 PositionWatcher.RuneUseAsync가 주입됨). 취소는 OCE로 전파. null이면 no-op.</summary>
+    public Func<CancellationToken, Task>? RuneUse { get; set; }
+
     public Player(IInputSink sink) => _sink = sink;
 
     /// <summary>지연(ms)에 속도 배율을 적용한 실제 대기 시간. (순수 함수 — 테스트 대상)</summary>
@@ -108,6 +112,13 @@ public sealed class Player
                             Progress?.Invoke(this, new PlaybackProgress(loop, ip, steps.Count, 0, SnapshotLoops(loopStack)));
                             if (PositionCorrect is not null)
                                 await PositionCorrect(pc.SpotId, ct).ConfigureAwait(false);
+                            ip++;
+                            break;
+                        case RuneUseEvent:
+                            // 룬 사용 스텝 — Host 훅이 미니맵 룬 아이콘까지 이동해 스페이스+퍼즐을 수행(훅 없으면 no-op).
+                            Progress?.Invoke(this, new PlaybackProgress(loop, ip, steps.Count, 0, SnapshotLoops(loopStack)));
+                            if (RuneUse is not null)
+                                await RuneUse(ct).ConfigureAwait(false);
                             ip++;
                             break;
                         case DelayEvent de:

@@ -15,7 +15,7 @@ function hotkeyToString(t) {
   return p.join('+');
 }
 
-const TYPE_NAME = { keyboard: '키', mouse: '마우스', gamepad: '패드', text: '텍스트', delay: '지연', loopStart: '반복', loopEnd: '반복', macroRef: '매크로', positionCorrect: '위치' };
+const TYPE_NAME = { keyboard: '키', mouse: '마우스', gamepad: '패드', text: '텍스트', delay: '지연', loopStart: '반복', loopEnd: '반복', macroRef: '매크로', positionCorrect: '위치', runeUse: '룬' };
 const fmtMs = (ms) => ms >= 1000 ? (ms / 1000).toFixed(2) + ' s' : Math.round(ms) + ' ms';
 const REDUCE_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -353,7 +353,34 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
       td.append(labelTag('실행'), sel);
     } else if (t === 'positionCorrect') {
       buildSpotDetail(row, td, step);
+    } else if (t === 'runeUse') {
+      buildRuneDetail(td);
     }
+  }
+
+  // ---------- 룬 사용 카드 — 설정 없음, 테스트(미니맵에서 룬·내 점 상대 거리)만 제공 ----------
+  function buildRuneDetail(td) {
+    const info = document.createElement('span'); info.className = 'muted';
+    info.textContent = '미니맵의 룬(💠)까지 이동해 스페이스 발동 + 방향키 퍼즐 자동 입력';
+    const bTest = document.createElement('button'); bTest.className = 'btn ghost sm'; bTest.type = 'button';
+    bTest.textContent = '테스트';
+    bTest.onclick = async (e) => {
+      e.stopPropagation();
+      info.textContent = '측정 중…';
+      try {
+        const r = await api.watcherRuneTest();
+        if (r.error) { info.textContent = r.error; return; }
+        const parts = [];
+        if (!r.runeFound) parts.push('미니맵에 룬 아이콘 없음 — 재생 시 이 블록은 건너뜀');
+        else if (!r.dotFound) parts.push('룬은 보이지만 내 캐릭터 점을 못 찾음');
+        else {
+          const sg = (v) => (v > 0 ? '+' : '') + v;
+          parts.push(`💠 룬 감지 — 내 위치 기준 가로 ${sg(r.dx)}px · 세로 ${sg(r.dy)}px(미니맵)`);
+        }
+        info.textContent = parts.join(' · ');
+      } catch (err) { info.textContent = err.message; }
+    };
+    td.append(bTest, info);
   }
 
   // ---------- 위치 보정 카드(요약) — 지정은 별도 팝업(openSpotPopup)에서 ----------
@@ -817,6 +844,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
         { delayBeforeMs: 0, event: km.loopEndEvent() }];
       case 'macroRef': return [{ delayBeforeMs: 0, event: { '$type': 'macroRef', macroId: '', name: '' } }];
       case 'positionCorrect': return [{ delayBeforeMs: 0, event: { '$type': 'positionCorrect', spotId: '' } }];
+      case 'runeUse': return [{ delayBeforeMs: 0, event: { '$type': 'runeUse' } }];
       case 'record': return [{ delayBeforeMs: 0, event: { '$type': 'record', delayMode: 'record', fixedMs: 50, targets: { keyboard: true, mouseButtons: false, mouseMove: false, mouseWheel: false, gamepad: false } } }];
       default: return [];
     }

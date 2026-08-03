@@ -67,9 +67,17 @@ public sealed class SpotData
 public sealed class PositionWatcher : IDisposable
 {
     private const ushort ScLeft = 0x4B, ScRight = 0x4D;   // 방향키 스캔코드(E0 확장)
+    private const ushort ScUp = 0x48, ScDown = 0x50;      // 퍼즐 입력·아래점프용(E0 확장)
     private const ushort KeyDownE0 = 0x02, KeyUpE0 = 0x03;
+    private const ushort ScSpace = 0x39, ScV = 0x2F, ScLAlt = 0x38; // 일반 키(E0 아님) — Down=0x00/Up=0x01
     private const int SearchBandPx = 24;                  // 템플릿 탐색 Y 범위(저장 Y ± 이 값)
     private const double MinPatchStdDev = 8;              // 패치 대비 하한(단색·특징 부족 거부)
+
+    // 룬 사용 — 룬은 상호작용 범위가 넓어 위치 보정보다 허용오차를 느슨하게 잡는다.
+    private const double RuneTolX = 2.0;   // 미니맵 px
+    private const double RuneTolY = 2.5;   // 층(발판) 일치 판정
+    private const int RuneMaxMs = 30000;   // 수직 이동 포함 총 제한 — 위치 보정보다 길게
+    private const int JumpSettleMs = 1000; // 점프(윗점프/아래점프) 후 착지·정지 대기
 
     private readonly string _statePath;
     private readonly string _spotsDir;
@@ -420,54 +428,12 @@ public sealed class PositionWatcher : IDisposable
                 // 폴백도 저장 위치 근접이 아닌 크기 기반 — 근접 선택은 정지 블롭에 고정될 수 있다.
                 dot = IdentifyMovedLeft(dots0, dots1) ?? MinimapDetector.Pick(dots1).Center;
             }
-            double miniDx = dot.Value.X - spot.DotX;
-            double releaseEarly = Math.Max(s.MiniTolerancePx, 1.2); // 키를 뗀 뒤 관성 미끄러짐 여유분
-            int rebounds = 0; // 도착/지나침 후 반대 방향 재보정 횟수 — 누를수록 짧게(최소 50ms)
-
-            while (Math.Abs(miniDx) > s.MiniTolerancePx && sw.ElapsedMilliseconds < s.MaxCorrectionMs)
-            {
-                ct.ThrowIfCancellationRequested();
-                if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 보정을 중단합니다."); return; }
-                Status("coarse", $"미니맵 보정 중 (이탈 {miniDx:+0.0;-0.0}px)");
-                // 점이 저장 위치보다 오른쪽(+) = 캐릭터가 오른쪽에 있음 → 왼쪽 키
-                ushort key = miniDx > 0 ? ScLeft : ScRight;
-                int dirSign = Math.Sign(miniDx);
-                bool lostDot = false;
-                // 첫 홀드는 도착할 때까지 무제한, 이후 되돌림은 220→132→79→50ms로 점점 짧게 눌러 미세 조정
-                long holdCapMs = rebounds == 0 ? long.MaxValue
-                                               : Math.Max(50, (long)(220 * Math.Pow(0.6, rebounds - 1)));
-                var holdSw = Stopwatch.StartNew();
-                _backend.Send(new KeyboardEvent { Code = key, State = KeyDownE0 });
-                try
-                {
-                    // 누른 채 연속 이동 — 걷는 동안 주기적으로 위치를 재며 도착 직전 또는 지나침에 뗀다
-                    while (sw.ElapsedMilliseconds < s.MaxCorrectionMs)
-                    {
-                        long remain = holdCapMs - holdSw.ElapsedMilliseconds;
-                        if (remain <= 0) break;                       // 되돌림 홀드 상한 도달
-                        await PreciseDelay.WaitAsync((int)Math.Min(60, remain), ct).ConfigureAwait(false);
-                        if (holdCapMs - holdSw.ElapsedMilliseconds <= 0) break;
-                        var d2 = MeasureDot(s, dot);
-                        if (d2 is null) { lostDot = true; break; } // 점 놓침 → 일단 멈추고 아래서 재평가
-                        dot = d2;
-                        miniDx = dot.Value.X - spot.DotX;
-                        if (Math.Sign(miniDx) != dirSign) break;      // 목표를 지나침
-                        if (Math.Abs(miniDx) <= releaseEarly) break;  // 도착 직전(관성 감안)
-                    }
-                }
-                finally { try { _backend.Send(new KeyboardEvent { Code = key, State = KeyUpE0 }); } catch { } }
-                rebounds++;
-
-                // 관성·가속 때문에 키를 뗀 뒤에도 조금 미끄러진다 — 고정 시간만큼 기다렸다 측정
-                await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
-                var d3 = MeasureDot(s, dot);
-                if (d3 is null) { Status("fail", "보정 중 미니맵 점을 놓쳤습니다."); return; }
-                _ = lostDot; // 홀드 중 일시적으로 놓쳤어도 정지 후 다시 찾았으면 계속
-                dot = d3;
-                miniDx = dot.Value.X - spot.DotX;
-                // 아직 밖이면 새 방향으로 다시 홀드(지나쳤으면 자연히 반대 방향으로 짧게 되돌아온다)
-            }
-            if (Math.Abs(miniDx) > s.MiniTolerancePx) { Status("fail", $"보정 시간 초과(미니맵 이탈 {miniDx:+0.0;-0.0}px 남음)."); return; }
+            var walk = await WalkToXAsync(s, dot.Value, spot.DotX, s.MiniTolerancePx, sw, s.MaxCorrectionMs,
+                                          "coarse", "미니맵 보정 중", ct).ConfigureAwait(false);
+            if (walk.Result == Walk.NotForeground) { Status("skip", "게임 창이 전면에서 벗어나 보정을 중단합니다."); return; }
+            if (walk.Result == Walk.LostDot) { Status("fail", "보정 중 미니맵 점을 놓쳤습니다."); return; }
+            double miniDx = walk.Dot.X - spot.DotX;
+            if (walk.Result == Walk.Timeout) { Status("fail", $"보정 시간 초과(미니맵 이탈 {miniDx:+0.0;-0.0}px 남음)."); return; }
 
             // 파인(화면 매칭) 이동은 쓰지 않는다 — 주변 유저·말풍선이 패치에 겹치거나 카메라
             // 레이지무브가 정착 중이면 매칭이 흔들려, 맞춰둔 자리를 오히려 이탈시켰다(18:05 실행 로그).
@@ -480,6 +446,221 @@ public sealed class PositionWatcher : IDisposable
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { try { Status("fail", "보정 오류: " + ex.Message); } catch { } }
         finally { _sem.Release(); }
+    }
+
+    // ---------- 공용 수평 걷기 ----------
+    private enum Walk { Arrived, Timeout, LostDot, NotForeground }
+
+    /// <summary>미니맵 X 목표까지 좌우 걷기 — 연속 홀드 + 홀드 중 폴링(도착 직전/지나침에 뗌) +
+    /// 감쇠 리바운드(220→132→79→50ms) + 뗀 뒤 SettleMs 대기 후 재측정. 위치 보정·룬 이동 공용.</summary>
+    private async Task<(Walk Result, PointF Dot)> WalkToXAsync(WatcherSettings s, PointF dot, double targetX,
+        double tol, Stopwatch sw, long maxMs, string state, string label, CancellationToken ct)
+    {
+        double miniDx = dot.X - targetX;
+        double releaseEarly = Math.Max(tol, 1.2); // 키를 뗀 뒤 관성 미끄러짐 여유분
+        int rebounds = 0; // 도착/지나침 후 반대 방향 재보정 횟수 — 누를수록 짧게(최소 50ms)
+
+        while (Math.Abs(miniDx) > tol && sw.ElapsedMilliseconds < maxMs)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!WindowLocator.IsForeground(s.Process)) return (Walk.NotForeground, dot);
+            Status(state, $"{label} (이탈 {miniDx:+0.0;-0.0}px)");
+            // 점이 목표보다 오른쪽(+) = 캐릭터가 오른쪽에 있음 → 왼쪽 키
+            ushort key = miniDx > 0 ? ScLeft : ScRight;
+            int dirSign = Math.Sign(miniDx);
+            // 첫 홀드는 도착할 때까지 무제한, 이후 되돌림은 220→132→79→50ms로 점점 짧게 눌러 미세 조정
+            long holdCapMs = rebounds == 0 ? long.MaxValue
+                                           : Math.Max(50, (long)(220 * Math.Pow(0.6, rebounds - 1)));
+            var holdSw = Stopwatch.StartNew();
+            _backend.Send(new KeyboardEvent { Code = key, State = KeyDownE0 });
+            try
+            {
+                // 누른 채 연속 이동 — 걷는 동안 주기적으로 위치를 재며 도착 직전 또는 지나침에 뗀다
+                while (sw.ElapsedMilliseconds < maxMs)
+                {
+                    long remain = holdCapMs - holdSw.ElapsedMilliseconds;
+                    if (remain <= 0) break;                       // 되돌림 홀드 상한 도달
+                    await PreciseDelay.WaitAsync((int)Math.Min(60, remain), ct).ConfigureAwait(false);
+                    if (holdCapMs - holdSw.ElapsedMilliseconds <= 0) break;
+                    var d2 = MeasureDot(s, dot);
+                    if (d2 is null) break; // 점 놓침 → 일단 멈추고 정지 후 재평가
+                    dot = d2.Value;
+                    miniDx = dot.X - targetX;
+                    if (Math.Sign(miniDx) != dirSign) break;      // 목표를 지나침
+                    if (Math.Abs(miniDx) <= releaseEarly) break;  // 도착 직전(관성 감안)
+                }
+            }
+            finally { try { _backend.Send(new KeyboardEvent { Code = key, State = KeyUpE0 }); } catch { } }
+            rebounds++;
+
+            // 관성·가속 때문에 키를 뗀 뒤에도 조금 미끄러진다 — 고정 시간만큼 기다렸다 측정
+            await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
+            var d3 = MeasureDot(s, dot);
+            if (d3 is null) return (Walk.LostDot, dot); // 홀드 중 일시 놓침은 허용, 정지 후에도 없으면 실패
+            dot = d3.Value;
+            miniDx = dot.X - targetX;
+            // 아직 밖이면 새 방향으로 다시 홀드(지나쳤으면 자연히 반대 방향으로 짧게 되돌아온다)
+        }
+        return (Math.Abs(miniDx) <= tol ? Walk.Arrived : Walk.Timeout, dot);
+    }
+
+    // ---------- 룬 사용(재생 훅) ----------
+    /// <summary>블록 카드 [테스트] — 키 입력 없이 미니맵의 룬 아이콘·내 점 위치와 상대 거리만 측정.</summary>
+    public object RuneTest()
+    {
+        WatcherSettings s; lock (_gate) s = Clone(_settings);
+        if (s.MiniW <= 0) return new { error = "미니맵이 지정되지 않았습니다 — 설정에서 [미니맵 탐지]를 먼저 하세요." };
+        using var frame = CaptureGameFrame(s.Process, out _);
+        if (frame is null) return new { error = $"'{s.Process}' 창을 찾을 수 없습니다." };
+        var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
+        var rune = MinimapDetector.FindRuneIcon(frame, mini);
+        var cands = MinimapDetector.FindDots(frame, mini, s.DotMinR, s.DotMinG, s.DotMaxB);
+        PointF? dot = cands.Count > 0 ? MinimapDetector.Pick(cands).Center : null;
+        return new
+        {
+            runeFound = rune is not null,
+            dotFound = dot is not null,
+            dx = rune is { } r1 && dot is { } d1 ? Math.Round(d1.X - r1.X, 1) : (double?)null,
+            dy = rune is { } r2 && dot is { } d2 ? Math.Round(d2.Y - r2.Y, 1) : (double?)null,
+        };
+    }
+
+    /// <summary>
+    /// '룬 사용' 스텝의 실제 수행(Player.RuneUse 훅). 미니맵의 룬(보라 다이아) 아이콘까지
+    /// 수평(걷기) → 수직(윗점프 V / 아래점프 ↓+Alt) 순으로 이동해 스페이스로 발동하고,
+    /// 화면에 뜬 방향키 퍼즐(화살표 4개)을 인식해 자동 입력한다.
+    /// 미니맵에 룬이 없으면 건너뛰고 다음 스텝 진행. 취소는 OCE로 전파, 그 외 오류는 삼킨다.
+    /// </summary>
+    public async Task RuneUseAsync(CancellationToken ct)
+    {
+        WatcherSettings s; lock (_gate) s = Clone(_settings);
+        if (s.MiniW <= 0) { Status("skip", "미니맵이 지정되지 않아 룬 사용을 건너뜁니다."); return; }
+        if (!_sem.Wait(0)) return; // 다른 매크로가 보정/룬 수행 중 → 스킵
+
+        try
+        {
+            if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면이 아니라 룬 사용을 건너뜁니다."); return; }
+            if (MeasureRune(s) is null) { Status("skip", "미니맵에 룬(보라 다이아) 아이콘이 없어 건너뜁니다."); return; }
+            var sw = Stopwatch.StartNew();
+
+            // ── 1단계: 내 캐릭터 점 식별(위치 보정과 동일 — 여러 개면 프로브 이동으로 확인) ──
+            var dots0 = MeasureDots(s);
+            if (dots0 is null || dots0.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 룬 사용을 포기합니다."); return; }
+            PointF dot;
+            if (dots0.Count == 1) dot = dots0[0].Center;
+            else
+            {
+                Status("rune", $"노란 블롭 {dots0.Count}개 — 살짝 이동해 내 캐릭터를 식별합니다");
+                await TapAsync(ScLeft, 90, ct).ConfigureAwait(false);
+                await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
+                var dots1 = MeasureDots(s);
+                if (dots1 is null || dots1.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 룬 사용을 포기합니다."); return; }
+                dot = IdentifyMovedLeft(dots0, dots1) ?? MinimapDetector.Pick(dots1).Center;
+            }
+
+            // ── 2단계: 수평 먼저 정렬 → 수직 점프 1회 → 다시 수평 재확인 반복(점프로 X가 흐트러질 수 있음) ──
+            while (sw.ElapsedMilliseconds < RuneMaxMs)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 룬 사용을 중단합니다."); return; }
+                if (MeasureRune(s) is not { } rune) { Status("fail", "이동 중 미니맵에서 룬 아이콘을 놓쳤습니다."); return; }
+
+                if (Math.Abs(dot.X - rune.X) > RuneTolX)
+                {
+                    var walk = await WalkToXAsync(s, dot, rune.X, RuneTolX, sw, RuneMaxMs, "rune", "룬으로 이동 중", ct).ConfigureAwait(false);
+                    if (walk.Result == Walk.NotForeground) { Status("skip", "게임 창이 전면에서 벗어나 룬 사용을 중단합니다."); return; }
+                    if (walk.Result == Walk.LostDot) { Status("fail", "이동 중 미니맵 점을 놓쳤습니다."); return; }
+                    dot = walk.Dot;
+                    if (walk.Result == Walk.Timeout) break;
+                    continue; // 수평 정렬됨 — 다음 회차에서 수직 재평가
+                }
+
+                double dyOff = dot.Y - rune.Y; // +: 캐릭터가 룬보다 아래(위로 가야 함)
+                if (Math.Abs(dyOff) <= RuneTolY) break; // 도착
+
+                if (dyOff > 0)
+                {
+                    Status("rune", $"윗점프(V)로 위층 이동 (높이차 {dyOff:+0.0;-0.0}px)");
+                    await TapAsync(ScV, 120, ct, e0: false).ConfigureAwait(false);
+                }
+                else
+                {
+                    Status("rune", $"아래점프(↓+Alt)로 아래층 이동 (높이차 {dyOff:+0.0;-0.0}px)");
+                    _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyDownE0 });
+                    try
+                    {
+                        await PreciseDelay.WaitAsync(60, ct).ConfigureAwait(false);
+                        await TapAsync(ScLAlt, 90, ct, e0: false).ConfigureAwait(false);
+                        await PreciseDelay.WaitAsync(60, ct).ConfigureAwait(false);
+                    }
+                    finally { try { _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyUpE0 }); } catch { } }
+                }
+                await PreciseDelay.WaitAsync(JumpSettleMs, ct).ConfigureAwait(false); // 착지·정지 대기
+                var d = MeasureDot(s, dot);
+                if (d is null) { Status("fail", "이동 중 미니맵 점을 놓쳤습니다."); return; }
+                dot = d.Value;
+            }
+
+            // 최종 도착 확인
+            if (MeasureRune(s) is not { } runeF) { Status("fail", "미니맵에서 룬 아이콘을 놓쳤습니다."); return; }
+            if (Math.Abs(dot.X - runeF.X) > RuneTolX || Math.Abs(dot.Y - runeF.Y) > RuneTolY)
+            {
+                Status("fail", $"룬 도달 시간 초과(잔여 dx {dot.X - runeF.X:+0.0;-0.0}px · dy {dot.Y - runeF.Y:+0.0;-0.0}px).");
+                return;
+            }
+
+            // ── 3단계: 발동 + 방향키 퍼즐 ──
+            Status("rune", "룬 도착 — 스페이스로 발동합니다");
+            await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
+            await PreciseDelay.WaitAsync(1200, ct).ConfigureAwait(false); // 퍼즐 UI 등장 대기
+
+            var arrows = DetectArrows(s, saveShot: true);
+            if (arrows is null)
+            {
+                await PreciseDelay.WaitAsync(800, ct).ConfigureAwait(false); // UI가 늦게 뜨는 경우 1회 재시도
+                arrows = DetectArrows(s, saveShot: true);
+            }
+            if (arrows is null) { Status("fail", "룬 퍼즐 화살표를 인식하지 못했습니다 — 직접 입력해 주세요(logs\\rune-puzzle.png 확인)."); return; }
+
+            var seq = string.Join(" ", arrows.Select(a => a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' }));
+            Status("rune", $"퍼즐 인식: {seq} — 입력합니다");
+            foreach (var a in arrows)
+            {
+                ct.ThrowIfCancellationRequested();
+                ushort code = a.Dir switch { 'L' => ScLeft, 'R' => ScRight, 'U' => ScUp, _ => ScDown };
+                await TapAsync(code, 90, ct).ConfigureAwait(false);
+                await PreciseDelay.WaitAsync(200, ct).ConfigureAwait(false);
+            }
+
+            // 입력 후 퍼즐이 사라졌는지 확인 — 남아 있으면 인식이 틀렸을 가능성
+            await PreciseDelay.WaitAsync(900, ct).ConfigureAwait(false);
+            if (DetectArrows(s, saveShot: false) is not null)
+                Status("fail", "퍼즐 입력 후에도 화살표가 남아 있습니다 — 인식이 틀렸을 수 있어요(logs\\rune-puzzle.png 확인).");
+            else
+                Status("done", $"룬 사용 완료 (퍼즐 {seq})");
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) { try { Status("fail", "룬 사용 오류: " + ex.Message); } catch { } }
+        finally { _sem.Release(); }
+    }
+
+    /// <summary>미니맵 고정 영역에서 룬(보라 다이아) 아이콘 위치(미니맵 상대). 없으면 null.</summary>
+    private PointF? MeasureRune(WatcherSettings s)
+    {
+        if (s.MiniW <= 0) return null;
+        using var frame = CaptureGameFrame(s.Process, out _);
+        if (frame is null) return null;
+        return MinimapDetector.FindRuneIcon(frame, new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH));
+    }
+
+    /// <summary>화면에서 룬 퍼즐 화살표 4개 탐지. saveShot이면 판정에 쓴 프레임을
+    /// logs\rune-puzzle.png로 남긴다(인식 실패·오인 시 원인 확인용, 덮어씀).</summary>
+    private List<RuneArrow>? DetectArrows(WatcherSettings s, bool saveShot)
+    {
+        using var frame = CaptureGameFrame(s.Process, out _);
+        if (frame is null) return null;
+        if (saveShot) FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(frame));
+        return RuneArrowDetector.FindArrows(frame);
     }
 
     public void Dispose()
@@ -577,11 +758,12 @@ public sealed class PositionWatcher : IDisposable
         return (m.X - spot.PatchX, m.Score); // 밴드는 창 X=0부터라 X는 창 상대 그대로
     }
 
-    private async Task TapAsync(ushort code, double holdMs, CancellationToken ct)
+    /// <summary>키 1회 탭(누르고 holdMs 뒤 뗌). e0=false면 일반 키(스페이스·V·Alt 등).</summary>
+    private async Task TapAsync(ushort code, double holdMs, CancellationToken ct, bool e0 = true)
     {
-        _backend.Send(new KeyboardEvent { Code = code, State = KeyDownE0 });
+        _backend.Send(new KeyboardEvent { Code = code, State = e0 ? KeyDownE0 : (ushort)0x00 });
         try { await PreciseDelay.WaitAsync(holdMs, ct).ConfigureAwait(false); }
-        finally { try { _backend.Send(new KeyboardEvent { Code = code, State = KeyUpE0 }); } catch { } }
+        finally { try { _backend.Send(new KeyboardEvent { Code = code, State = e0 ? KeyUpE0 : (ushort)0x01 }); } catch { } }
     }
 
     // 스팟 id는 클라이언트가 만든 UUID(하이픈 제거 가능) — 경로 조작 방지를 위해 엄격 검증.

@@ -306,6 +306,9 @@ public static class ApiEndpoints
             Task.FromResult(Results.Json(watcher.CaptureSpot(id, b?.X, b?.Y)))));
         app.MapPost("/api/watcher/spots/{id}/test", (string id) => Guard(() =>
             Task.FromResult(Results.Json(watcher.TestSpot(id)))));
+        // 룬 사용 블록 [테스트] — 키 입력 없이 미니맵의 룬 아이콘·내 점 상대 거리만 측정
+        app.MapPost("/api/watcher/rune/test", () => Guard(() =>
+            Task.FromResult(Results.Json(watcher.RuneTest()))));
         // 실시간 미리보기(확장 카드 폴링): JSON 측정값 → 같은 프레임 전체 PNG
         app.MapGet("/api/watcher/live", () => Results.Json(watcher.Live()));
         app.MapGet("/api/watcher/live/frame", () =>

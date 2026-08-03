@@ -301,11 +301,12 @@ export function summarizeEvent(ev) {
     case 'loopEnd': return '반복 끝';
     case 'macroRef': return `매크로 실행 "${ev.name || ev.macroId || '?'}"`;
     case 'positionCorrect': return '위치 보정 — 자리 이탈 시 복귀';
+    case 'runeUse': return '룬 사용 — 룬까지 이동 후 자동 해제';
     default: return ev['$type'] || '?';
   }
 }
 
 export const TYPE_ICON = {
   keyboard: '⌨', mouse: '🖱', gamepad: '🎮', text: '🔤', delay: '⏱',
-  loopStart: '🔁', loopEnd: '🏁', macroRef: '🧩', positionCorrect: '🧭',
+  loopStart: '🔁', loopEnd: '🏁', macroRef: '🧩', positionCorrect: '🧭', runeUse: '💠',
 };

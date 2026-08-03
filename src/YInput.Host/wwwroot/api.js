@@ -77,5 +77,6 @@ export const api = {
   watcherSpot: (id) => request('GET', `/api/watcher/spots/${id}`),
   watcherSpotCapture: (id, anchor) => request('POST', `/api/watcher/spots/${id}/capture`, anchor || {}),
   watcherSpotTest: (id) => request('POST', `/api/watcher/spots/${id}/test`),
+  watcherRuneTest: () => request('POST', '/api/watcher/rune/test'),
   watcherLive: () => request('GET', '/api/watcher/live'),
 };

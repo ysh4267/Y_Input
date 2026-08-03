@@ -16,6 +16,7 @@ namespace YInput.Core.Models;
 [JsonDerivedType(typeof(LoopEndEvent), "loopEnd")]
 [JsonDerivedType(typeof(MacroRefEvent), "macroRef")]
 [JsonDerivedType(typeof(PositionCorrectEvent), "positionCorrect")]
+[JsonDerivedType(typeof(RuneUseEvent), "runeUse")]
 public abstract class InputEvent
 {
     /// <summary>사람이 읽을 수 있는 요약(에디터 표시용).</summary>
@@ -145,6 +146,18 @@ public sealed class PositionCorrectEvent : InputEvent
 
     [JsonIgnore]
     public override string Summary => "위치 보정";
+}
+
+/// <summary>
+/// 룬 사용 블록 — 재생이 이 스텝에 도달하면 미니맵의 룬(보라 다이아) 아이콘 위치로 캐릭터를
+/// 이동시키고(좌우 걷기 + 윗점프/아래점프) 스페이스로 룬을 발동한 뒤, 화면의 방향키 퍼즐을
+/// 인식해 자동 입력한다. 실제 수행은 Host의 PositionWatcher(Player에 훅으로 주입).
+/// 룬이 미니맵에 없으면 no-op으로 다음 스텝 진행.
+/// </summary>
+public sealed class RuneUseEvent : InputEvent
+{
+    [JsonIgnore]
+    public override string Summary => "룬 사용";
 }
 
 /// <summary>

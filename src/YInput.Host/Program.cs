@@ -84,6 +84,7 @@ internal static class Program
         var overlay = new OverlayController(uiSync, dataRoot, hub, service, progress); // 인게임 오버레이(GDI+ 레이어드)
         var watcher = new PositionWatcher(dataRoot, hub, backend); // 위치 지킴이('위치 보정' 스텝의 실제 수행자)
         service.PositionCorrectHook = watcher.CorrectAsync;
+        service.RuneUseHook = watcher.RuneUseAsync;
 
         var app = BuildWebApp(service, hub, sync, widgets, overlay, watcher, url);
         app.StartAsync().GetAwaiter().GetResult();

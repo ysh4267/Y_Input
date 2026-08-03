@@ -48,6 +48,9 @@ public sealed class MacroService
     /// <summary>'위치 보정' 스텝에서 실행할 훅(Program이 PositionWatcher.CorrectAsync로 연결). 인자 = 스팟 id.</summary>
     public Func<string?, CancellationToken, Task>? PositionCorrectHook { get; set; }
 
+    /// <summary>'룬 사용' 스텝에서 실행할 훅(Program이 PositionWatcher.RuneUseAsync로 연결).</summary>
+    public Func<CancellationToken, Task>? RuneUseHook { get; set; }
+
     private void NotifyChanged() => MacrosChanged?.Invoke();
 
     /// <summary>동기화가 원격 변경을 로컬에 반영한 뒤 호출 — 핫키 재등록 + 상태/목록 새로고침 방송(푸시는 다시 트리거하지 않음).</summary>
@@ -206,6 +209,7 @@ public sealed class MacroService
         var macro = _library.Load(id) ?? throw new FileNotFoundException("매크로를 찾을 수 없습니다: " + id);
         var player = new Player(_backend); // 매크로마다 독립 Player → 서로 비동기·동시 재생
         player.PositionCorrect = PositionCorrectHook; // '위치 보정' 스텝 도달 시 실행
+        player.RuneUse = RuneUseHook;                 // '룬 사용' 스텝 도달 시 실행
         // 진행 보고는 스텝마다(최대 ~1000/s) 오므로, ProgressBroadcaster가 매크로별 최신값만 ~60Hz로 합쳐 전송한다.
         player.Progress += (_, p) => _progress.Report(id, p);
         player.Failed += (_, ex) => Log("error", $"재생 오류({macro.Name}): {ex.Message}");

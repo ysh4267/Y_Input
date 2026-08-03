@@ -53,6 +53,13 @@ public static class FileLog
 
     public static void Error(string context, Exception ex) => Write("error", context + ": " + ex);
 
+    /// <summary>진단 PNG 1장을 로그 폴더에 저장(같은 이름은 덮어씀) — 룬 퍼즐 인식 검증·튜닝용.</summary>
+    public static void SavePng(string name, byte[] png)
+    {
+        if (_dir.Length == 0) return;
+        try { File.WriteAllBytes(Path.Combine(_dir, name + ".png"), png); } catch { /* 무시 */ }
+    }
+
     private static void Cleanup()
     {
         try
