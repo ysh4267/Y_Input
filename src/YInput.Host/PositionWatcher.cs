@@ -622,11 +622,11 @@ public sealed class PositionWatcher : IDisposable
                     if (attempt > 0) Status("rune", "퍼즐이 안 보여 스페이스를 다시 누릅니다");
                     await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
                     await PreciseDelay.WaitAsync(1200, ct).ConfigureAwait(false); // 퍼즐 UI 등장 대기
-                    arrows = DetectArrows(s, beforeFrame, saveShot: true);
+                    arrows = await DetectArrowsAsync(s, beforeFrame, saveShot: true, ct).ConfigureAwait(false);
                     if (arrows is null)
                     {
-                        await PreciseDelay.WaitAsync(800, ct).ConfigureAwait(false); // UI가 늦게 뜨는 경우
-                        arrows = DetectArrows(s, beforeFrame, saveShot: true);
+                        await PreciseDelay.WaitAsync(700, ct).ConfigureAwait(false); // UI가 늦게 뜨는 경우
+                        arrows = await DetectArrowsAsync(s, beforeFrame, saveShot: true, ct).ConfigureAwait(false);
                     }
                 }
                 if (arrows is null) { Status("fail", "룬 퍼즐 화살표를 인식하지 못했습니다 — 직접 입력해 주세요(logs\\rune-puzzle.png 확인)."); return; }
@@ -643,7 +643,7 @@ public sealed class PositionWatcher : IDisposable
 
                 // 입력 후 퍼즐이 사라졌는지 확인 — 남아 있으면 인식이 틀렸을 가능성
                 await PreciseDelay.WaitAsync(900, ct).ConfigureAwait(false);
-                if (DetectArrows(s, beforeFrame, saveShot: false) is not null)
+                if (await DetectArrowsAsync(s, beforeFrame, saveShot: false, ct).ConfigureAwait(false) is not null)
                     Status("fail", "퍼즐 입력 후에도 화살표가 남아 있습니다 — 인식이 틀렸을 수 있어요(logs\\rune-puzzle.png 확인).");
                 else
                     Status("done", $"룬 사용 완료 (퍼즐 {seq})");
@@ -664,14 +664,19 @@ public sealed class PositionWatcher : IDisposable
         return MinimapDetector.FindRuneIcon(frame, mini);
     }
 
-    /// <summary>화면에서 룬 퍼즐 화살표 4개 탐지(단발 — 입력 후 잔존 확인용).
-    /// before = 발동 직전 프레임(차분으로 배경 배제).</summary>
-    private List<RuneArrow>? DetectArrows(WatcherSettings s, Bitmap? before, bool saveShot)
+    /// <summary>화면에서 룬 퍼즐 화살표 4개 탐지 — ~150ms 간격 두 프레임의 시간차 차분으로
+    /// '그라데이션이 흐르는' 화살표만 남긴다(바·배경·배너·반투명 바 너머 장식은 정지라 배제).
+    /// beforeSpace = 발동 직전 프레임(안내 배너 위치로 탐색 밴드 제한).
+    /// saveShot이면 판정 프레임을 logs\rune-puzzle.png로 남긴다(오답·실패 확인용, 덮어씀).</summary>
+    private async Task<List<RuneArrow>?> DetectArrowsAsync(WatcherSettings s, Bitmap? beforeSpace, bool saveShot, CancellationToken ct)
     {
+        using var refFrame = CaptureGameFrame(s.Process, out _);
+        if (refFrame is null) return null;
+        await PreciseDelay.WaitAsync(150, ct).ConfigureAwait(false);
         using var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return null;
         if (saveShot) FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(frame));
-        return RuneArrowDetector.FindArrows(frame, before);
+        return RuneArrowDetector.FindArrows(frame, refFrame, beforeSpace);
     }
 
     public void Dispose()

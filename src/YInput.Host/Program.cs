@@ -29,6 +29,10 @@ internal static class Program
         int applyIdx = Array.IndexOf(cmdArgs, "--apply-update");
         if (applyIdx >= 0) { UpdateFinalizer.Run(cmdArgs, applyIdx); return; }
 
+        // 진단: 저장된 퍼즐 스크린샷으로 화살표 인식을 오프라인 검증(<png>.analysis.txt 생성 후 종료).
+        int raIdx = Array.IndexOf(cmdArgs, "--rune-analyze");
+        if (raIdx >= 0 && raIdx + 1 < cmdArgs.Length) { Vision.RuneArrowDetector.AnalyzeToFile(cmdArgs[raIdx + 1]); return; }
+
         // 자체 설치: 설치 폴더가 아닌 곳에서 실행되면 설치 폴더로 복사 후 그쪽을 실행하고 이 인스턴스는 종료(뮤텍스 잡기 전).
         if (Installer.EnsureInstalled(cmdArgs)) return;
 
