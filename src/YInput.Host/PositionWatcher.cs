@@ -658,7 +658,15 @@ public sealed class PositionWatcher : IDisposable
                             catch { /* 일시적 캡처 실패 — 다음 폴링 */ }
                             if (open) await PreciseDelay.WaitAsync(250, ct).ConfigureAwait(false);
                         }
-                        if (open) { SaveRuneShots(beforeCrop); Status("fail", "퍼즐이 닫히지 않아 재발동을 포기합니다."); return; }
+                        if (open)
+                        {
+                            SaveRuneShots(beforeCrop, includeStrips: true);
+                            // 타임아웃 시점의 실제 화면도 남긴다 — '아직 열려 있음'이 진짜인지
+                            // PuzzlePresent 오판인지 다음 진단에서 구분하기 위함
+                            try { using var cf = ScreenCapture.Capture(screenCrop); FileLog.SavePng("rune-close", ScreenCapture.ToPng(cf)); } catch { }
+                            Status("fail", "퍼즐이 닫히지 않아 재발동을 포기합니다(당시 화면 logs\\rune-close.png).");
+                            return;
+                        }
                         await PreciseDelay.WaitAsync(300, ct).ConfigureAwait(false);
                     }
                     await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
@@ -703,7 +711,7 @@ public sealed class PositionWatcher : IDisposable
                 }
                 if (arrows is null)
                 {
-                    SaveRuneShots(beforeCrop); // 실패 재현용 — 시간 제약이 끝났으니 이제 저장
+                    SaveRuneShots(beforeCrop, includeStrips: true); // 실패 재현용 — 시간 제약이 끝났으니 이제 저장
                     Status("fail", "룬 퍼즐 화살표를 인식하지 못했습니다 — 직접 입력해 주세요(logs\\rune-puzzle.png 확인).");
                     return;
                 }
@@ -754,29 +762,59 @@ public sealed class PositionWatcher : IDisposable
     }
 
     private readonly List<Bitmap> _runeShots = new(); // 마지막 판정 버스트 프레임 — 진단 저장은 판정 뒤로 미룬다
+    private readonly List<Bitmap> _runeStrips = new(); // 화살표 밴드 스트립 연속 녹화(링) — 회전 반동 파형 재현용
 
-    // 퍼즐 확정 파라미터 — 회전형(돌다가 정답 방향에서 잠깐 멈춤)과 정지형을 같은 규칙으로 처리:
-    // 화살표마다 '모양 시그니처+방향'이 연속 유지되는 구간(=멈춤)에서만 확정한다.
-    private const int PuzzleBudgetMs = 2800;  // 취소 타이머(~3초) 전에 입력을 '시작'하면 된다(입력이 타이머 리셋)
-    private const int PuzzleSampleGapMs = 70; // 프레임 간격(캡처+분석 ~30-50ms 포함 실효 ~100-120ms)
-    private const int LockRun = 3;            // 확정 최소 연속 프레임
-    private const int LockSpanMs = 250;       // 확정 최소 지속시간 — 회전 사분면 체류 오확정 방지
+    /// <summary>화살표 밴드만 잘라 링 버퍼에 녹화 — 실패 시 rune-strip-NN.png로 덤프해
+    /// 회전 화살표의 반동(격발) 파형을 오프라인에서 재현·튜닝한다.</summary>
+    private void RecordStrip(Bitmap f)
+    {
+        try
+        {
+            var r = RuneArrowDetector.ArrowBandRect(f.Width, f.Height);
+            var s = f.Clone(r, f.PixelFormat);
+            _runeStrips.Add(s);
+            if (_runeStrips.Count > StripKeep) { _runeStrips[0].Dispose(); _runeStrips.RemoveAt(0); }
+        }
+        catch { /* 진단 녹화 실패 무시 */ }
+    }
 
-    /// <summary>퍼즐 화살표 4개 확정 — 매 프레임 인식(채도 교집합→정지 게이트→차분 단계)을 돌리며
-    /// 화살표별로 모양·방향이 <see cref="LockSpanMs"/> 이상 유지되는 순간(멈춤) 확정한다.
-    /// 정지형은 ~0.4초에 4개 모두, 회전형은 멈추는 구간을 기다린다. 예산 소진 시
-    /// 미확정 화살표는 다수결(멈춤 표본이 가장 많다) — 단 하나도 못 정하면 null.</summary>
+    // 퍼즐 확정 파라미터. 두 종류의 화살표(사용자 확인: 색·배경 완전 랜덤, 회전 개수 0~4 랜덤):
+    //  · 정지 화살표 — 모양·방향이 유지되는 시그니처 런으로 확정(검증된 경로)
+    //  · 회전 화살표 — 절대 멈추지 않는다. 정답 방향을 지날 때마다 '격발 반동'(순간 딸깍)이
+    //    한 번씩 있을 뿐 → 각도를 연속 추적해 각속도 이상(스텝 급감·역행)이 생기는 방향을
+    //    여러 바퀴에 걸쳐 모아 최빈 방위로 확정한다.
+    private const int PuzzleBudgetMs = 2800;    // 정지형 기본 예산 — 보통 0.5초 안에 4/4 확정된다
+    private const int RotatingBudgetMs = 12000; // 회전 감지 시 연장 — 반동을 2회 이상 관찰해야 하고,
+                                                // 퍼즐은 무입력 11초+에도 떠 있었다(07:56 실측 — '3초 취소' 아님)
+    private const int PuzzleSampleGapMs = 70;   // 프레임 간격(캡처+분석 포함 실효 ~110-150ms)
+    private const int LockRun = 3;              // 정지 확정 최소 연속 프레임
+    private const int LockSpanMs = 250;         // 정지 확정 최소 지속시간
+    private const int RecoilHits = 2;           // 반동 확정 최소 관측 횟수(같은 방위)
+    private const int StripKeep = 60;           // 실패 진단용 밴드 스트립 녹화 링 크기(~7초)
+
+    /// <summary>퍼즐 화살표 4개 확정. 매 프레임: ① 검증된 줄 인식(교집합 단계)으로 정지 화살표
+    /// 시그니처 락, ② 줄이 안 잡히면 합집합 마스크로 위치만 획득, ③ 위치가 확보되면 화살표별
+    /// 로컬 분석 — 정지는 로컬 시그니처 락, 회전은 각도 시계열에서 반동(스텝 급감·역행) 방위 투표.
+    /// 4개 모두 확정되어야 입력한다(회전 중 표본 다수결은 오답 — 00:41 ↑↑↑← 실입력 사례).</summary>
     private async Task<List<RuneArrow>?> SolvePuzzleAsync(Rectangle screenCrop, Bitmap? beforeCrop, int budgetMs, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         var locked = new char?[4];
         var centers = new PointF[4];
         var runDir = new char[4]; var runLen = new int[4]; var runStart = new long[4]; var runSig = new bool[4][];
-        var votes = new Dictionary<char, int>[4];
-        for (int j = 0; j < 4; j++) votes[j] = new Dictionary<char, int>();
         bool rowSeen = false, spinNoted = false;
         int lockedCount = 0;
         var win = new List<Bitmap>(4); // 직전 프레임 창(최대 3장, 오래된 순) — 채도 교집합·정지 게이트 기준
+
+        // 위치 컨센서스 — 줄 인식(교집합)이 두 번 연속 일치하면 고정. 회전 화살표의 교집합 핵은
+        // 실제 중심에서 ±30px까지 어긋날 수 있어 로컬 박스를 넉넉히 잡고, 이후 로컬 블롭
+        // 중심으로 서서히 자기 보정한다(EMA).
+        PointF[]? pos = null; const int posBox = 64;
+        PointF[]? prevRowCenters = null;
+        // 회전 추적 — 화살표별 (시각 ms, 각도°) 시계열과 반동 방위 투표
+        var angleT = new List<double>[4]; var angleV = new List<double>[4];
+        var recoilVotes = new int[4, 4]; // [화살표, 방위 R U L D]
+        for (int j = 0; j < 4; j++) { angleT[j] = new List<double>(); angleV[j] = new List<double>(); }
 
         try
         {
@@ -787,13 +825,73 @@ public sealed class PositionWatcher : IDisposable
                 try { f = ScreenCapture.Capture(screenCrop); } catch { /* 일시적 캡처 실패 */ }
                 if (f is not null)
                 {
-                    List<ArrowSample>? row;
-                    // finally로 f의 소유권을 win/_runeShots에 반드시 넘긴다 — AnalyzeFrame이
-                    // 예외를 던지면(캡처 자원 고갈 등) f가 어디에도 없어 누수되던 회귀 방지
-                    try { row = RuneArrowDetector.AnalyzeFrame(f, win, beforeCrop, precropped: true); }
+                    List<ArrowSample>? row = null;
+                    // finally로 f의 소유권을 win/_runeShots에 반드시 넘긴다 — 분석이 예외를 던져도
+                    // (캡처 자원 고갈 등) f가 리스트 어딘가에 있어 정리 경로에서 dispose된다
+                    try
+                    {
+                        row = RuneArrowDetector.AnalyzeFrame(f, win, beforeCrop, precropped: true);
+                        long now = sw.ElapsedMilliseconds;
+
+                        if (row is not null)
+                        {
+                            rowSeen = true;
+                            for (int j = 0; j < 4; j++)
+                            {
+                                centers[j] = row[j].Center;
+                                if (locked[j] is not null) continue;
+                                // 정지 확정: '런 시작' 모양·방향이 계속 같아야 함
+                                if (runSig[j] is not null && runDir[j] == row[j].Dir
+                                    && RuneArrowDetector.SigSimilar(runSig[j], row[j].Sig))
+                                {
+                                    runLen[j]++;
+                                    if (runLen[j] >= LockRun && now - runStart[j] >= LockSpanMs) { locked[j] = runDir[j]; lockedCount++; }
+                                }
+                                else { runSig[j] = row[j].Sig; runDir[j] = row[j].Dir; runLen[j] = 1; runStart[j] = now; }
+                            }
+                        }
+
+                        // 위치 컨센서스 — 줄 인식이 연속 두 번 ±12px로 일치하면 고정
+                        if (pos is null && row is not null)
+                        {
+                            if (prevRowCenters is not null && Enumerable.Range(0, 4).All(j =>
+                                    Math.Abs(row[j].Center.X - prevRowCenters[j].X) <= 12 &&
+                                    Math.Abs(row[j].Center.Y - prevRowCenters[j].Y) <= 12))
+                                pos = row.Select(x => x.Center).ToArray();
+                            prevRowCenters = row.Select(x => x.Center).ToArray();
+                        }
+
+                        // 로컬 추적 — 위치가 고정된 뒤: 회전 화살표의 각도 시계열 + 반동 감지.
+                        // 로컬 블롭 중심으로 위치를 서서히 보정(회전 핵 어긋남 수렴).
+                        if (pos is not null)
+                        {
+                            for (int j = 0; j < 4; j++)
+                            {
+                                if (locked[j] is not null) continue;
+                                var rect = new Rectangle((int)(pos[j].X - posBox / 2.0), (int)(pos[j].Y - posBox / 2.0), posBox, posBox);
+                                var la = RuneArrowDetector.AnalyzeArrowAt(f, beforeCrop, rect);
+                                if (la is not { } a) continue;
+                                if (a.Area >= 60)
+                                    pos[j] = new PointF((float)(pos[j].X * 0.7 + a.Center.X * 0.3),
+                                                        (float)(pos[j].Y * 0.7 + a.Center.Y * 0.3));
+                                angleT[j].Add(now); angleV[j].Add(a.AngleDeg);
+                                TryDetectRecoil(j, angleT[j], angleV[j], recoilVotes, ref lockedCount, locked);
+                            }
+                        }
+
+                        if (!spinNoted && sw.ElapsedMilliseconds > 800 && lockedCount < 4)
+                        {
+                            spinNoted = true;
+                            // 회전 변형 — 반동을 여러 바퀴 관찰해야 한다. 퍼즐은 무입력으로도
+                            // 오래 떠 있으므로(11초+ 실측) 예산을 늘려 계속 관찰한다.
+                            budgetMs = Math.Max(budgetMs, RotatingBudgetMs);
+                            Note("화살표 회전 감지 — 반동(격발) 방향을 관찰합니다(최대 12초)");
+                        }
+                    }
                     finally
                     {
                         if (_runeShots.Count < 4) _runeShots.Add(f); // 진단 보관(첫 4프레임)
+                        RecordStrip(f);                              // 실패 진단용 밴드 스트립 녹화(링)
                         win.Add(f);
                         while (win.Count > 3)
                         {
@@ -801,58 +899,78 @@ public sealed class PositionWatcher : IDisposable
                             if (!_runeShots.Contains(old)) old.Dispose();
                         }
                     }
-                    if (row is not null)
-                    {
-                        rowSeen = true;
-                        long now = sw.ElapsedMilliseconds;
-                        for (int j = 0; j < 4; j++)
-                        {
-                            centers[j] = row[j].Center;
-                            if (locked[j] is not null) continue;
-                            votes[j][row[j].Dir] = votes[j].GetValueOrDefault(row[j].Dir) + 1;
-                            // 멈춤 판정: '런 시작' 모양·방향이 계속 같아야 함 — 회전 중엔 모양이 프레임마다 달라 깨진다
-                            if (runSig[j] is not null && runDir[j] == row[j].Dir
-                                && RuneArrowDetector.SigSimilar(runSig[j], row[j].Sig))
-                            {
-                                runLen[j]++;
-                                if (runLen[j] >= LockRun && now - runStart[j] >= LockSpanMs) { locked[j] = runDir[j]; lockedCount++; }
-                            }
-                            else { runSig[j] = row[j].Sig; runDir[j] = row[j].Dir; runLen[j] = 1; runStart[j] = now; }
-                        }
-                        if (!spinNoted && sw.ElapsedMilliseconds > 800 && lockedCount < 4)
-                        { spinNoted = true; Note("화살표 회전 감지 — 멈춤 구간을 기다립니다"); }
-                    }
                 }
                 if (lockedCount < 4) await PreciseDelay.WaitAsync(PuzzleSampleGapMs, ct).ConfigureAwait(false);
             }
         }
         finally { foreach (var b in win) if (!_runeShots.Contains(b)) b.Dispose(); }
-        if (!rowSeen) { Note("퍼즐 인식 실패 — 화살표 줄을 찾지 못함"); return null; }
-        // 멈춤 확정이 3개 미만이면 다수결은 사실상 추측(00:30 실행: 멈춤 0/4 다수결 → 오답) —
-        // 포기하고 null을 돌려 퍼즐 취소 후 재발동으로 깨끗한 관찰 창을 다시 얻는 편이 낫다.
-        if (lockedCount < 3)
+        if (!rowSeen && pos is null) { Note("퍼즐 인식 실패 — 화살표 줄을 찾지 못함"); return null; }
+        // 4개 전부 확정될 때만 입력한다 — 회전 중 표본의 다수결은 추측이라 오답이 된다
+        // (00:41 실행: 멈춤 3/4 + 다수결 1 → ↑ ↑ ↑ ← 오답 입력). 미달이면 재발동으로 재관찰.
+        if (lockedCount < 4)
         {
-            Note($"퍼즐 확정 실패 — 멈춤 {lockedCount}/4뿐(회전이 안 멈춤), 재발동 대기");
+            Note($"퍼즐 확정 실패 — {lockedCount}/4뿐(반동 미관측), 재발동 대기");
             return null;
         }
 
         var result = new List<RuneArrow>(4);
-        int voted = 0;
-        for (int j = 0; j < 4; j++)
-        {
-            char d;
-            if (locked[j] is { } ld) d = ld;
-            else { d = votes[j].MaxBy(kv => kv.Value).Key; voted++; }
-            result.Add(new RuneArrow(centers[j], d));
-        }
-        Note(voted == 0 ? $"퍼즐 확정 — 멈춤 4/4{(spinNoted ? " (회전)" : "")}"
-                        : $"퍼즐 확정 — 멈춤 {lockedCount}/4 + 다수결 {voted} (회전)");
+        for (int j = 0; j < 4; j++) result.Add(new RuneArrow(centers[j], locked[j]!.Value));
+        Note($"퍼즐 확정 — 4/4{(spinNoted ? " (회전 포함)" : "")}");
         return result;
     }
 
+    /// <summary>회전 화살표의 반동 감지 — 각도 시계열에서 시간당 회전량(중앙값 각속도) 대비
+    /// '스텝 급감(딸깍) 또는 역행'이 생긴 지점의 각도를 4방위로 투표, <see cref="RecoilHits"/>회
+    /// 이상 같은 방위에 쌓이고 2위의 2배 이상이면 확정. 각도 0=→, 90=↑ (반시계 양수).</summary>
+    private static void TryDetectRecoil(int j, List<double> ts, List<double> deg, int[,] votes, ref int lockedCount, char?[] locked)
+    {
+        int n = deg.Count;
+        if (n < 6) return; // 각속도 기준선을 잡을 최소 표본
+        // 스텝(직전→현재), (-180,180]로 래핑, 시간 정규화(°/100ms)
+        double Step(int i)
+        {
+            double d = (deg[i] - deg[i - 1]) % 360;
+            if (d > 180) d -= 360; else if (d <= -180) d += 360;
+            double dt = Math.Max(40, ts[i] - ts[i - 1]);
+            return d * 100 / dt;
+        }
+        var steps = new List<double>(n - 1);
+        for (int i = 1; i < n; i++) steps.Add(Step(i));
+        // 최근 표본의 중앙값 크기·부호 = 기준 회전 속도(반동·노이즈에 둔감)
+        var absSorted = steps.Select(Math.Abs).OrderBy(x => x).ToList();
+        double omega = absSorted[absSorted.Count / 2];
+        if (omega < 8) return; // 사실상 정지(정지 화살표는 시그니처 락 경로가 담당)
+        int rotSign = Math.Sign(steps.Sum());
+        if (rotSign == 0) return;
+        // 진짜 회전은 스텝 부호가 거의 한 방향 — 정지 화살표의 각도 지터(부호 요동)로
+        // 가짜 반동 투표가 쌓이는 것을 막는다
+        if (steps.Count(s => Math.Sign(s) == rotSign) < steps.Count * 0.7) return;
+
+        // 마지막 스텝이 이상(급감 또는 역행)이면 그 구간의 각도를 방위로 투표
+        double last = steps[^1];
+        bool anomaly = Math.Abs(last) <= omega * 0.35 || Math.Sign(last) != rotSign;
+        if (!anomaly) return;
+        double at = deg[^2]; // 반동이 일어난 구간의 시작 각도(딸깍 직전 위치가 정답에 가장 가깝다)
+        int cardinal = (int)Math.Round(((at % 360 + 360) % 360) / 90.0) % 4; // 0=R 1=U 2=L 3=D
+        votes[j, cardinal]++;
+
+        int best = 0, bestC = -1, second = 0;
+        for (int c = 0; c < 4; c++)
+        {
+            if (votes[j, c] > best) { second = best; best = votes[j, c]; bestC = c; }
+            else if (votes[j, c] > second) second = votes[j, c];
+        }
+        if (best >= RecoilHits && best >= second * 2 && locked[j] is null)
+        {
+            locked[j] = bestC switch { 0 => 'R', 1 => 'U', 2 => 'L', _ => 'D' };
+            lockedCount++;
+        }
+    }
+
     /// <summary>마지막 판정 버스트를 logs\rune-frame-N.png·rune-puzzle.png로 저장(오답·실패 재현용,
-    /// --rune-analyze 다중 입력). PNG 인코딩이 느려 반드시 판정·입력이 끝난 뒤에 호출한다.</summary>
-    private void SaveRuneShots(Bitmap? beforeCrop = null)
+    /// --rune-analyze 다중 입력). includeStrips = 밴드 스트립 녹화(rune-strip-NN)도 덤프 — 인코딩이
+    /// 수 초 걸리므로 인식 실패 경로에서만 켠다. PNG 인코딩이 느려 반드시 판정·입력이 끝난 뒤에 호출.</summary>
+    private void SaveRuneShots(Bitmap? beforeCrop = null, bool includeStrips = false)
     {
         if (_runeShots.Count == 0) return;
         FileLog.DeletePngs("rune-frame-"); // 이전 실행 잔재(프레임 수·크기가 다르면 재현 분석이 깨진다)
@@ -860,12 +978,20 @@ public sealed class PositionWatcher : IDisposable
             FileLog.SavePng($"rune-frame-{i}", ScreenCapture.ToPng(_runeShots[i]));
         FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(_runeShots[^1]));
         if (beforeCrop is not null) FileLog.SavePng("rune-before", ScreenCapture.ToPng(beforeCrop)); // 차분 기준 재현용
+        if (includeStrips)
+        {
+            FileLog.DeletePngs("rune-strip-");
+            for (int i = 0; i < _runeStrips.Count; i++)
+                FileLog.SavePng($"rune-strip-{i:00}", ScreenCapture.ToPng(_runeStrips[i]));
+        }
     }
 
     private void ClearRuneShots()
     {
         foreach (var f in _runeShots) f.Dispose();
         _runeShots.Clear();
+        foreach (var s in _runeStrips) s.Dispose();
+        _runeStrips.Clear();
     }
 
     public void Dispose()
