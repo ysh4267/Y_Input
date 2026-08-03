@@ -71,7 +71,10 @@ public sealed class PositionWatcher : IDisposable
 
     // 룬 사용 — 룬은 상호작용 범위가 넓어 위치 보정보다 허용오차를 느슨하게 잡는다.
     private const double RuneTolX = 2.0;   // 미니맵 px
-    private const double RuneTolY = 2.5;   // 층(발판) 일치 판정
+    private const double RuneTolY = 6.0;   // 층(발판) 일치 — 다이아 아이콘 중심이 발판보다 몇 px 위에 그려진다
+    // 내 노란 점이 룬 아이콘에 겹치면 아이콘 탐지가 끊긴다 — 마지막으로 본 위치의 이 범위 안에서
+    // 아이콘이 사라지면 '내가 가린 것 = 도착'으로 판정한다(19:24 실행 로그의 실패 원인).
+    private const double OccludeNearX = 5.0, OccludeNearY = 9.0;
     private const int RuneMaxMs = 30000;   // 수직 이동 포함 총 제한 — 위치 보정보다 길게
     private const int JumpSettleMs = 1000; // 점프(윗점프/아래점프) 후 착지·정지 대기
 
@@ -534,7 +537,8 @@ public sealed class PositionWatcher : IDisposable
         try
         {
             if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면이 아니라 룬 사용을 건너뜁니다."); return; }
-            if (MeasureRune(s, mini) is null) { Status("skip", "미니맵에 룬(보라 다이아) 아이콘이 없어 건너뜁니다."); return; }
+            if (MeasureRune(s, mini) is not { } runeFirst) { Status("skip", "미니맵에 룬(보라 다이아) 아이콘이 없어 건너뜁니다."); return; }
+            var runeLast = runeFirst; // 마지막으로 본 룬 위치 — 도착 직전 가림(탐지 끊김) 판정 기준
             var sw = Stopwatch.StartNew();
 
             // ── 1단계: 내 캐릭터 점 식별(위치 보정과 동일 — 여러 개면 프로브 이동으로 확인) ──
@@ -557,7 +561,11 @@ public sealed class PositionWatcher : IDisposable
             {
                 ct.ThrowIfCancellationRequested();
                 if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 룬 사용을 중단합니다."); return; }
-                if (MeasureRune(s, mini) is not { } rune) { Status("fail", "이동 중 미니맵에서 룬 아이콘을 놓쳤습니다."); return; }
+                if (MeasureRune(s, mini) is { } rn) runeLast = rn;
+                else if (Math.Abs(dot.X - runeLast.X) <= OccludeNearX && Math.Abs(dot.Y - runeLast.Y) <= OccludeNearY)
+                    break; // 아이콘이 사라졌는데 내가 그 자리에 있다 = 내 점이 가림 = 도착
+                else { Status("fail", "이동 중 미니맵에서 룬 아이콘을 놓쳤습니다."); return; }
+                var rune = runeLast;
 
                 if (Math.Abs(dot.X - rune.X) > RuneTolX)
                 {
@@ -595,43 +603,53 @@ public sealed class PositionWatcher : IDisposable
                 dot = d.Value;
             }
 
-            // 최종 도착 확인
-            if (MeasureRune(s, mini) is not { } runeF) { Status("fail", "미니맵에서 룬 아이콘을 놓쳤습니다."); return; }
-            if (Math.Abs(dot.X - runeF.X) > RuneTolX || Math.Abs(dot.Y - runeF.Y) > RuneTolY)
+            // 최종 도착 확인 — 아이콘이 내 점에 가려 안 보이면 마지막으로 본 위치 기준
+            var runeF = MeasureRune(s, mini) ?? runeLast;
+            if (Math.Abs(dot.X - runeF.X) > OccludeNearX || Math.Abs(dot.Y - runeF.Y) > OccludeNearY)
             {
                 Status("fail", $"룬 도달 시간 초과(잔여 dx {dot.X - runeF.X:+0.0;-0.0}px · dy {dot.Y - runeF.Y:+0.0;-0.0}px).");
                 return;
             }
 
             // ── 3단계: 발동 + 방향키 퍼즐 ──
+            // 발동 직전 프레임을 보관 — 퍼즐 인식이 이 프레임과의 차분으로 배경(나무·이펙트)을 배제한다.
             Status("rune", "룬 도착 — 스페이스로 발동합니다");
-            await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
-            await PreciseDelay.WaitAsync(1200, ct).ConfigureAwait(false); // 퍼즐 UI 등장 대기
-
-            var arrows = DetectArrows(s, saveShot: true);
-            if (arrows is null)
+            var beforeFrame = CaptureGameFrame(s.Process, out _);
+            try
             {
-                await PreciseDelay.WaitAsync(800, ct).ConfigureAwait(false); // UI가 늦게 뜨는 경우 1회 재시도
-                arrows = DetectArrows(s, saveShot: true);
-            }
-            if (arrows is null) { Status("fail", "룬 퍼즐 화살표를 인식하지 못했습니다 — 직접 입력해 주세요(logs\\rune-puzzle.png 확인)."); return; }
+                List<RuneArrow>? arrows = null;
+                for (int attempt = 0; attempt < 2 && arrows is null; attempt++)
+                {
+                    if (attempt > 0) Status("rune", "퍼즐이 안 보여 스페이스를 다시 누릅니다");
+                    await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
+                    await PreciseDelay.WaitAsync(1200, ct).ConfigureAwait(false); // 퍼즐 UI 등장 대기
+                    arrows = DetectArrows(s, beforeFrame, saveShot: true);
+                    if (arrows is null)
+                    {
+                        await PreciseDelay.WaitAsync(800, ct).ConfigureAwait(false); // UI가 늦게 뜨는 경우
+                        arrows = DetectArrows(s, beforeFrame, saveShot: true);
+                    }
+                }
+                if (arrows is null) { Status("fail", "룬 퍼즐 화살표를 인식하지 못했습니다 — 직접 입력해 주세요(logs\\rune-puzzle.png 확인)."); return; }
 
-            var seq = string.Join(" ", arrows.Select(a => a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' }));
-            Status("rune", $"퍼즐 인식: {seq} — 입력합니다");
-            foreach (var a in arrows)
-            {
-                ct.ThrowIfCancellationRequested();
-                ushort code = a.Dir switch { 'L' => ScLeft, 'R' => ScRight, 'U' => ScUp, _ => ScDown };
-                await TapAsync(code, 90, ct).ConfigureAwait(false);
-                await PreciseDelay.WaitAsync(200, ct).ConfigureAwait(false);
-            }
+                var seq = string.Join(" ", arrows.Select(a => a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' }));
+                Status("rune", $"퍼즐 인식: {seq} — 입력합니다");
+                foreach (var a in arrows)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    ushort code = a.Dir switch { 'L' => ScLeft, 'R' => ScRight, 'U' => ScUp, _ => ScDown };
+                    await TapAsync(code, 90, ct).ConfigureAwait(false);
+                    await PreciseDelay.WaitAsync(200, ct).ConfigureAwait(false);
+                }
 
-            // 입력 후 퍼즐이 사라졌는지 확인 — 남아 있으면 인식이 틀렸을 가능성
-            await PreciseDelay.WaitAsync(900, ct).ConfigureAwait(false);
-            if (DetectArrows(s, saveShot: false) is not null)
-                Status("fail", "퍼즐 입력 후에도 화살표가 남아 있습니다 — 인식이 틀렸을 수 있어요(logs\\rune-puzzle.png 확인).");
-            else
-                Status("done", $"룬 사용 완료 (퍼즐 {seq})");
+                // 입력 후 퍼즐이 사라졌는지 확인 — 남아 있으면 인식이 틀렸을 가능성
+                await PreciseDelay.WaitAsync(900, ct).ConfigureAwait(false);
+                if (DetectArrows(s, beforeFrame, saveShot: false) is not null)
+                    Status("fail", "퍼즐 입력 후에도 화살표가 남아 있습니다 — 인식이 틀렸을 수 있어요(logs\\rune-puzzle.png 확인).");
+                else
+                    Status("done", $"룬 사용 완료 (퍼즐 {seq})");
+            }
+            finally { beforeFrame?.Dispose(); }
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { try { Status("fail", "룬 사용 오류: " + ex.Message); } catch { } }
@@ -646,14 +664,14 @@ public sealed class PositionWatcher : IDisposable
         return MinimapDetector.FindRuneIcon(frame, mini);
     }
 
-    /// <summary>화면에서 룬 퍼즐 화살표 4개 탐지. saveShot이면 판정에 쓴 프레임을
-    /// logs\rune-puzzle.png로 남긴다(인식 실패·오인 시 원인 확인용, 덮어씀).</summary>
-    private List<RuneArrow>? DetectArrows(WatcherSettings s, bool saveShot)
+    /// <summary>화면에서 룬 퍼즐 화살표 4개 탐지. before = 발동 직전 프레임(차분으로 배경 배제).
+    /// saveShot이면 판정에 쓴 프레임을 logs\rune-puzzle.png로 남긴다(인식 실패·오인 시 확인용, 덮어씀).</summary>
+    private List<RuneArrow>? DetectArrows(WatcherSettings s, Bitmap? before, bool saveShot)
     {
         using var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return null;
         if (saveShot) FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(frame));
-        return RuneArrowDetector.FindArrows(frame);
+        return RuneArrowDetector.FindArrows(frame, before);
     }
 
     public void Dispose()

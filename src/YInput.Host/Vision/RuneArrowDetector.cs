@@ -7,38 +7,72 @@ namespace YInput.Host.Vision;
 internal readonly record struct RuneArrow(PointF Center, char Dir);
 
 /// <summary>
-/// 룬 발동(스페이스) 후 화면 상단 중앙에 뜨는 방향키 퍼즐(화살표 4개)을 인식한다.
-/// 화살표는 색이 매번 랜덤이지만 <b>꼬리가 빨강 계열 → 머리가 초록 계열</b> 그라데이션이라,
-/// 빨강 픽셀 덩어리와 그 주변 초록 픽셀 무게중심을 짝지어 '빨강→초록' 벡터로 방향을 판정한다.
-/// (커뮤니티에서 검증된 휴리스틱 — maple-bot의 red→green 접근과 동일 원리)
+/// 룬 발동(스페이스) 후 화면 상단 배너 아래에 뜨는 방향키 퍼즐(화살표 4개)을 인식한다.
+/// 화살표는 채도 높은 초록·주황 그라데이션의 작은 셰브론 글리프(실측 스크린샷 기준 ~20~30px).
+/// 색 그라데이션은 애니메이션이라 프레임마다 위치가 달라 색 순서로 방향을 정하지 않는다. 대신:
+///  ① 발동 직전 프레임과의 차분으로 '새로 나타난' 픽셀만 남기고(배경 나무·이펙트 배제)
+///  ② 채도 높은 초록/웜톤(주황·빨강·노랑) 픽셀을 블롭으로 묶어 한 줄(4개)을 고른 뒤
+///  ③ 블롭 가장자리 프로파일로 분류 — 화살표(셰브론)의 꼭짓점은 가리키는 쪽 가장자리의
+///     '가운데'가 바깥보다 볼록하게 튀어나온다.
 /// </summary>
 internal static class RuneArrowDetector
 {
     // 퍼즐 UI가 뜨는 탐색 범위(화면 비율) — 상단 중앙 넓게
-    private const double RegionX0 = 0.10, RegionX1 = 0.90;
-    private const double RegionY0 = 0.03, RegionY1 = 0.60;
+    private const double RegionX0 = 0.08, RegionX1 = 0.92;
+    private const double RegionY0 = 0.02, RegionY1 = 0.60;
 
-    private const int MinRedBlobArea = 12;    // 화살표 꼬리 빨강 덩어리 최소 픽셀
-    private const int MaxRedBlobArea = 2000;
-    private const int MergeDistPx = 22;       // 이 거리 안의 빨강 블롭은 같은 화살표로 병합
-    private const int GreenSearchRadius = 60; // 빨강 중심에서 초록(머리)을 찾는 반경
-    private const int MinGreenCount = 10;     // 초록 픽셀 최소 개수
-    private const double MinVectorLen = 6;    // 빨강→초록 벡터 최소 길이(px)
-    private const int RowBandPx = 30;         // 같은 줄(4개 나열) 판정 Y 허용폭
+    private const int DiffMin = 60;      // 발동 전후 프레임 차이(|ΔR|+|ΔG|+|ΔB|) 임계
+    private const int MinPieceArea = 12; // 블롭 조각 최소 픽셀(그라데이션·외곽선으로 쪼개짐 흡수)
+    private const int MergePx = 18;      // 같은 화살표로 병합하는 조각 간 거리
+    private const int MinArrowArea = 50, MaxArrowArea = 2500;
+    private const int MinArrowBox = 8, MaxArrowBox = 70;
+    private const int RowBandPx = 22;    // 같은 줄(4개 나열) 판정 Y 허용폭
 
-    /// <summary>프레임에서 화살표 4개를 찾아 왼쪽부터 순서대로 반환. 4개를 못 찾으면 null.</summary>
-    public static List<RuneArrow>? FindArrows(Bitmap frame)
+    /// <summary>프레임에서 화살표 4개를 찾아 왼쪽부터 순서대로 반환. 4개를 못 찾으면 null.
+    /// before = 스페이스 직전 프레임(있으면 차분으로 배경을 배제해 오탐이 크게 준다).</summary>
+    public static List<RuneArrow>? FindArrows(Bitmap frame, Bitmap? before = null)
     {
         var region = new Rectangle(
             (int)(frame.Width * RegionX0), (int)(frame.Height * RegionY0),
             (int)(frame.Width * (RegionX1 - RegionX0)), (int)(frame.Height * (RegionY1 - RegionY0)));
         region = Rectangle.Intersect(region, new Rectangle(0, 0, frame.Width, frame.Height));
         if (region.Width < 100 || region.Height < 60) return null;
+        if (before is not null && (before.Width != frame.Width || before.Height != frame.Height)) before = null;
 
         int w = region.Width, h = region.Height;
-        var red = new bool[w * h];
-        var green = new bool[w * h];
+        var mask = BuildMask(frame, before, region, w, h);
+
+        // 조각 블롭 → 근접 병합 → 화살표 크기 필터
+        var pieces = FindBlobs(mask, w, h);
+        var arrows0 = MergeNear(pieces);
+        var cands = arrows0.Where(b =>
+            b.Area is >= MinArrowArea and <= MaxArrowArea &&
+            b.W is >= MinArrowBox and <= MaxArrowBox && b.H is >= MinArrowBox and <= MaxArrowBox).ToList();
+        if (cands.Count < 4) return null;
+
+        // 같은 줄(Y ±RowBandPx)에 나열된 묶음 중 가장 큰 것에서 4개 선택(초과분은 면적 큰 순)
+        var best = cands
+            .Select(a => cands.Where(o => Math.Abs(o.Cy - a.Cy) <= RowBandPx).ToList())
+            .OrderByDescending(g => g.Count)
+            .First();
+        if (best.Count < 4) return null;
+        var row = best.OrderByDescending(b => b.Area).Take(4).OrderBy(b => b.Cx).ToList();
+
+        var result = new List<RuneArrow>(4);
+        foreach (var b in row)
+        {
+            char dir = ClassifyByEdgeProfile(b, mask, w);
+            result.Add(new RuneArrow(new PointF((float)(region.X + b.Cx), (float)(region.Y + b.Cy)), dir));
+        }
+        return result;
+    }
+
+    /// <summary>화살표 픽셀 마스크 — 채도 높은 초록/웜톤이고, before가 있으면 '변한' 픽셀만.</summary>
+    private static bool[] BuildMask(Bitmap frame, Bitmap? before, Rectangle region, int w, int h)
+    {
+        var mask = new bool[w * h];
         var data = frame.LockBits(region, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        var dataB = before?.LockBits(region, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
         try
         {
             unsafe
@@ -46,60 +80,80 @@ internal static class RuneArrowDetector
                 for (int y = 0; y < h; y++)
                 {
                     byte* row = (byte*)data.Scan0 + y * data.Stride;
+                    byte* rowB = dataB is { } db ? (byte*)db.Scan0 + y * db.Stride : null;
                     int o = y * w;
                     for (int x = 0; x < w; x++)
                     {
                         byte b = row[x * 4], g = row[x * 4 + 1], r = row[x * 4 + 2];
-                        // 반투명 합성으로 채도가 깎이므로 임계는 느슨하게 — 우세 채널 기준
-                        red[o + x] = r >= 130 && r - g >= 45 && r - b >= 45;
-                        green[o + x] = g >= 120 && g - r >= 40 && g - b >= 25;
+                        // 네온 초록(머리/몸통) 또는 웜톤 주황·빨강·노랑(꼬리)
+                        bool colored = (g >= 130 && g - b >= 40 && g - r >= 10)
+                                    || (r >= 140 && r - b >= 50);
+                        if (colored && rowB is not null)
+                        {
+                            int d = Math.Abs(r - rowB[x * 4 + 2]) + Math.Abs(g - rowB[x * 4 + 1]) + Math.Abs(b - rowB[x * 4]);
+                            colored = d >= DiffMin; // 발동 전에도 있던 색(배경 나무 등)은 배제
+                        }
+                        mask[o + x] = colored;
                     }
                 }
             }
         }
-        finally { frame.UnlockBits(data); }
-
-        // 빨강 블롭(화살표 꼬리) → 근접 병합
-        var blobs = FindBlobs(red, w, h);
-        var tails = MergeNear(blobs);
-        if (tails.Count == 0) return null;
-
-        // 각 꼬리마다 반경 안 초록(머리) 무게중심 → 빨강→초록 벡터로 방향
-        var arrows = new List<(RuneArrow A, int Area)>();
-        foreach (var t in tails)
+        finally
         {
-            double gx = 0, gy = 0; int gc = 0;
-            int x0 = Math.Max(0, (int)t.Cx - GreenSearchRadius), x1 = Math.Min(w - 1, (int)t.Cx + GreenSearchRadius);
-            int y0 = Math.Max(0, (int)t.Cy - GreenSearchRadius), y1 = Math.Min(h - 1, (int)t.Cy + GreenSearchRadius);
-            for (int y = y0; y <= y1; y++)
-                for (int x = x0; x <= x1; x++)
-                {
-                    if (!green[y * w + x]) continue;
-                    double dx0 = x - t.Cx, dy0 = y - t.Cy;
-                    if (dx0 * dx0 + dy0 * dy0 > GreenSearchRadius * (double)GreenSearchRadius) continue;
-                    gx += x; gy += y; gc++;
-                }
-            if (gc < MinGreenCount) continue;
-            double dx = gx / gc - t.Cx, dy = gy / gc - t.Cy;
-            if (dx * dx + dy * dy < MinVectorLen * MinVectorLen) continue;
-            char dir = Math.Abs(dx) >= Math.Abs(dy) ? (dx > 0 ? 'R' : 'L') : (dy > 0 ? 'D' : 'U');
-            var center = new PointF((float)(region.X + (t.Cx + gx / gc) / 2), (float)(region.Y + (t.Cy + gy / gc) / 2));
-            arrows.Add((new RuneArrow(center, dir), t.Area));
+            frame.UnlockBits(data);
+            if (dataB is { } db2) before!.UnlockBits(db2);
         }
-        if (arrows.Count < 4) return null;
-
-        // 같은 줄(Y ±RowBandPx)에 나열된 묶음 중 가장 큰 것에서 4개 선택
-        var best = arrows
-            .Select(a => arrows.Where(o => Math.Abs(o.A.Center.Y - a.A.Center.Y) <= RowBandPx).ToList())
-            .OrderByDescending(g => g.Count)
-            .First();
-        if (best.Count < 4) return null;
-        // 4개 초과면(배경 오탐 섞임) 면적 큰 4개를 취하고 왼쪽부터 정렬
-        return best.OrderByDescending(g => g.Area).Take(4)
-                   .Select(g => g.A).OrderBy(a => a.Center.X).ToList();
+        return mask;
     }
 
-    private readonly record struct Blob(double Cx, double Cy, int Area);
+    /// <summary>가장자리 프로파일 분류 — 화살표가 가리키는 쪽은 그 가장자리의 '가운데 1/3'이
+    /// 바깥 1/3들보다 볼록하다(셰브론·삼각형·축 있는 화살표 모두 해당). 점수 최대 방향 선택.</summary>
+    private static char ClassifyByEdgeProfile(Blob b, bool[] mask, int w)
+    {
+        int bw = b.MaxX - b.MinX + 1, bh = b.MaxY - b.MinY + 1;
+        var minY = new int[bw]; var maxY = new int[bw];
+        var minX = new int[bh]; var maxX = new int[bh];
+        for (int i = 0; i < bw; i++) { minY[i] = int.MaxValue; maxY[i] = int.MinValue; }
+        for (int i = 0; i < bh; i++) { minX[i] = int.MaxValue; maxX[i] = int.MinValue; }
+        foreach (var p in b.Pixels)
+        {
+            int px = p % w - b.MinX, py = p / w - b.MinY;
+            if (py < minY[px]) minY[px] = py;
+            if (py > maxY[px]) maxY[px] = py;
+            if (px < minX[py]) minX[py] = px;
+            if (px > maxX[py]) maxX[py] = px;
+        }
+
+        // 가운데 1/3 vs 바깥 1/3 평균(빈 열/행은 제외)
+        double AvgRange(int[] arr, int from, int to, bool isMin)
+        {
+            double sum = 0; int n = 0;
+            for (int i = Math.Max(0, from); i < Math.Min(arr.Length, to); i++)
+            {
+                if (arr[i] == int.MaxValue || arr[i] == int.MinValue) continue;
+                sum += arr[i]; n++;
+            }
+            return n == 0 ? (isMin ? double.MaxValue : double.MinValue) : sum / n;
+        }
+        int cw = Math.Max(1, bw / 3), ch = Math.Max(1, bh / 3);
+        double upScore = (Math.Min(AvgRange(minY, 0, cw, true), AvgRange(minY, bw - cw, bw, true))
+                          - AvgRange(minY, (bw - cw) / 2, (bw + cw) / 2, true)) / bh;
+        double downScore = (AvgRange(maxY, (bw - cw) / 2, (bw + cw) / 2, false)
+                          - Math.Max(AvgRange(maxY, 0, cw, false), AvgRange(maxY, bw - cw, bw, false))) / bh;
+        double leftScore = (Math.Min(AvgRange(minX, 0, ch, true), AvgRange(minX, bh - ch, bh, true))
+                          - AvgRange(minX, (bh - ch) / 2, (bh + ch) / 2, true)) / bw;
+        double rightScore = (AvgRange(maxX, (bh - ch) / 2, (bh + ch) / 2, false)
+                          - Math.Max(AvgRange(maxX, 0, ch, false), AvgRange(maxX, bh - ch, bh, false))) / bw;
+
+        double m = Math.Max(Math.Max(upScore, downScore), Math.Max(leftScore, rightScore));
+        return m == upScore ? 'U' : m == downScore ? 'D' : m == leftScore ? 'L' : 'R';
+    }
+
+    private sealed record Blob(double Cx, double Cy, int Area, int MinX, int MinY, int MaxX, int MaxY, List<int> Pixels)
+    {
+        public int W => MaxX - MinX + 1;
+        public int H => MaxY - MinY + 1;
+    }
 
     private static List<Blob> FindBlobs(bool[] mask, int w, int h)
     {
@@ -109,25 +163,29 @@ internal static class RuneArrowDetector
         for (int i = 0; i < mask.Length; i++)
         {
             if (!mask[i] || seen[i]) continue;
-            long sumX = 0, sumY = 0; int count = 0;
+            long sumX = 0, sumY = 0;
+            int minX = w, maxX = -1, minY = h, maxY = -1;
+            var px = new List<int>();
             stack.Push(i); seen[i] = true;
             while (stack.Count > 0)
             {
                 int p = stack.Pop();
-                int px = p % w, py = p / w;
-                sumX += px; sumY += py; count++;
-                if (px > 0 && mask[p - 1] && !seen[p - 1]) { seen[p - 1] = true; stack.Push(p - 1); }
-                if (px < w - 1 && mask[p + 1] && !seen[p + 1]) { seen[p + 1] = true; stack.Push(p + 1); }
-                if (py > 0 && mask[p - w] && !seen[p - w]) { seen[p - w] = true; stack.Push(p - w); }
-                if (py < h - 1 && mask[p + w] && !seen[p + w]) { seen[p + w] = true; stack.Push(p + w); }
+                int x = p % w, y = p / w;
+                sumX += x; sumY += y; px.Add(p);
+                if (x < minX) minX = x; if (x > maxX) maxX = x;
+                if (y < minY) minY = y; if (y > maxY) maxY = y;
+                if (x > 0 && mask[p - 1] && !seen[p - 1]) { seen[p - 1] = true; stack.Push(p - 1); }
+                if (x < w - 1 && mask[p + 1] && !seen[p + 1]) { seen[p + 1] = true; stack.Push(p + 1); }
+                if (y > 0 && mask[p - w] && !seen[p - w]) { seen[p - w] = true; stack.Push(p - w); }
+                if (y < h - 1 && mask[p + w] && !seen[p + w]) { seen[p + w] = true; stack.Push(p + w); }
             }
-            if (count is >= MinRedBlobArea and <= MaxRedBlobArea)
-                list.Add(new Blob((double)sumX / count, (double)sumY / count, count));
+            if (px.Count >= MinPieceArea)
+                list.Add(new Blob((double)sumX / px.Count, (double)sumY / px.Count, px.Count, minX, minY, maxX, maxY, px));
         }
         return list;
     }
 
-    /// <summary>가까운 블롭 병합(면적 가중 평균) — 화살표 꼬리가 그라데이션 때문에 조각나는 것을 흡수.</summary>
+    /// <summary>가까운 조각 병합 — 그라데이션·외곽선 때문에 한 화살표가 여러 조각으로 나뉘는 것을 흡수.</summary>
     private static List<Blob> MergeNear(List<Blob> blobs)
     {
         var merged = new List<Blob>();
@@ -135,19 +193,34 @@ internal static class RuneArrowDetector
         for (int i = 0; i < blobs.Count; i++)
         {
             if (used[i]) continue;
-            double cx = blobs[i].Cx * blobs[i].Area, cy = blobs[i].Cy * blobs[i].Area;
-            int area = blobs[i].Area;
             used[i] = true;
-            for (int j = i + 1; j < blobs.Count; j++)
+            var group = new List<Blob> { blobs[i] };
+            bool grew = true;
+            while (grew) // 체인 병합(a-b 가깝고 b-c 가까우면 a·b·c 모두 한 화살표)
             {
-                if (used[j]) continue;
-                double dx = blobs[j].Cx - blobs[i].Cx, dy = blobs[j].Cy - blobs[i].Cy;
-                if (dx * dx + dy * dy > MergeDistPx * (double)MergeDistPx) continue;
-                cx += blobs[j].Cx * blobs[j].Area; cy += blobs[j].Cy * blobs[j].Area;
-                area += blobs[j].Area;
-                used[j] = true;
+                grew = false;
+                for (int j = 0; j < blobs.Count; j++)
+                {
+                    if (used[j]) continue;
+                    foreach (var g in group)
+                    {
+                        double dx = blobs[j].Cx - g.Cx, dy = blobs[j].Cy - g.Cy;
+                        if (dx * dx + dy * dy > MergePx * (double)MergePx) continue;
+                        used[j] = true; group.Add(blobs[j]); grew = true; break;
+                    }
+                }
             }
-            merged.Add(new Blob(cx / area, cy / area, area));
+            double cx = 0, cy = 0; int area = 0;
+            int minX = int.MaxValue, minY = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue;
+            var pixels = new List<int>();
+            foreach (var g in group)
+            {
+                cx += g.Cx * g.Area; cy += g.Cy * g.Area; area += g.Area;
+                minX = Math.Min(minX, g.MinX); minY = Math.Min(minY, g.MinY);
+                maxX = Math.Max(maxX, g.MaxX); maxY = Math.Max(maxY, g.MaxY);
+                pixels.AddRange(g.Pixels);
+            }
+            merged.Add(new Blob(cx / area, cy / area, area, minX, minY, maxX, maxY, pixels));
         }
         return merged;
     }
