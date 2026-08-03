@@ -662,8 +662,35 @@ public sealed class PositionWatcher : IDisposable
                         await PreciseDelay.WaitAsync(300, ct).ConfigureAwait(false);
                     }
                     await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
+                    var spaceSw = Stopwatch.StartNew(); // 취소 타이머 기준점(마지막 입력 = 이 스페이스)
                     await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
-                    arrows = await SolvePuzzleAsync(screenCrop, beforeCrop, ct).ConfigureAwait(false);
+
+                    // 스페이스가 씹혀 퍼즐이 안 뜨는 경우 — 0.5초 안에 배너가 안 보이면 1회 재시도.
+                    // 배너가 보이는 동안의 스페이스는 '오답 입력'이라, 반드시 안 떴을 때만 누른다.
+                    bool opened = false;
+                    while (!opened && spaceSw.ElapsedMilliseconds < 500)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        try
+                        {
+                            using var oa = ScreenCapture.Capture(screenCrop);
+                            await PreciseDelay.WaitAsync(110, ct).ConfigureAwait(false);
+                            using var ob = ScreenCapture.Capture(screenCrop);
+                            opened = RuneArrowDetector.PuzzlePresent(oa, ob, beforeCrop, precropped: true);
+                        }
+                        catch { await PreciseDelay.WaitAsync(100, ct).ConfigureAwait(false); }
+                    }
+                    if (!opened)
+                    {
+                        Note("퍼즐이 0.5초 내 안 보임 — 스페이스 재시도");
+                        await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
+                        spaceSw.Restart();
+                        await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
+                    }
+
+                    // 남은 관찰 예산 = 취소 타이머까지의 여유(확인에 쓴 시간 차감)
+                    int budget = Math.Max(900, PuzzleBudgetMs - (int)spaceSw.ElapsedMilliseconds);
+                    arrows = await SolvePuzzleAsync(screenCrop, beforeCrop, budget, ct).ConfigureAwait(false);
                 }
                 if (arrows is null)
                 {
@@ -730,7 +757,7 @@ public sealed class PositionWatcher : IDisposable
     /// 화살표별로 모양·방향이 <see cref="LockSpanMs"/> 이상 유지되는 순간(멈춤) 확정한다.
     /// 정지형은 ~0.4초에 4개 모두, 회전형은 멈추는 구간을 기다린다. 예산 소진 시
     /// 미확정 화살표는 다수결(멈춤 표본이 가장 많다) — 단 하나도 못 정하면 null.</summary>
-    private async Task<List<RuneArrow>?> SolvePuzzleAsync(Rectangle screenCrop, Bitmap? beforeCrop, CancellationToken ct)
+    private async Task<List<RuneArrow>?> SolvePuzzleAsync(Rectangle screenCrop, Bitmap? beforeCrop, int budgetMs, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         var locked = new char?[4];
@@ -741,7 +768,7 @@ public sealed class PositionWatcher : IDisposable
         bool rowSeen = false, spinNoted = false;
         int lockedCount = 0;
 
-        while (sw.ElapsedMilliseconds < PuzzleBudgetMs && lockedCount < 4)
+        while (sw.ElapsedMilliseconds < budgetMs && lockedCount < 4)
         {
             ct.ThrowIfCancellationRequested();
             Bitmap? f = null;
