@@ -25,7 +25,7 @@ const ICON = {
   del: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.3H13.4"/><path d="M6.4 4.3V3.2A1.1 1.1 0 0 1 7.5 2.1H8.5A1.1 1.1 0 0 1 9.6 3.2V4.3"/><path d="M3.9 4.3 4.6 13A1.3 1.3 0 0 0 5.9 14.2H10.1A1.3 1.3 0 0 0 11.4 13L12.1 4.3"/><path d="M6.6 6.9V11.3M9.4 6.9V11.3"/></svg>',
 };
 
-export function createEditor({ log, onSaved, getStatus, getMacros }) {
+export function createEditor({ log, onSaved, getStatus, getMacros, openSpotPicker }) {
   let editing = null;
   let selected = new Set();   // 선택된 스텝의 _uid 집합
   let lastUid = null;         // Shift 범위 선택 기준
@@ -347,9 +347,49 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
       };
       td.append(labelTag('실행'), sel);
     } else if (t === 'positionCorrect') {
-      const span = document.createElement('span'); span.className = 'muted';
-      span.textContent = '저장된 자리에서 벗어났으면 미니맵+기준 화면으로 복귀 (☰ 메뉴 → 위치 지킴이에서 위치 저장)';
-      td.append(span);
+      // 이 블록만의 기준 위치(스팟): [지정하기]로 화면에서 저장, 썸네일+미니맵 좌표를 카드 안에 표시
+      const bSet = document.createElement('button'); bSet.className = 'btn ghost sm'; bSet.type = 'button';
+      bSet.textContent = ev.spotId ? '다시 지정' : '지정하기';
+      const bTest = document.createElement('button'); bTest.className = 'btn ghost sm'; bTest.type = 'button';
+      bTest.textContent = '테스트'; bTest.hidden = !ev.spotId;
+      const img = document.createElement('img'); img.className = 'wt-step-thumb'; img.alt = '기준 화면'; img.hidden = true;
+      const info = document.createElement('span'); info.className = 'muted';
+
+      const showSpot = async () => {
+        if (!ev.spotId) { info.textContent = '지정된 위치 없음 — [지정하기]로 캐릭터가 설 자리를 화면에서 저장하세요'; return; }
+        try {
+          const s = await api.watcherSpot(ev.spotId);
+          if (s && s.exists) {
+            img.src = `/api/watcher/spots/${ev.spotId}/patch?ts=${Date.now()}`;
+            img.hidden = false; bTest.hidden = false;
+            info.textContent = `미니맵 (${s.dotX}, ${s.dotY}) · 기준 ${s.patchW}×${s.patchH}px${s.directionSign ? ' · 방향 학습됨' : ''}`;
+          } else {
+            img.hidden = true; bTest.hidden = true;
+            info.textContent = '저장된 위치가 없습니다(삭제됨) — 다시 지정하세요';
+          }
+        } catch { info.textContent = '위치 정보를 불러오지 못했습니다'; }
+      };
+      bSet.onclick = (e) => {
+        e.stopPropagation();
+        if (!openSpotPicker) return;
+        openSpotPicker((newId) => { pushUndo(); ev.spotId = newId; renderSteps(); });
+      };
+      bTest.onclick = async (e) => {
+        e.stopPropagation();
+        if (!ev.spotId) return;
+        info.textContent = '측정 중…';
+        try {
+          const r = await api.watcherSpotTest(ev.spotId);
+          if (r.error) { info.textContent = r.error; return; }
+          const sg = (v) => (v > 0 ? '+' : '') + v;
+          const parts = [r.dotFound ? `미니맵 이탈 ${sg(r.miniDx)}px` : '미니맵 점 미탐지'];
+          if (r.score != null)
+            parts.push(`매칭 ${(r.score * 100).toFixed(0)}%` + (r.patchFound ? ` · 화면 이탈 ${sg(r.dx)}px` : ' (임계 미달)'));
+          info.textContent = parts.join(' · ');
+        } catch (err) { info.textContent = err.message; }
+      };
+      td.append(bSet, bTest, img, info);
+      showSpot();
     }
   }
 
@@ -623,7 +663,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
         { delayBeforeMs: 0, event: km.loopStartEvent(2) },
         { delayBeforeMs: 0, event: km.loopEndEvent() }];
       case 'macroRef': return [{ delayBeforeMs: 0, event: { '$type': 'macroRef', macroId: '', name: '' } }];
-      case 'positionCorrect': return [{ delayBeforeMs: 0, event: { '$type': 'positionCorrect' } }];
+      case 'positionCorrect': return [{ delayBeforeMs: 0, event: { '$type': 'positionCorrect', spotId: '' } }];
       case 'record': return [{ delayBeforeMs: 0, event: { '$type': 'record', delayMode: 'record', fixedMs: 50, targets: { keyboard: true, mouseButtons: false, mouseMove: false, mouseWheel: false, gamepad: false } } }];
       default: return [];
     }

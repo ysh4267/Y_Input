@@ -33,8 +33,9 @@ public sealed class Player
     public event EventHandler<Exception>? Failed;
 
     /// <summary>'위치 보정' 스텝(<see cref="PositionCorrectEvent"/>) 도달 시 호출되는 비동기 훅
-    /// (Host의 PositionWatcher.CorrectAsync가 주입됨). 취소는 OCE로 전파되어 정지 경로를 탄다. null이면 no-op.</summary>
-    public Func<CancellationToken, Task>? PositionCorrect { get; set; }
+    /// (Host의 PositionWatcher.CorrectAsync가 주입됨). 인자 = 블록의 스팟 id(블록마다 다른 자리).
+    /// 취소는 OCE로 전파되어 정지 경로를 탄다. null이면 no-op.</summary>
+    public Func<string?, CancellationToken, Task>? PositionCorrect { get; set; }
 
     public Player(IInputSink sink) => _sink = sink;
 
@@ -102,11 +103,11 @@ public sealed class Player
                             }
                             else ip++; // 짝 없는 끝 → 무시
                             break;
-                        case PositionCorrectEvent:
-                            // 위치 보정 스텝 — Host 훅이 미니맵+템플릿으로 자리 이탈을 되돌린다(훅 없으면 no-op).
+                        case PositionCorrectEvent pc:
+                            // 위치 보정 스텝 — Host 훅이 이 블록의 스팟 기준으로 자리 이탈을 되돌린다(훅 없으면 no-op).
                             Progress?.Invoke(this, new PlaybackProgress(loop, ip, steps.Count, 0, SnapshotLoops(loopStack)));
                             if (PositionCorrect is not null)
-                                await PositionCorrect(ct).ConfigureAwait(false);
+                                await PositionCorrect(pc.SpotId, ct).ConfigureAwait(false);
                             ip++;
                             break;
                         case DelayEvent de:

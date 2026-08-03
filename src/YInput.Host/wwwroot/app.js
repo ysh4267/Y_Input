@@ -98,8 +98,9 @@ async function onOverlayAdd() {
   try { renderOverlayConfig(await api.overlayWhitelistAdd(p)); } catch (e) { log('error', e.message); }
 }
 
-// ---------- 위치 지킴이(반복 사이클 사이 자리 보정) ----------
+// ---------- 위치 지킴이('위치 보정' 블록의 기준 위치 저장/관리) ----------
 let wtSettings = null;   // 서버 설정 스냅샷
+let wtMode = null;       // 모달 목적: {kind:'minimap'} | {kind:'spot', id, onSaved}
 let wtStep = 'patch';    // 모달 단계: 'minimap'(1단계) | 'patch'(2단계)
 let wtSel = null;        // 드래그 선택(표시 px 기준) {x,y,w,h}
 let wtFrameUrl = null;   // 캡처 프레임 blob URL(재캡처 시 해제)
@@ -115,17 +116,10 @@ function renderWatcher(s) {
   wtSettings = s;
   const tol = $('wt-tol'); if (tol && document.activeElement !== tol) tol.value = s.tolerancePx;
   const mx = $('wt-maxms'); if (mx && document.activeElement !== mx) mx.value = s.maxCorrectionMs;
-  const img = $('wt-patch'); const info = $('wt-info');
-  if (s.hasPatch) {
-    img.src = '/api/watcher/patch?ts=' + Date.now();
-    img.hidden = false;
-    info.innerHTML = `기준 위치 저장됨 · 미니맵 점 (${s.dotX}, ${s.dotY})${s.directionSign ? ' · 이동 방향 학습됨' : ''}`;
-  } else {
-    img.hidden = true;
-    info.textContent = s.hasMinimap
-      ? '미니맵은 지정됨 — 캐릭터를 자리에 세워두고 [현재 위치 저장]으로 기준 화면을 저장하세요.'
-      : '저장된 위치가 없습니다. 캐릭터를 원하는 자리에 세워두고 [현재 위치 저장]을 누르세요.';
-  }
+  const info = $('wt-info');
+  if (info) info.textContent = s.hasMinimap
+    ? `미니맵 영역 지정됨 (${s.miniW}×${s.miniH}px) — 각 위치는 편집기의 🧭 위치 보정 블록에서 [지정하기]로 저장하세요.`
+    : '미니맵 영역이 없습니다. [미니맵 영역 지정]을 먼저 해주세요 (블록에서 지정할 때 자동으로 물어보기도 합니다).';
   renderWatcherWinSelect();
 }
 
@@ -150,8 +144,10 @@ async function loadWatcher() {
   try { renderWatcher(await api.getWatcher()); } catch { /* 무시 */ }
 }
 
-async function openWatcherModal(forceMinimap) {
+// mode: {kind:'minimap'} 미니맵만 다시 지정 | {kind:'spot', id, onSaved} 블록의 기준 위치 지정
+async function openWatcherModal(mode) {
   try {
+    if (!wtSettings) await loadWatcher(); // 편집기에서 드로어를 안 거치고 바로 열 수 있음
     wtSetStatus('게임 화면 캡처 중…');
     const res = await fetch('/api/watcher/frame?ts=' + Date.now());
     if (!res.ok) {
@@ -163,23 +159,39 @@ async function openWatcherModal(forceMinimap) {
     if (wtFrameUrl) URL.revokeObjectURL(wtFrameUrl);
     wtFrameUrl = URL.createObjectURL(blob);
     $('wt-frame').src = wtFrameUrl;
-    wtStep = (forceMinimap || !(wtSettings && wtSettings.hasMinimap)) ? 'minimap' : 'patch';
+    wtMode = mode;
+    wtStep = (mode.kind === 'minimap' || !(wtSettings && wtSettings.hasMinimap)) ? 'minimap' : 'patch';
     wtClearSel();
     updateWtModalHead();
     $('wt-modal').hidden = false;
     wtSetStatus('—');
-  } catch (e) { wtSetStatus('캡처 실패: ' + e.message, true); }
+    return true;
+  } catch (e) {
+    wtSetStatus('캡처 실패: ' + e.message, true);
+    log('error', '위치 지킴이 캡처 실패: ' + e.message);
+    return false;
+  }
+}
+
+// 편집기의 🧭 위치 보정 블록 [지정하기] — 새 스팟 id를 만들어 모달을 열고, 저장되면 onSaved(id) 호출.
+// 항상 새 id를 쓰므로 블록을 복제해도 서로 다른 자리를 가질 수 있다(재지정하는 쪽만 바뀜).
+function openSpotPicker(onSaved) {
+  const id = (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2)).replace(/[^0-9a-zA-Z-]/g, '');
+  openWatcherModal({ kind: 'spot', id, onSaved });
 }
 
 function updateWtModalHead() {
-  $('wt-modal-title').textContent = wtStep === 'minimap' ? '1단계 — 미니맵 영역' : '2단계 — 기준 화면';
+  const spot = wtMode && wtMode.kind === 'spot';
+  $('wt-modal-title').textContent = wtStep === 'minimap'
+    ? (spot ? '1단계 — 미니맵 영역' : '미니맵 영역')
+    : (spot && !(wtSettings && wtSettings.hasMinimap) ? '2단계 — 기준 화면' : '기준 화면');
   $('wt-modal-hint').textContent = wtStep === 'minimap'
     ? '미니맵 전체를 드래그로 감싸세요 (플레이어 노란 점이 보여야 합니다)'
     : '캐릭터가 아니라, 캐릭터가 서 있는 발판 주변의 고정 지형·배경을 드래그하세요 (40~100px 권장)';
 }
 
 function wtClearSel() { wtSel = null; $('wt-sel').hidden = true; $('wt-apply').disabled = true; }
-function closeWatcherModal() { $('wt-modal').hidden = true; wtClearSel(); }
+function closeWatcherModal() { $('wt-modal').hidden = true; wtClearSel(); wtMode = null; }
 
 function wireWatcherModal() {
   const canvas = $('wt-canvas'), img = $('wt-frame'), box = $('wt-sel');
@@ -219,12 +231,12 @@ function wireWatcherModal() {
     if (wtSel && wtSel.w >= 8 && wtSel.h >= 8) $('wt-apply').disabled = false;
   });
   $('wt-apply').onclick = applyWtSelection;
-  $('wt-recapture').onclick = () => openWatcherModal(wtStep === 'minimap');
+  $('wt-recapture').onclick = () => { if (wtMode) openWatcherModal(wtMode); };
   $('wt-modal-cancel').onclick = closeWatcherModal;
 }
 
 async function applyWtSelection() {
-  if (!wtSel) return;
+  if (!wtSel || !wtMode) return;
   const img = $('wt-frame');
   // 표시 px → 창 px (프레임 원본 해상도) 환산
   const scale = img.naturalWidth / img.getBoundingClientRect().width;
@@ -235,30 +247,24 @@ async function applyWtSelection() {
   try {
     if (wtStep === 'minimap') {
       renderWatcher(await api.watcherMinimap(rect));
+      if (wtMode.kind === 'minimap') {
+        closeWatcherModal();
+        wtSetStatus('미니맵 영역을 지정했습니다.');
+        log('info', '위치 지킴이: 미니맵 영역을 지정했습니다.');
+        return;
+      }
       wtStep = 'patch';
       wtClearSel();
       updateWtModalHead();
       wtSetStatus('미니맵 지정 완료 — 이어서 기준 화면을 드래그하세요.');
     } else {
-      renderWatcher(await api.watcherRegion(rect));
+      await api.watcherSpotRegion(wtMode.id, rect);
+      const saved = wtMode;
       closeWatcherModal();
-      wtSetStatus('현재 위치를 저장했습니다.');
-      log('info', '위치 지킴이: 현재 위치를 저장했습니다.');
+      wtSetStatus('이 블록의 위치를 저장했습니다.');
+      log('info', '위치 보정 블록: 기준 위치를 저장했습니다.');
+      if (saved.onSaved) saved.onSaved(saved.id);
     }
-  } catch (e) { wtSetStatus(e.message, true); }
-}
-
-async function onWatcherTest() {
-  try {
-    wtSetStatus('측정 중…');
-    const r = await api.watcherTest();
-    if (r.error) { wtSetStatus(r.error, true); return; }
-    const sign = (v) => (v > 0 ? '+' : '') + v;
-    const parts = [];
-    parts.push(r.dotFound ? `미니맵 이탈 ${sign(r.miniDx)}px` : '미니맵 점 미탐지');
-    if (r.score != null)
-      parts.push(`매칭 ${(r.score * 100).toFixed(0)}%` + (r.patchFound ? ` · 화면 이탈 ${sign(r.dx)}px` : ' (임계 미달)'));
-    wtSetStatus(parts.join(' · '), !r.dotFound);
   } catch (e) { wtSetStatus(e.message, true); }
 }
 
@@ -350,7 +356,7 @@ function log(level, message, time) {
 }
 
 // ---------- 편집기(녹화는 편집기 안 '녹화하기' 카드로 통합) ----------
-const editor = createEditor({ log, onSaved: loadMacros, getStatus: () => state.status, getMacros: () => state.macros });
+const editor = createEditor({ log, onSaved: loadMacros, getStatus: () => state.status, getMacros: () => state.macros, openSpotPicker });
 
 // ---------- 상태 ----------
 function renderStatus(s) {
@@ -1307,13 +1313,7 @@ function wire() {
     try { renderWatcher(await api.setWatcher({ process: p })); } catch (e) { log('error', e.message); }
   };
   $('wt-win-refresh').onclick = async () => { await loadOverlayWindows(); renderWatcherWinSelect(); };
-  $('wt-capture').onclick = () => openWatcherModal(false);
-  $('wt-minimap').onclick = () => openWatcherModal(true);
-  $('wt-test').onclick = onWatcherTest;
-  $('wt-clear').onclick = async () => {
-    try { renderWatcher(await api.watcherClearPatch()); wtSetStatus('저장된 위치를 삭제했습니다.'); }
-    catch (e) { log('error', e.message); }
-  };
+  $('wt-minimap').onclick = () => openWatcherModal({ kind: 'minimap' });
   $('wt-tol').onchange = async () => {
     const v = parseInt($('wt-tol').value, 10);
     if (Number.isFinite(v)) try { renderWatcher(await api.setWatcher({ tolerancePx: v })); } catch (e) { log('error', e.message); }

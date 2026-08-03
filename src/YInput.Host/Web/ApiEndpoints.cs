@@ -270,7 +270,7 @@ public static class ApiEndpoints
         app.MapPost("/api/overlay/whitelist/remove", (OverlayTargetBody? b) =>
             Results.Json(string.IsNullOrWhiteSpace(b?.Process) ? overlay.Get() : overlay.WhitelistRemove(b!.Process)));
 
-        // ---- 위치 지킴이(반복 사이클 사이 자리 보정: 미니맵 코스 + 템플릿 파인) ----
+        // ---- 위치 지킴이('위치 보정' 블록의 자리 보정: 미니맵 코스 + 템플릿 파인. 기준 위치는 블록별 스팟) ----
         app.MapGet("/api/watcher", () => Results.Json(watcher.Get()));
         app.MapPost("/api/watcher", (WatcherBody? b) => Results.Json(
             watcher.Update(b?.Process, b?.TolerancePx, b?.MsPerPx,
@@ -281,19 +281,24 @@ public static class ApiEndpoints
             var png = watcher.CaptureFrame();
             return Task.FromResult(Results.File(png, "image/png"));
         }));
-        app.MapGet("/api/watcher/patch", () =>
-        {
-            var png = watcher.GetPatchPng();
-            return png is null ? Results.NotFound(new { error = "저장된 패치가 없습니다." }) : Results.File(png, "image/png");
-        });
         app.MapPost("/api/watcher/minimap", (RegionBody? b) => Guard(() =>
             Task.FromResult(b is null ? Results.BadRequest(new { error = "영역이 필요합니다." })
                                       : Results.Json(watcher.SetMinimapRegion(b.X, b.Y, b.W, b.H)))));
-        app.MapPost("/api/watcher/region", (RegionBody? b) => Guard(() =>
+        // 블록별 스팟: 조회/패치 썸네일/지정/테스트
+        app.MapGet("/api/watcher/spots/{id}", (string id) => Guard(() =>
+            Task.FromResult(Results.Json(watcher.GetSpot(id)))));
+        app.MapGet("/api/watcher/spots/{id}/patch", (string id) => Guard(() =>
+        {
+            var png = watcher.GetSpotPatch(id);
+            return Task.FromResult(png is null
+                ? Results.NotFound(new { error = "저장된 위치가 없습니다." })
+                : Results.File(png, "image/png"));
+        }));
+        app.MapPost("/api/watcher/spots/{id}/region", (string id, RegionBody? b) => Guard(() =>
             Task.FromResult(b is null ? Results.BadRequest(new { error = "영역이 필요합니다." })
-                                      : Results.Json(watcher.SetRegion(b.X, b.Y, b.W, b.H)))));
-        app.MapDelete("/api/watcher/patch", () => Results.Json(watcher.ClearPatch()));
-        app.MapPost("/api/watcher/test", () => Guard(() => Task.FromResult(Results.Json(watcher.Test()))));
+                                      : Results.Json(watcher.SetSpotRegion(id, b.X, b.Y, b.W, b.H)))));
+        app.MapPost("/api/watcher/spots/{id}/test", (string id) => Guard(() =>
+            Task.FromResult(Results.Json(watcher.TestSpot(id)))));
 
         // ---- WebSocket ----
         app.Map("/ws", async (HttpContext ctx) =>

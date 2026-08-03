@@ -45,8 +45,8 @@ public sealed class MacroService
     /// <summary>로컬 매크로 변경 후 호출(Program이 GitHubSync.SchedulePush로 연결) — 동기화 푸시 예약.</summary>
     public Action? MacrosChanged { get; set; }
 
-    /// <summary>'위치 보정' 스텝에서 실행할 훅(Program이 PositionWatcher.CorrectAsync로 연결).</summary>
-    public Func<CancellationToken, Task>? PositionCorrectHook { get; set; }
+    /// <summary>'위치 보정' 스텝에서 실행할 훅(Program이 PositionWatcher.CorrectAsync로 연결). 인자 = 스팟 id.</summary>
+    public Func<string?, CancellationToken, Task>? PositionCorrectHook { get; set; }
 
     private void NotifyChanged() => MacrosChanged?.Invoke();
 

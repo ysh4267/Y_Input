@@ -139,6 +139,10 @@ public sealed class LoopEndEvent : InputEvent
 /// </summary>
 public sealed class PositionCorrectEvent : InputEvent
 {
+    /// <summary>이 블록이 참조하는 기준 위치(스팟) id. 블록마다 서로 다른 자리를 가진다.
+    /// Host가 spots\{id}.json/png로 저장·해석하며, 비어 있으면 보정은 no-op.</summary>
+    public string SpotId { get; set; } = string.Empty;
+
     [JsonIgnore]
     public override string Summary => "위치 보정";
 }

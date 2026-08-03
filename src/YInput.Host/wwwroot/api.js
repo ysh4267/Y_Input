@@ -73,7 +73,7 @@ export const api = {
   getWatcher: () => request('GET', '/api/watcher'),
   setWatcher: (p) => request('POST', '/api/watcher', p),
   watcherMinimap: (r) => request('POST', '/api/watcher/minimap', r),
-  watcherRegion: (r) => request('POST', '/api/watcher/region', r),
-  watcherClearPatch: () => request('DELETE', '/api/watcher/patch'),
-  watcherTest: () => request('POST', '/api/watcher/test'),
+  watcherSpot: (id) => request('GET', `/api/watcher/spots/${id}`),
+  watcherSpotRegion: (id, r) => request('POST', `/api/watcher/spots/${id}/region`, r),
+  watcherSpotTest: (id) => request('POST', `/api/watcher/spots/${id}/test`),
 };

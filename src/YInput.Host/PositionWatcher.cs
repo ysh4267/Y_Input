@@ -9,18 +9,17 @@ using YInput.Input;
 
 namespace YInput.Host;
 
-/// <summary>위치 지킴이 설정(파일 영속 대상). 좌표는 모두 게임 창 상대(px).</summary>
+/// <summary>위치 지킴이 공통 설정(파일 영속 대상). 좌표는 게임 창 상대(px). 기준 위치 자체는
+/// 블록(스팟)별로 <c>spots\{id}.json/png</c>에 따로 저장된다.</summary>
 public sealed class WatcherSettings
 {
     public string Process { get; set; } = "maplestory";
 
-    // 미니맵(코스 보정): 영역 + 저장 시점 플레이어 점(미니맵 상대)
+    // 미니맵 영역(전역 — 같은 게임 창이면 스팟이 달라도 동일)
     public int MiniX { get; set; }
     public int MiniY { get; set; }
     public int MiniW { get; set; }
     public int MiniH { get; set; }
-    public int DotX { get; set; }
-    public int DotY { get; set; }
     public int MiniTolerancePx { get; set; } = 1;
     public double MsPerMiniPx { get; set; } = 120; // 미니맵 1px ≈ 실좌표 수~십수 px → 홀드 비율 큼
 
@@ -29,27 +28,34 @@ public sealed class WatcherSettings
     public int DotMinG { get; set; } = 180;
     public int DotMaxB { get; set; } = 120;
 
-    // 템플릿(파인 보정): 기준 패치 rect + 매칭/이동 파라미터
-    public int PatchX { get; set; }
-    public int PatchY { get; set; }
-    public int PatchW { get; set; }
-    public int PatchH { get; set; }
+    // 템플릿(파인 보정) 공통 파라미터
     public int TolerancePx { get; set; } = 4;
     public double MinScore { get; set; } = 0.60;
     public double MsPerPx { get; set; } = 12;
-    /// <summary>파인 보정 방향 부호. 0=미학습(카메라-추적 가정 +1로 시작해 첫 탭 결과로 학습·영속).</summary>
-    public int DirectionSign { get; set; }
 
     public int MaxHoldMs { get; set; } = 350;
     public int SettleMs { get; set; } = 150;
     public int MaxCorrectionMs { get; set; } = 6000;
 }
 
+/// <summary>블록(스팟)별 기준 위치 — 저장 시점의 미니맵 점 + 기준 화면 패치 rect + 학습된 방향 부호.</summary>
+public sealed class SpotData
+{
+    public int DotX { get; set; }
+    public int DotY { get; set; }
+    public int PatchX { get; set; }
+    public int PatchY { get; set; }
+    public int PatchW { get; set; }
+    public int PatchH { get; set; }
+    /// <summary>파인 보정 방향 부호. 0=미학습(카메라-추적 가정 +1로 시작해 첫 탭 결과로 학습·영속).</summary>
+    public int DirectionSign { get; set; }
+}
+
 /// <summary>
-/// 위치 지킴이 — 매크로 반복 사이클 사이(<see cref="Services.MacroService.CycleHook"/>)에 캐릭터가
-/// 저장된 자리에서 벗어났으면 방향키로 되돌린다. 2단계: ① 미니맵 노란 점으로 코스 복귀(절대 위치라
-/// 방향 명확, 멀리 벗어나도 복귀), ② 화면 템플릿 매칭으로 파인 조정(미니맵 해상도 이하의 잔여 오차).
-/// 설정은 <c>watcher.json</c>, 기준 패치는 <c>watcher_patch.png</c>에 저장.
+/// 위치 지킴이 — '위치 보정' 스텝(<see cref="PositionCorrectEvent"/>)이 실행될 때 캐릭터가 그 블록에
+/// 지정된 자리(스팟)에서 벗어났으면 방향키로 되돌린다. 2단계: ① 미니맵 노란 점으로 코스 복귀(절대 위치라
+/// 방향 명확, 멀리 벗어나도 복귀), ② 화면 템플릿 매칭으로 파인 조정. 블록마다 서로 다른 스팟을 가진다.
+/// 공통 설정은 <c>watcher.json</c>, 스팟은 <c>spots\{id}.json</c> + <c>spots\{id}.png</c>에 저장.
 /// </summary>
 public sealed class PositionWatcher : IDisposable
 {
@@ -59,24 +65,23 @@ public sealed class PositionWatcher : IDisposable
     private const double MinPatchStdDev = 8;              // 패치 대비 하한(단색·특징 부족 거부)
 
     private readonly string _statePath;
-    private readonly string _patchPath;
+    private readonly string _spotsDir;
     private readonly SocketHub _hub;
     private readonly InputBackend _backend;
     private readonly object _gate = new();
     private readonly SemaphoreSlim _sem = new(1, 1); // 동시 재생 매크로 여러 개 → 보정은 한 번에 하나
 
     private WatcherSettings _settings;
-    private GrayImage? _patchGray;   // 저장된 패치의 그레이 캐시(로드 시 1회 변환)
-    private Bitmap? _lastFrame;      // 마지막 캡처 프레임 — 영역 지정은 사용자가 본 이 프레임에서 크롭
+    private readonly Dictionary<string, (SpotData Data, GrayImage Gray)> _spotCache = new();
+    private Bitmap? _lastFrame; // 마지막 캡처 프레임 — 영역 지정은 사용자가 본 이 프레임에서 크롭
 
     public PositionWatcher(string dataRoot, SocketHub hub, InputBackend backend)
     {
         _statePath = Path.Combine(dataRoot, "watcher.json");
-        _patchPath = Path.Combine(dataRoot, "watcher_patch.png");
+        _spotsDir = Path.Combine(dataRoot, "spots");
         _hub = hub;
         _backend = backend;
         _settings = Load();
-        LoadPatchCache();
     }
 
     // ---------- 조회/설정 ----------
@@ -102,7 +107,7 @@ public sealed class PositionWatcher : IDisposable
         return snap;
     }
 
-    // ---------- 위치 저장(웹 UI) ----------
+    // ---------- 캡처/미니맵(전역) ----------
     /// <summary>게임 창을 찾아 전체 프레임을 캡처하고 PNG로 반환. 프레임은 이후 영역 지정용으로 보관.</summary>
     public byte[] CaptureFrame()
     {
@@ -131,9 +136,11 @@ public sealed class PositionWatcher : IDisposable
         lock (_gate) return Snapshot(_settings);
     }
 
-    /// <summary>마지막 캡처 프레임에서 기준 패치를 지정하고, 같은 프레임의 미니맵 점을 기준 위치로 저장한다.</summary>
-    public object SetRegion(int x, int y, int w, int h)
+    // ---------- 스팟(블록별 기준 위치) ----------
+    /// <summary>마지막 캡처 프레임에서 스팟의 기준 패치를 지정하고, 같은 프레임의 미니맵 점을 함께 저장한다.</summary>
+    public object SetSpotRegion(string id, int x, int y, int w, int h)
     {
+        RequireValidId(id);
         lock (_gate)
         {
             var frame = _lastFrame ?? throw new InvalidOperationException("먼저 화면을 캡처하세요.");
@@ -150,66 +157,83 @@ public sealed class PositionWatcher : IDisposable
             if (TemplateMatcher.StdDev(gray) < MinPatchStdDev)
                 throw new ArgumentException("선택한 영역의 특징이 부족합니다(거의 단색). 무늬가 있는 지형·배경을 선택하세요.");
 
-            File.WriteAllBytes(_patchPath, ScreenCapture.ToPng(patchBmp));
-            _patchGray = gray;
-            _settings.PatchX = rect.X; _settings.PatchY = rect.Y; _settings.PatchW = rect.Width; _settings.PatchH = rect.Height;
-            _settings.DotX = dot.X; _settings.DotY = dot.Y;
-            _settings.DirectionSign = 0; // 새 자리 → 파인 방향 재학습
-            Save(_settings);
+            var spot = new SpotData
+            {
+                DotX = dot.X, DotY = dot.Y,
+                PatchX = rect.X, PatchY = rect.Y, PatchW = rect.Width, PatchH = rect.Height,
+                DirectionSign = 0, // 새 자리 → 파인 방향 재학습
+            };
+            Directory.CreateDirectory(_spotsDir);
+            File.WriteAllBytes(SpotPng(id), ScreenCapture.ToPng(patchBmp));
+            File.WriteAllText(SpotJson(id), JsonSerializer.Serialize(spot));
+            _spotCache[id] = (spot, gray);
         }
-        Broadcast();
-        lock (_gate) return Snapshot(_settings);
+        return GetSpot(id);
     }
 
-    public byte[]? GetPatchPng() => File.Exists(_patchPath) ? File.ReadAllBytes(_patchPath) : null;
-
-    public object ClearPatch()
+    /// <summary>스팟 정보(블록 카드 표시용). 없으면 exists=false.</summary>
+    public object GetSpot(string id)
     {
+        RequireValidId(id);
         lock (_gate)
         {
-            try { File.Delete(_patchPath); } catch { }
-            _patchGray = null;
-            _settings.PatchW = _settings.PatchH = 0;
-            _settings.DirectionSign = 0;
-            Save(_settings);
+            var r = ResolveSpot(id);
+            if (r is not { } s) return new { exists = false };
+            return new
+            {
+                exists = true,
+                dotX = s.Data.DotX, dotY = s.Data.DotY,
+                patchX = s.Data.PatchX, patchY = s.Data.PatchY, patchW = s.Data.PatchW, patchH = s.Data.PatchH,
+                directionSign = s.Data.DirectionSign,
+            };
         }
-        Broadcast();
-        lock (_gate) return Snapshot(_settings);
     }
 
-    // ---------- 측정/보정 ----------
-    /// <summary>키를 누르지 않고 현재 이탈량만 측정(설정 UI의 테스트 버튼).</summary>
-    public object Test()
+    public byte[]? GetSpotPatch(string id)
     {
-        WatcherSettings s; GrayImage? patch;
-        lock (_gate) { s = Clone(_settings); patch = _patchGray; }
+        RequireValidId(id);
+        var p = SpotPng(id);
+        return File.Exists(p) ? File.ReadAllBytes(p) : null;
+    }
+
+    /// <summary>키를 누르지 않고 스팟 기준 현재 이탈량만 측정(블록 카드의 테스트 버튼).</summary>
+    public object TestSpot(string id)
+    {
+        RequireValidId(id);
+        WatcherSettings s; (SpotData Data, GrayImage Gray)? spot;
+        lock (_gate) { s = Clone(_settings); spot = ResolveSpot(id); }
         if (s.MiniW <= 0) return new { error = "미니맵 영역이 지정되지 않았습니다." };
+        if (spot is not { } sp) return new { error = "지정된 위치가 없습니다. [지정하기]로 저장하세요." };
 
         var dot = MeasureDot(s);
-        int? miniDx = dot is { } d ? d.X - s.DotX : null;
+        int? miniDx = dot is { } d ? d.X - sp.Data.DotX : null;
         double? score = null; int? dx = null;
-        if (patch is { } p && s.PatchW > 0)
-        {
-            var pm = MeasurePatch(s, p);
-            if (pm is { } r) { dx = r.dx; score = r.score; }
-        }
+        var pm = MeasurePatch(s, sp.Data, sp.Gray);
+        if (pm is { } r) { dx = r.dx; score = r.score; }
         return new { dotFound = dot is not null, miniDx, patchFound = score >= s.MinScore, dx, score };
     }
 
+    // ---------- 보정(재생 훅) ----------
     /// <summary>
-    /// '위치 보정' 스텝의 실제 수행(Player.PositionCorrect 훅). 취소(정지)는 OCE로 전파해
-    /// 재생을 즉시 멈추고, 그 외 오류는 삼켜 재생을 계속한다. 어떤 경로로도 방향키가 눌린 채 남지 않는다.
-    /// 기준 위치(미니맵+패치)가 저장돼 있지 않으면 no-op.
+    /// '위치 보정' 스텝의 실제 수행(Player.PositionCorrect 훅). 스텝의 spotId에 지정된 자리로 되돌린다.
+    /// 취소(정지)는 OCE로 전파해 재생을 즉시 멈추고, 그 외 오류는 삼켜 재생을 계속한다.
+    /// 어떤 경로로도 방향키가 눌린 채 남지 않는다. 스팟 미지정이면 no-op(상태 방송만).
     /// </summary>
-    public async Task CorrectAsync(CancellationToken ct)
+    public async Task CorrectAsync(string? spotId, CancellationToken ct)
     {
-        WatcherSettings s; GrayImage? patch;
-        lock (_gate) { s = Clone(_settings); patch = _patchGray; }
-        if (s.MiniW <= 0 || patch is null || s.PatchW <= 0) return;
+        WatcherSettings s; (SpotData Data, GrayImage Gray)? resolved;
+        lock (_gate)
+        {
+            s = Clone(_settings);
+            resolved = string.IsNullOrEmpty(spotId) || !IsValidId(spotId) ? null : ResolveSpot(spotId);
+        }
+        if (s.MiniW <= 0) { Status("skip", "미니맵 영역이 지정되지 않아 위치 보정을 건너뜁니다."); return; }
+        if (resolved is not { } sp) { Status("skip", "이 블록에 지정된 위치가 없어 보정을 건너뜁니다. 편집기에서 [지정하기]로 저장하세요."); return; }
         if (!_sem.Wait(0)) return; // 다른 매크로가 이미 보정 중 → 스킵
 
         try
         {
+            var spot = sp.Data; var patch = sp.Gray;
             if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면이 아니라 보정을 건너뜁니다."); return; }
             var sw = Stopwatch.StartNew();
 
@@ -218,7 +242,7 @@ public sealed class PositionWatcher : IDisposable
                 // ── 1단계: 미니맵 코스 복귀 ──
                 var dot = MeasureDot(s);
                 if (dot is null) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 보정을 포기합니다."); return; }
-                int miniDx = dot.Value.X - s.DotX;
+                int miniDx = dot.Value.X - spot.DotX;
 
                 while (Math.Abs(miniDx) > s.MiniTolerancePx && sw.ElapsedMilliseconds < s.MaxCorrectionMs)
                 {
@@ -231,17 +255,17 @@ public sealed class PositionWatcher : IDisposable
                     await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
                     dot = MeasureDot(s);
                     if (dot is null) { Status("fail", "보정 중 미니맵 점을 놓쳤습니다."); return; }
-                    miniDx = dot.Value.X - s.DotX;
+                    miniDx = dot.Value.X - spot.DotX;
                 }
                 if (Math.Abs(miniDx) > s.MiniTolerancePx) { Status("fail", $"보정 시간 초과(미니맵 이탈 {miniDx:+0;-0}px 남음)."); return; }
 
                 // ── 2단계: 템플릿 파인 조정 ──
-                var pm = MeasurePatch(s, patch.Value);
+                var pm = MeasurePatch(s, spot, patch);
                 if (pm is not { } m || m.score < s.MinScore)
                 { Status("done", "템플릿 매칭 실패 — 미니맵 보정까지만 수행했습니다.", miniDx: miniDx); return; }
 
-                int sign = s.DirectionSign == 0 ? 1 : s.DirectionSign; // 기본: 카메라-추적 가정
-                bool learning = s.DirectionSign == 0;
+                int sign = spot.DirectionSign == 0 ? 1 : spot.DirectionSign; // 기본: 카메라-추적 가정
+                bool learning = spot.DirectionSign == 0;
                 int dx = m.dx;
 
                 while (Math.Abs(dx) > s.TolerancePx && sw.ElapsedMilliseconds < s.MaxCorrectionMs)
@@ -255,7 +279,7 @@ public sealed class PositionWatcher : IDisposable
                     await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
 
                     int prevAbs = Math.Abs(dx);
-                    pm = MeasurePatch(s, patch.Value);
+                    pm = MeasurePatch(s, spot, patch);
                     if (pm is not { } m2 || m2.score < s.MinScore)
                     { Status("done", "미세 보정 중 매칭을 놓쳐 여기서 마칩니다."); return; }
                     m = m2; dx = m.dx;
@@ -263,8 +287,8 @@ public sealed class PositionWatcher : IDisposable
                     if (learning)
                     {
                         // 첫 탭 결과로 부호 학습: 편차가 커졌으면 반대 방향(맵 가장자리 = 카메라 고정 케이스)
-                        if (Math.Abs(dx) > prevAbs + 2) { sign = -sign; PersistSign(sign); learning = false; Status("fine", "이동 방향을 반대로 학습했습니다."); }
-                        else if (Math.Abs(dx) < prevAbs) { PersistSign(sign); learning = false; }
+                        if (Math.Abs(dx) > prevAbs + 2) { sign = -sign; PersistSign(spotId!, spot, sign); learning = false; Status("fine", "이동 방향을 반대로 학습했습니다."); }
+                        else if (Math.Abs(dx) < prevAbs) { PersistSign(spotId!, spot, sign); learning = false; }
                     }
                 }
 
@@ -272,7 +296,7 @@ public sealed class PositionWatcher : IDisposable
 
                 // 파인 탭 도중 크게 밀렸을 수 있으니 미니맵 재확인 — 벗어났으면 한 번만 처음부터
                 var recheck = MeasureDot(s);
-                if (pass == 0 && recheck is { } rd && Math.Abs(rd.X - s.DotX) > s.MiniTolerancePx) continue;
+                if (pass == 0 && recheck is { } rd && Math.Abs(rd.X - spot.DotX) > s.MiniTolerancePx) continue;
 
                 Status("done", $"위치 보정 완료 (잔여 {dx:+0;-0}px)", dx: dx, score: m.score);
                 return;
@@ -291,6 +315,25 @@ public sealed class PositionWatcher : IDisposable
     }
 
     // ---------- 내부 ----------
+    /// <summary>스팟을 캐시→디스크 순으로 해석. 반드시 _gate 안에서 호출.</summary>
+    private (SpotData Data, GrayImage Gray)? ResolveSpot(string id)
+    {
+        if (_spotCache.TryGetValue(id, out var c)) return c;
+        try
+        {
+            var json = SpotJson(id); var png = SpotPng(id);
+            if (!File.Exists(json) || !File.Exists(png)) return null;
+            var data = JsonSerializer.Deserialize<SpotData>(File.ReadAllText(json));
+            if (data is null || data.PatchW <= 0) return null;
+            using var bmp = new Bitmap(png);
+            var gray = TemplateMatcher.ToGray(bmp);
+            var entry = (data, gray);
+            _spotCache[id] = entry;
+            return entry;
+        }
+        catch { return null; }
+    }
+
     /// <summary>미니맵 영역만 캡처해 플레이어 점(미니맵 상대)을 찾는다. 창/점 없으면 null.</summary>
     private Point? MeasureDot(WatcherSettings s)
     {
@@ -302,18 +345,18 @@ public sealed class PositionWatcher : IDisposable
     }
 
     /// <summary>패치 Y ± 밴드만 창 전폭으로 캡처해 템플릿 매칭. dx = 현재 매칭 X − 저장 X.</summary>
-    private (int dx, double score)? MeasurePatch(WatcherSettings s, GrayImage patch)
+    private (int dx, double score)? MeasurePatch(WatcherSettings s, SpotData spot, GrayImage patch)
     {
         if (!WindowLocator.TryGetWindowRect(s.Process, out var win)) return null;
-        int y0 = Math.Max(0, s.PatchY - SearchBandPx);
-        int y1 = Math.Min(win.Height, s.PatchY + s.PatchH + SearchBandPx);
-        if (y1 - y0 < s.PatchH || win.Width < s.PatchW) return null;
+        int y0 = Math.Max(0, spot.PatchY - SearchBandPx);
+        int y1 = Math.Min(win.Height, spot.PatchY + spot.PatchH + SearchBandPx);
+        if (y1 - y0 < spot.PatchH || win.Width < spot.PatchW) return null;
 
         using var bmp = ScreenCapture.Capture(new Rectangle(win.X, win.Y + y0, win.Width, y1 - y0));
         var gray = TemplateMatcher.ToGray(bmp);
         var search = new Rectangle(0, 0, gray.Width - patch.Width + 1, gray.Height - patch.Height + 1);
         var m = TemplateMatcher.Match(gray, patch, search);
-        return (m.X - s.PatchX, m.Score); // 밴드는 창 X=0부터라 X는 창 상대 그대로
+        return (m.X - spot.PatchX, m.Score); // 밴드는 창 X=0부터라 X는 창 상대 그대로
     }
 
     private async Task TapAsync(ushort code, double holdMs, CancellationToken ct)
@@ -323,30 +366,27 @@ public sealed class PositionWatcher : IDisposable
         finally { try { _backend.Send(new KeyboardEvent { Code = code, State = KeyUpE0 }); } catch { } }
     }
 
-    private void PersistSign(int sign)
+    private void PersistSign(string id, SpotData spot, int sign)
     {
-        lock (_gate) { _settings.DirectionSign = sign; Save(_settings); }
-        Broadcast();
-    }
-
-    private void LoadPatchCache()
-    {
-        try
+        lock (_gate)
         {
-            if (_settings.PatchW > 0 && File.Exists(_patchPath))
-            {
-                using var bmp = new Bitmap(_patchPath);
-                _patchGray = TemplateMatcher.ToGray(bmp);
-            }
+            spot.DirectionSign = sign;
+            try { File.WriteAllText(SpotJson(id), JsonSerializer.Serialize(spot)); } catch { }
+            if (_spotCache.TryGetValue(id, out var c)) _spotCache[id] = (spot, c.Gray);
         }
-        catch { _patchGray = null; }
     }
 
-    private static Rectangle ClampRect(int x, int y, int w, int h, int maxW, int maxH)
-    {
-        var r = Rectangle.Intersect(new Rectangle(x, y, w, h), new Rectangle(0, 0, maxW, maxH));
-        return r;
-    }
+    // 스팟 id는 클라이언트가 만든 UUID(하이픈 제거 가능) — 경로 조작 방지를 위해 엄격 검증.
+    private static bool IsValidId(string id) =>
+        id.Length is >= 8 and <= 64 && id.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
+    private static void RequireValidId(string id)
+    { if (string.IsNullOrEmpty(id) || !IsValidId(id)) throw new ArgumentException("잘못된 위치 id입니다."); }
+
+    private string SpotJson(string id) => Path.Combine(_spotsDir, id + ".json");
+    private string SpotPng(string id) => Path.Combine(_spotsDir, id + ".png");
+
+    private static Rectangle ClampRect(int x, int y, int w, int h, int maxW, int maxH) =>
+        Rectangle.Intersect(new Rectangle(x, y, w, h), new Rectangle(0, 0, maxW, maxH));
 
     private void Status(string state, string message, int? miniDx = null, int? dx = null, double? score = null) =>
         _hub.Broadcast("watcherStatus", new { state, message, miniDx, dx, score });
@@ -357,14 +397,10 @@ public sealed class PositionWatcher : IDisposable
     {
         process = s.Process,
         hasMinimap = s.MiniW > 0,
-        hasPatch = s.PatchW > 0 && File.Exists(_patchPath),
         miniX = s.MiniX, miniY = s.MiniY, miniW = s.MiniW, miniH = s.MiniH,
-        dotX = s.DotX, dotY = s.DotY,
-        patchX = s.PatchX, patchY = s.PatchY, patchW = s.PatchW, patchH = s.PatchH,
         tolerancePx = s.TolerancePx, minScore = s.MinScore, msPerPx = s.MsPerPx,
         miniTolerancePx = s.MiniTolerancePx, msPerMiniPx = s.MsPerMiniPx,
         maxHoldMs = s.MaxHoldMs, settleMs = s.SettleMs, maxCorrectionMs = s.MaxCorrectionMs,
-        directionSign = s.DirectionSign,
     };
 
     // ---------- 영속 ----------
@@ -390,10 +426,9 @@ public sealed class PositionWatcher : IDisposable
     {
         Process = s.Process,
         MiniX = s.MiniX, MiniY = s.MiniY, MiniW = s.MiniW, MiniH = s.MiniH,
-        DotX = s.DotX, DotY = s.DotY, MiniTolerancePx = s.MiniTolerancePx, MsPerMiniPx = s.MsPerMiniPx,
+        MiniTolerancePx = s.MiniTolerancePx, MsPerMiniPx = s.MsPerMiniPx,
         DotMinR = s.DotMinR, DotMinG = s.DotMinG, DotMaxB = s.DotMaxB,
-        PatchX = s.PatchX, PatchY = s.PatchY, PatchW = s.PatchW, PatchH = s.PatchH,
-        TolerancePx = s.TolerancePx, MinScore = s.MinScore, MsPerPx = s.MsPerPx, DirectionSign = s.DirectionSign,
+        TolerancePx = s.TolerancePx, MinScore = s.MinScore, MsPerPx = s.MsPerPx,
         MaxHoldMs = s.MaxHoldMs, SettleMs = s.SettleMs, MaxCorrectionMs = s.MaxCorrectionMs,
     };
 }
