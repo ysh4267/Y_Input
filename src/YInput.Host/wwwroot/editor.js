@@ -264,14 +264,14 @@ export function createEditor({ log, onSaved, getStatus, getMacros, openMinimapPi
 
     // 동작(인라인 편집)
     const detail = document.createElement('div'); detail.className = 'step-detail';
-    buildDetail(detail, step); row.appendChild(detail);
+    buildDetail(detail, step, row); row.appendChild(detail);
 
     row.appendChild(act); // 복제/삭제 — 카드 우측 끝
 
     return row;
   }
 
-  function buildDetail(td, step) {
+  function buildDetail(td, step, row) {
     const ev = step.event;
     const t = ev['$type'];
     if (km.isUniversalInput(ev)) {
