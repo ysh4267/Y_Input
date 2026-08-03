@@ -648,15 +648,17 @@ public sealed class PositionWatcher : IDisposable
                         var closeSw = Stopwatch.StartNew();
                         while (open && closeSw.ElapsedMilliseconds < 8000)
                         {
-                            await PreciseDelay.WaitAsync(400, ct).ConfigureAwait(false);
                             try
                             {
-                                using var f = ScreenCapture.Capture(screenCrop);
-                                open = RuneArrowDetector.PuzzlePresent(f, beforeCrop, precropped: true);
+                                using var fa = ScreenCapture.Capture(screenCrop);
+                                await PreciseDelay.WaitAsync(180, ct).ConfigureAwait(false);
+                                using var fb = ScreenCapture.Capture(screenCrop);
+                                open = RuneArrowDetector.PuzzlePresent(fa, fb, beforeCrop, precropped: true);
                             }
                             catch { /* 일시적 캡처 실패 — 다음 폴링 */ }
+                            if (open) await PreciseDelay.WaitAsync(250, ct).ConfigureAwait(false);
                         }
-                        if (open) { Status("fail", "퍼즐이 닫히지 않아 재발동을 포기합니다."); return; }
+                        if (open) { SaveRuneShots(); Status("fail", "퍼즐이 닫히지 않아 재발동을 포기합니다."); return; }
                         await PreciseDelay.WaitAsync(300, ct).ConfigureAwait(false);
                     }
                     await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
@@ -745,10 +747,11 @@ public sealed class PositionWatcher : IDisposable
     /// --rune-analyze 다중 입력). PNG 인코딩이 느려 반드시 판정·입력이 끝난 뒤에 호출한다.</summary>
     private void SaveRuneShots()
     {
+        if (_runeShots.Count == 0) return;
+        FileLog.DeletePngs("rune-frame-"); // 이전 실행 잔재(프레임 수·크기가 다르면 재현 분석이 깨진다)
         for (int i = 0; i < _runeShots.Count; i++)
             FileLog.SavePng($"rune-frame-{i}", ScreenCapture.ToPng(_runeShots[i]));
-        if (_runeShots.Count > 0)
-            FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(_runeShots[^1]));
+        FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(_runeShots[^1]));
     }
 
     private void ClearRuneShots()

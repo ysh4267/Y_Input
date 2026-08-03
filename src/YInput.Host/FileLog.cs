@@ -60,6 +60,18 @@ public static class FileLog
         try { File.WriteAllBytes(Path.Combine(_dir, name + ".png"), png); } catch { /* 무시 */ }
     }
 
+    /// <summary>prefix로 시작하는 진단 PNG 삭제 — 이전 실행 잔재가 재현 분석에 섞이지 않게.</summary>
+    public static void DeletePngs(string prefix)
+    {
+        if (_dir.Length == 0) return;
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(_dir, prefix + "*.png"))
+                try { File.Delete(f); } catch { /* 잠김 등 무시 */ }
+        }
+        catch { /* 무시 */ }
+    }
+
     private static void Cleanup()
     {
         try

@@ -89,13 +89,61 @@ internal static class RuneArrowDetector
         return Detect(frame, bannerRef, mask, region, w, h, thinFilter: true);
     }
 
-    /// <summary>퍼즐(안내 배너)이 지금 떠 있는지 — bannerRef(발동 전 프레임) 대비 '가로로 넓게 변한 띠'
-    /// 존재 여부. 열린 퍼즐에 스페이스를 다시 누르면 오답 입력이 되므로, 재발동 전 확인용.</summary>
-    public static bool PuzzlePresent(Bitmap frame, Bitmap? bannerRef, bool precropped = false)
+    /// <summary>퍼즐(안내 배너)이 지금 떠 있는지 — 열린 퍼즐에 스페이스를 다시 누르면 오답 입력이
+    /// 되므로 재발동 전 확인용. 배너 = bannerRef(발동 전) 대비 '가로로 넓게 변한' 행이면서
+    /// 지금 두 프레임(frameA→frameB, ~180ms 간격) 사이에는 '정지'인 행 — 몹·이펙트로 화면이
+    /// 계속 변하는 맵에서 '아직 열려 있음' 오판을 막는다(정적 오버레이만 배너로 인정).</summary>
+    public static bool PuzzlePresent(Bitmap frameA, Bitmap frameB, Bitmap? bannerRef, bool precropped = false)
     {
-        if (bannerRef is null || bannerRef.Width != frame.Width || bannerRef.Height != frame.Height) return false;
-        if (!TryRegion(frame, precropped, out var region)) return false;
-        return BannerBand(frame, bannerRef, region, region.Width, region.Height).CenterX >= 0;
+        if (bannerRef is null) return false;
+        if (bannerRef.Width != frameB.Width || bannerRef.Height != frameB.Height) return false;
+        if (frameA.Width != frameB.Width || frameA.Height != frameB.Height) return false;
+        if (!TryRegion(frameB, precropped, out var region)) return false;
+        int w = region.Width, h = region.Height;
+
+        var vsBefore = RowDiffCounts(bannerRef, frameB, region, DiffMin); // 발동 전과 다른가
+        var vsNow = RowDiffCounts(frameA, frameB, region, DiffMin);       // 지금 움직이는가
+        int wide = (int)(w * BannerWideFrac), still = (int)(w * 0.05);
+        int run = 0;
+        for (int y = 0; y < h; y++)
+        {
+            if (vsBefore[y] >= wide && vsNow[y] <= still)
+            {
+                if (++run >= BannerMinRows) return true;
+            }
+            else run = 0;
+        }
+        return false;
+    }
+
+    /// <summary>행별 픽셀 차이 개수(|ΔR|+|ΔG|+|ΔB| ≥ min).</summary>
+    private static int[] RowDiffCounts(Bitmap a, Bitmap b, Rectangle region, int min)
+    {
+        int w = region.Width, h = region.Height;
+        var counts = new int[h];
+        var da = a.LockBits(region, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        var db = b.LockBits(region, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        try
+        {
+            unsafe
+            {
+                for (int y = 0; y < h; y++)
+                {
+                    byte* ra = (byte*)da.Scan0 + y * da.Stride;
+                    byte* rb = (byte*)db.Scan0 + y * db.Stride;
+                    int c = 0;
+                    for (int x = 0; x < w; x++)
+                    {
+                        int i4 = x * 4;
+                        int d = Math.Abs(ra[i4] - rb[i4]) + Math.Abs(ra[i4 + 1] - rb[i4 + 1]) + Math.Abs(ra[i4 + 2] - rb[i4 + 2]);
+                        if (d >= min) c++;
+                    }
+                    counts[y] = c;
+                }
+            }
+        }
+        finally { a.UnlockBits(da); b.UnlockBits(db); }
+        return counts;
     }
 
     // ---------- 공통 파이프라인 ----------
@@ -294,6 +342,9 @@ internal static class RuneArrowDetector
         try
         {
             foreach (var p in pngPaths) frames.Add(new Bitmap(p));
+            // 크기가 다른 프레임(다른 실행의 잔재)은 차분에 못 쓴다 — 첫 프레임 크기 기준으로 필터
+            int skipped = frames.RemoveAll(f => f.Width != frames[0].Width || f.Height != frames[0].Height);
+            if (skipped > 0) sb.AppendLine($"크기 불일치 프레임 {skipped}개 제외");
             var frame = frames[^1];
             // 작은 이미지(퍼즐 영역 크롭·화살표 크롭)는 전체를 분석, 전체 창 캡처는 비율 영역 적용
             var region = frame.Width < 700 || frame.Height < 500
