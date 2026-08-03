@@ -275,15 +275,6 @@ public static class ApiEndpoints
         app.MapPost("/api/watcher", (WatcherBody? b) => Results.Json(
             watcher.Update(b?.Process, b?.TolerancePx, b?.MsPerPx,
                            b?.MaxCorrectionMs, b?.MinScore, b?.MiniTolerancePx, b?.MsPerMiniPx)));
-        // 게임 창 새 캡처(영역 지정 모달용). 창 없으면 409.
-        app.MapGet("/api/watcher/frame", () => Guard(() =>
-        {
-            var png = watcher.CaptureFrame();
-            return Task.FromResult(Results.File(png, "image/png"));
-        }));
-        app.MapPost("/api/watcher/minimap", (RegionBody? b) => Guard(() =>
-            Task.FromResult(b is null ? Results.BadRequest(new { error = "영역이 필요합니다." })
-                                      : Results.Json(watcher.SetMinimapRegion(b.X, b.Y, b.W, b.H)))));
         // 블록별 스팟: 조회/패치 썸네일/지정/테스트
         app.MapGet("/api/watcher/spots/{id}", (string id) => Guard(() =>
             Task.FromResult(Results.Json(watcher.GetSpot(id)))));
@@ -300,12 +291,11 @@ public static class ApiEndpoints
             Task.FromResult(Results.Json(watcher.CaptureSpot(id, b?.X, b?.Y)))));
         app.MapPost("/api/watcher/spots/{id}/test", (string id) => Guard(() =>
             Task.FromResult(Results.Json(watcher.TestSpot(id)))));
-        // 실시간 미리보기(확장 카드 폴링): JSON 측정값 → 같은 프레임의 미니맵/패치 크롭 PNG
+        // 실시간 미리보기(확장 카드 폴링): JSON 측정값 → 같은 프레임 전체 PNG
         app.MapGet("/api/watcher/live", () => Results.Json(watcher.Live()));
-        app.MapGet("/api/watcher/live/{what}", (string what) =>
+        app.MapGet("/api/watcher/live/frame", () =>
         {
-            if (what is not ("minimap" or "frame")) return Results.NotFound();
-            var png = watcher.LiveCrop(what);
+            var png = watcher.LiveFrame();
             return png is null ? Results.NotFound(new { error = "미리보기 프레임이 없습니다." }) : Results.File(png, "image/png");
         });
 

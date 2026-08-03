@@ -72,7 +72,6 @@ export const api = {
 
   getWatcher: () => request('GET', '/api/watcher'),
   setWatcher: (p) => request('POST', '/api/watcher', p),
-  watcherMinimap: (r) => request('POST', '/api/watcher/minimap', r),
   watcherSpot: (id) => request('GET', `/api/watcher/spots/${id}`),
   watcherSpotCapture: (id, anchor) => request('POST', `/api/watcher/spots/${id}/capture`, anchor || {}),
   watcherSpotTest: (id) => request('POST', `/api/watcher/spots/${id}/test`),

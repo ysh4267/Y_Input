@@ -25,7 +25,7 @@ const ICON = {
   del: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.3H13.4"/><path d="M6.4 4.3V3.2A1.1 1.1 0 0 1 7.5 2.1H8.5A1.1 1.1 0 0 1 9.6 3.2V4.3"/><path d="M3.9 4.3 4.6 13A1.3 1.3 0 0 0 5.9 14.2H10.1A1.3 1.3 0 0 0 11.4 13L12.1 4.3"/><path d="M6.6 6.9V11.3M9.4 6.9V11.3"/></svg>',
 };
 
-export function createEditor({ log, onSaved, getStatus, getMacros, openMinimapPicker }) {
+export function createEditor({ log, onSaved, getStatus, getMacros }) {
   let editing = null;
   let selected = new Set();   // 선택된 스텝의 _uid 집합
   let lastUid = null;         // Shift 범위 선택 기준
@@ -413,8 +413,6 @@ export function createEditor({ log, onSaved, getStatus, getMacros, openMinimapPi
     bConfirm.textContent = '이 위치로 확정';
     const bCancel = document.createElement('button'); bCancel.className = 'btn ghost sm'; bCancel.type = 'button';
     bCancel.textContent = '취소';
-    const bMini = document.createElement('button'); bMini.className = 'btn ghost sm'; bMini.type = 'button';
-    bMini.textContent = '미니맵 영역 지정'; bMini.hidden = true;
 
     // 게임 화면 전체 실시간 뷰 — 캐릭터를 '클릭'해 앵커를 찍는다.
     // 카메라 레이지 무브 때문에 캐릭터가 화면 중앙에 있다는 보장이 없어서 중앙 자동 가정을 쓰지 않는다.
@@ -423,7 +421,9 @@ export function createEditor({ log, onSaved, getStatus, getMacros, openMinimapPi
     const fimg = document.createElement('img'); fimg.className = 'spot-frame'; fimg.alt = '게임 화면 실시간'; fimg.draggable = false;
     const cross = document.createElement('span'); cross.className = 'spot-anchor'; cross.hidden = true;
     const box = document.createElement('span'); box.className = 'spot-anchor-box'; box.hidden = true;
-    frameWrap.append(fimg, cross, box);
+    const dotMark = document.createElement('span'); dotMark.className = 'spot-dot-marker'; dotMark.hidden = true;
+    dotMark.title = '감지된 미니맵 캐릭터 점';
+    frameWrap.append(fimg, cross, box, dotMark);
     panel.append(frameWrap);
     const stat = document.createElement('div'); stat.className = 'spot-stat muted';
     stat.textContent = '게임 화면에서 내 캐릭터를 클릭해 위치를 찍으세요…';
@@ -474,14 +474,18 @@ export function createEditor({ log, onSaved, getStatus, getMacros, openMinimapPi
         const live = await api.watcherLive();
         if (spotExpandedUid !== step._uid) return; // 폴링 중 접힘
         if (!live.ok) {
-          liveInfo = null; cross.hidden = true; box.hidden = true; bConfirm.disabled = true;
-          bMini.hidden = !live.needMinimap;
-          stat.textContent = live.error + (live.needMinimap ? ' — [미니맵 영역 지정]을 먼저 해주세요.' : '');
+          liveInfo = null; cross.hidden = true; box.hidden = true; dotMark.hidden = true; bConfirm.disabled = true;
+          stat.textContent = live.error;
           return;
         }
-        bMini.hidden = true;
         liveInfo = live;
         fimg.src = '/api/watcher/live/frame?ts=' + Date.now();
+        // 화면 전체 스캔으로 감지된 캐릭터 점(미니맵이 어디 있든) — 노란 마커로 표시
+        if (live.dotFound) {
+          dotMark.style.left = (live.dotX / live.frameW * 100) + '%';
+          dotMark.style.top = (live.dotY / live.frameH * 100) + '%';
+          dotMark.hidden = false;
+        } else dotMark.hidden = true;
         drawAnchor();
         updateStat();
       } catch (err) { stat.textContent = '미리보기 실패: ' + err.message; }
@@ -508,9 +512,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros, openMinimapPi
       }
     };
     bCancel.onclick = (e) => { e.stopPropagation(); spotExpandedUid = null; renderSteps(); };
-    bMini.onclick = (e) => { e.stopPropagation(); if (openMinimapPicker) openMinimapPicker(); };
-
-    td.append(bConfirm, bCancel, bMini, panel, stat);
+    td.append(bConfirm, bCancel, panel, stat);
   }
 
   // 유니버설 입력 캡처(키보드=keydown, 마우스=mousedown, 패드=서버 listen→inputDetected)

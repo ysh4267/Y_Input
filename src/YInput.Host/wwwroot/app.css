@@ -534,6 +534,7 @@ input[type=range] { accent-color: var(--accent); }
 .spot-anchor::before { left: 50%; top: 0; bottom: 0; width: 2px; transform: translateX(-50%); }
 .spot-anchor::after { top: 50%; left: 0; right: 0; height: 2px; transform: translateY(-50%); }
 .spot-anchor-box { position: absolute; transform: translate(-50%, -50%); border: 1.5px solid var(--accent); border-radius: 4px; background: rgba(79,140,255,.10); box-shadow: 0 0 8px rgba(79,140,255,.4); pointer-events: none; }
+.spot-dot-marker { position: absolute; width: 10px; height: 10px; border-radius: 50%; border: 2px solid #ffd83b; transform: translate(-50%, -50%); box-shadow: 0 0 7px #ffd83b; pointer-events: none; }
 .spot-stat { flex-basis: 100%; margin-top: 6px; font-size: 12px; }
 .wt-nums { gap: 10px; margin-top: 8px; }
 .wt-nums label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
