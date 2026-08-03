@@ -79,8 +79,10 @@ internal static class Program
         SynchronizationContext.SetSynchronizationContext(uiSync);
         var widgets = new WidgetManager(uiSync, url, dataRoot, service);
         var overlay = new OverlayController(uiSync, dataRoot, hub, service, progress); // 인게임 오버레이(GDI+ 레이어드)
+        var watcher = new PositionWatcher(dataRoot, hub, backend); // 위치 지킴이(반복 사이클 사이 자리 보정)
+        service.CycleHook = watcher.CorrectAsync;
 
-        var app = BuildWebApp(service, hub, sync, widgets, overlay, url);
+        var app = BuildWebApp(service, hub, sync, widgets, overlay, watcher, url);
         app.StartAsync().GetAwaiter().GetResult();
 
         sync.Start(); // 시작 시 원격에서 내려받기(설정돼 있으면) + 주기 동기화 타이머
@@ -100,6 +102,7 @@ internal static class Program
 
         try { widgets.CloseAll(); } catch { /* ignore */ } // 위젯 창 정리
         try { overlay.Close(); } catch { /* ignore */ }   // 오버레이 창 정리
+        try { watcher.Dispose(); } catch { /* ignore */ } // 위치 지킴이 정리
 
         // 기본 브라우저로 열린 페이지에 종료 신호 → 페이지가 스스로 닫힘 처리.
         // 단, 업데이트 재시작 중이면 방송하지 않는다(열린 탭이 재연결을 포기하지 않고 새 인스턴스로 붙게).
@@ -155,7 +158,7 @@ internal static class Program
         catch { /* 잠김 등 — 무시(다음 실행/업데이트에서 정리) */ }
     }
 
-    private static WebApplication BuildWebApp(MacroService service, SocketHub hub, GitHubSync sync, WidgetManager widgets, OverlayController overlay, string url)
+    private static WebApplication BuildWebApp(MacroService service, SocketHub hub, GitHubSync sync, WidgetManager widgets, OverlayController overlay, PositionWatcher watcher, string url)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
@@ -180,7 +183,7 @@ internal static class Program
             OnPrepareResponse = ctx => ctx.Context.Response.Headers["Cache-Control"] = "no-cache, must-revalidate",
         });
 
-        app.MapApi(service, hub, sync, widgets, overlay);
+        app.MapApi(service, hub, sync, widgets, overlay, watcher);
         return app;
     }
 
