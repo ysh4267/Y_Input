@@ -427,7 +427,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
     // 자동 감지된 미니맵 확대 미리보기(감지 점 중심 크롭 — 서버가 마커까지 그려서 내려줌)
     const miniCol = document.createElement('span'); miniCol.className = 'spot-mini-col'; miniCol.hidden = true;
     const miniImg = document.createElement('img'); miniImg.className = 'spot-mini-view'; miniImg.alt = '감지된 미니맵'; miniImg.draggable = false;
-    const miniLabel = document.createElement('span'); miniLabel.className = 'muted'; miniLabel.textContent = '감지된 미니맵 (확대)';
+    const miniLabel = document.createElement('span'); miniLabel.className = 'muted'; miniLabel.textContent = '감지된 미니맵 창 — 초록=창 경계 · 파랑=맵 영역 · 노랑=내 캐릭터';
     miniCol.append(miniImg, miniLabel);
     panel.append(frameWrap, miniCol);
     const stat = document.createElement('div'); stat.className = 'spot-stat muted';

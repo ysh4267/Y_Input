@@ -84,15 +84,19 @@ internal static class TemplateMatcher
     {
         if (tmpl.Width > frame.Width || tmpl.Height > frame.Height) return new MatchResult(0, 0, 0);
 
-        // 코스: 1/2 해상도 전역 탐색
-        var f2 = Downscale2(frame);
-        var t2 = Downscale2(tmpl);
-        var s2 = new Rectangle(search.X / 2, search.Y / 2, Math.Max(1, search.Width / 2), Math.Max(1, search.Height / 2));
-        var coarse = MatchExhaustive(f2, t2, s2);
+        // 코스: 축소 해상도 전역 탐색 — 큰 템플릿(확대된 캐릭터 주변 범위)은 1/4로 더 줄여
+        // 연산량을 억제한다(사이클당 수백 ms 이내 유지).
+        int factor = tmpl.Width * tmpl.Height > 40_000 ? 4 : 2;
+        var fs = frame; var ts = tmpl;
+        for (int f = 1; f < factor; f *= 2) { fs = Downscale2(fs); ts = Downscale2(ts); }
+        var sScaled = new Rectangle(search.X / factor, search.Y / factor,
+                                    Math.Max(1, search.Width / factor), Math.Max(1, search.Height / factor));
+        var coarse = MatchExhaustive(fs, ts, sScaled);
 
-        // 파인: 코스 최적점 ×2 주변 ±3px
-        int cx = coarse.X * 2, cy = coarse.Y * 2;
-        var fine = new Rectangle(cx - 3, cy - 3, 7, 7);
+        // 파인: 코스 최적점 ×factor 주변 ±(factor+2)px
+        int cx = coarse.X * factor, cy = coarse.Y * factor;
+        int pad = factor + 2;
+        var fine = new Rectangle(cx - pad, cy - pad, pad * 2 + 1, pad * 2 + 1);
         fine.Intersect(search);
         if (fine.Width <= 0 || fine.Height <= 0) fine = new Rectangle(cx, cy, 1, 1);
         return MatchExhaustive(frame, tmpl, fine);

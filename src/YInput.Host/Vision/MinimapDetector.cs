@@ -263,10 +263,10 @@ internal static class MinimapDetector
     /// 노란 글자 많은 채팅창 배제). 흰 테두리를 찾으면 그 안쪽만 점 탐색(제목줄 아이콘 배제).
     /// 챠시를 못 찾으면 화면 전체 점 스캔으로 폴백. dot은 창(프레임) 상대 좌표.
     /// </summary>
-    public static bool TryDetect(Bitmap frame, out Rectangle panel, out PointF dot, out int candidateCount,
+    public static bool TryDetect(Bitmap frame, out Rectangle panel, out Rectangle mapArea, out PointF dot, out int candidateCount,
                                  int minR = 200, int minG = 180, int maxB = 120, int panelMaxLum = 70, PointF? near = null)
     {
-        panel = Rectangle.Empty; dot = PointF.Empty; candidateCount = 0;
+        panel = Rectangle.Empty; mapArea = Rectangle.Empty; dot = PointF.Empty; candidateCount = 0;
 
         var found = new List<(Rectangle Chassis, Rectangle Search, bool Ring, List<DotCandidate> Dots)>();
         foreach (var p in FindDarkPanels(frame, panelMaxLum))
@@ -284,6 +284,7 @@ internal static class MinimapDetector
             // FindDots 좌표는 탐색 영역 상대 → 프레임 상대로 변환
             var frameDots = pick.Dots.Select(c => c with { Center = new PointF(c.Center.X + pick.Search.X, c.Center.Y + pick.Search.Y) }).ToList();
             panel = pick.Chassis;
+            mapArea = pick.Ring ? pick.Search : Rectangle.Empty;
             candidateCount = frameDots.Count;
             dot = Pick(frameDots, near).Center;
             return true;

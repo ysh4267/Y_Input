@@ -38,8 +38,8 @@ public sealed class WatcherSettings
     /// <summary>매칭/서있음 일치 임계 — 캐릭터 애니메이션·방향 변화 때문에 100%는 안 나온다.</summary>
     public double MinScore { get; set; } = 0.55;
     public double MsPerPx { get; set; } = 12;
-    public int PatchW { get; set; } = 180;
-    public int PatchH { get; set; } = 140;
+    public int PatchW { get; set; } = 450;
+    public int PatchH { get; set; } = 340;
 
     public int MaxHoldMs { get; set; } = 350;
     /// <summary>탭 후 재측정까지 대기(ms) — 키를 뗀 뒤 캐릭터가 미끄러져 멈출 시간을 포함해야 정확히 잰다.</summary>
@@ -137,7 +137,8 @@ public sealed class PositionWatcher : IDisposable
     // ---------- 실시간 미리보기(블록 확장 카드) ----------
     private Bitmap? _liveFrame;  // 마지막 Live() 캡처 — live/frame·live/mini가 같은 프레임을 사용
     private PointF? _liveDot;    // 마지막 Live()에서 감지된 캐릭터 점(창 상대) — 미니맵 확대 미리보기 중심
-    private Rectangle _liveMiniRect; // 마지막 Live()에서 감지된 미니맵 창(검은 프레임) rect — Empty면 폴백 스캔
+    private Rectangle _liveMiniRect; // 마지막 Live()에서 감지된 미니맵 창(검은 챠시) rect — Empty면 폴백 스캔
+    private Rectangle _liveMapArea;  // 마지막 Live()에서 감지된 흰 테두리 안 맵 영역 rect — Empty면 미탐지
 
     /// <summary>현재 게임 화면을 캡처해 미니맵 점·자동 패치 rect를 계산한다(키 입력 없음).
     /// 이어지는 <see cref="LiveCrop"/>이 이 프레임에서 미리보기 이미지를 잘라낸다.</summary>
@@ -154,10 +155,11 @@ public sealed class PositionWatcher : IDisposable
             _liveFrame = frame;
 
             // 미니맵 창(어두운 프레임)을 먼저 찾고 그 안에서 캐릭터 점을 찾는다(월드 노란 물체 배제).
-            bool dotFound = MinimapDetector.TryDetect(_liveFrame, out var panel, out var dot, out int candCount,
+            bool dotFound = MinimapDetector.TryDetect(_liveFrame, out var panel, out var mapArea, out var dot, out int candCount,
                                                       s.DotMinR, s.DotMinG, s.DotMaxB, s.PanelMaxLum);
             _liveDot = dotFound ? dot : null;
             _liveMiniRect = panel;
+            _liveMapArea = mapArea;
             return new
             {
                 ok = true,
@@ -177,24 +179,39 @@ public sealed class PositionWatcher : IDisposable
         lock (_gate) return _liveFrame is null ? null : ScreenCapture.ToPng(_liveFrame);
     }
 
-    /// <summary>자동 감지된 미니맵 확대 미리보기 — 감지된 미니맵 창 전체(없으면 점 주변)를 잘라
-    /// 캐릭터 점 마커(노란 링)를 그려서 반환. 점 미탐지/프레임 없음이면 null.</summary>
+    /// <summary>자동 감지된 미니맵 미리보기 — 감지된 미니맵 '창 전체'(여백 포함)를 잘라
+    /// 인식 결과를 눈으로 검증할 수 있게 그려서 반환: 초록=인식된 창 경계, 파랑=흰 테두리 안
+    /// 맵 영역(점 탐색 범위), 노란 링=내 캐릭터 점. 점 미탐지/프레임 없음이면 null.</summary>
     public byte[]? LiveMini()
     {
         lock (_gate)
         {
             if (_liveFrame is null || _liveDot is not { } dot) return null;
             var r = !_liveMiniRect.IsEmpty
-                ? ClampRect(new Rectangle(_liveMiniRect.X - 4, _liveMiniRect.Y - 4,
-                                          _liveMiniRect.Width + 8, _liveMiniRect.Height + 8),
+                ? ClampRect(new Rectangle(_liveMiniRect.X - 8, _liveMiniRect.Y - 8,
+                                          _liveMiniRect.Width + 16, _liveMiniRect.Height + 16),
                             _liveFrame.Width, _liveFrame.Height)
                 : ClampRect(new Rectangle((int)dot.X - 90, (int)dot.Y - 65, 180, 130),
                             _liveFrame.Width, _liveFrame.Height);
             if (r.Width <= 0 || r.Height <= 0) return null;
             using var crop = _liveFrame.Clone(r, _liveFrame.PixelFormat);
             using (var g = Graphics.FromImage(crop))
-            using (var pen = new Pen(Color.FromArgb(255, 216, 59), 2f))
-                g.DrawEllipse(pen, dot.X - r.X - 5, dot.Y - r.Y - 5, 10, 10);
+            {
+                if (!_liveMiniRect.IsEmpty)
+                {
+                    using var penPanel = new Pen(Color.FromArgb(52, 211, 153), 1.6f); // 초록 = 인식된 창 경계
+                    g.DrawRectangle(penPanel, _liveMiniRect.X - r.X, _liveMiniRect.Y - r.Y,
+                                    _liveMiniRect.Width - 1, _liveMiniRect.Height - 1);
+                }
+                if (!_liveMapArea.IsEmpty)
+                {
+                    using var penMap = new Pen(Color.FromArgb(79, 140, 255), 1.6f); // 파랑 = 맵 영역(점 탐색 범위)
+                    g.DrawRectangle(penMap, _liveMapArea.X - r.X, _liveMapArea.Y - r.Y,
+                                    _liveMapArea.Width - 1, _liveMapArea.Height - 1);
+                }
+                using var penDot = new Pen(Color.FromArgb(255, 216, 59), 2f); // 노랑 = 내 캐릭터 점
+                g.DrawEllipse(penDot, dot.X - r.X - 6, dot.Y - r.Y - 6, 12, 12);
+            }
             return ScreenCapture.ToPng(crop);
         }
     }
@@ -211,7 +228,7 @@ public sealed class PositionWatcher : IDisposable
             using var frame = CaptureGameFrame(s.Process, out _)
                 ?? throw new InvalidOperationException($"'{s.Process}' 창을 찾을 수 없습니다. 게임이 실행 중인지 확인하세요.");
             // 미니맵 창(어두운 프레임) 우선 탐지 — Live 미리보기와 같은 선택 기준이라 마커와 일치.
-            if (!MinimapDetector.TryDetect(frame, out _, out var dot, out _,
+            if (!MinimapDetector.TryDetect(frame, out _, out _, out var dot, out _,
                                            s.DotMinR, s.DotMinG, s.DotMaxB, s.PanelMaxLum))
                 throw new ArgumentException("화면에서 미니맵 플레이어 점(노란 점)을 찾지 못했습니다. 미니맵이 펼쳐져 있는지 확인하세요.");
 
@@ -438,7 +455,7 @@ public sealed class PositionWatcher : IDisposable
     {
         using var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return null;
-        return MinimapDetector.TryDetect(frame, out _, out var dot, out _,
+        return MinimapDetector.TryDetect(frame, out _, out _, out var dot, out _,
                                          s.DotMinR, s.DotMinG, s.DotMaxB, s.PanelMaxLum, near) ? dot : null;
     }
 
@@ -516,8 +533,8 @@ public sealed class PositionWatcher : IDisposable
         if (s.TolerancePx == 4) s.TolerancePx = 2;
         if (s.SettleMs == 150) s.SettleMs = 220;
         // 패치를 '캐릭터 포함 창 중앙'으로 통합하면서 크기/임계 기본값 변경
-        if (s.PatchW == 120) s.PatchW = 180;
-        if (s.PatchH == 64) s.PatchH = 140;
+        if (s.PatchW is 120 or 180) s.PatchW = 450; // 캐릭터 주변 범위 약 2.5배 확대
+        if (s.PatchH is 64 or 140) s.PatchH = 340;
         if (s.MinScore == 0.60) s.MinScore = 0.55;
         return s;
     }
