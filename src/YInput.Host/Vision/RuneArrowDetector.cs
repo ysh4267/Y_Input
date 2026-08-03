@@ -6,6 +6,9 @@ namespace YInput.Host.Vision;
 /// <summary>퍼즐 화살표 하나 — 화면 좌표(중심)와 방향('L','R','U','D').</summary>
 internal readonly record struct RuneArrow(PointF Center, char Dir);
 
+/// <summary>한 프레임에서 분석한 화살표 하나 — 방향 + 모양 시그니처(회전 정지 판별용).</summary>
+internal readonly record struct ArrowSample(PointF Center, char Dir, bool[] Sig);
+
 /// <summary>
 /// 룬 발동(스페이스) 후 화면 상단 배너 아래에 뜨는 방향키 퍼즐(화살표 4개)을 인식한다.
 /// 화살표는 채도 높은 작은 글리프(~20~30px)인데 <b>색은 룬마다 다르고</b> 하이라이트가
@@ -160,7 +163,40 @@ internal static class RuneArrowDetector
         return region.Width >= 100 && region.Height >= 60;
     }
 
+    /// <summary>한 프레임 분석(채도 단독 경로) — 화살표 4개의 방향 + 모양 시그니처.
+    /// 회전형 퍼즐(돌다가 정답 방향에서 잠깐 멈춤)은 호출자가 프레임을 연속 샘플링해
+    /// 시그니처·방향이 유지되는 구간(정지)에서 확정한다.</summary>
+    public static List<ArrowSample>? AnalyzeFrame(Bitmap frame, Bitmap? bannerRef, bool precropped = false)
+    {
+        if (!TryRegion(frame, precropped, out var region)) return null;
+        int w = region.Width, h = region.Height;
+        var mask = VividMask(frame, region, w, h);
+        var row = DetectRow(frame, bannerRef, mask, region, w, h, thinFilter: true, FullFrameH(frame, precropped));
+        if (row is null) return null;
+        var result = new List<ArrowSample>(4);
+        foreach (var b in row)
+        {
+            var (dir, _, _, _, _) = ClassifyScores(b, w);
+            result.Add(new ArrowSample(new PointF((float)(region.X + b.Cx), (float)(region.Y + b.Cy)), dir, Signature(b, w)));
+        }
+        return result;
+    }
+
     private static List<RuneArrow>? Detect(Bitmap frame, Bitmap? bannerRef, bool[] mask, Rectangle region, int w, int h, bool thinFilter, int fullFrameH)
+    {
+        var row = DetectRow(frame, bannerRef, mask, region, w, h, thinFilter, fullFrameH);
+        if (row is null) return null;
+        var result = new List<RuneArrow>(4);
+        foreach (var b in row)
+        {
+            var (dir, _, _, _, _) = ClassifyScores(b, w);
+            result.Add(new RuneArrow(new PointF((float)(region.X + b.Cx), (float)(region.Y + b.Cy)), dir));
+        }
+        return result;
+    }
+
+    /// <summary>마스크에서 '화살표 줄' 블롭 4개 선택(왼쪽부터). 실패 시 null.</summary>
+    private static List<Blob>? DetectRow(Bitmap frame, Bitmap? bannerRef, bool[] mask, Rectangle region, int w, int h, bool thinFilter, int fullFrameH)
     {
         if (thinFilter) ThinFilter(mask, w, h);
         var (bandY0, bandY1, bannerCx) = BannerBand(frame, bannerRef, region, w, h, fullFrameH);
@@ -169,16 +205,34 @@ internal static class RuneArrowDetector
             b.Area is >= MinArrowArea and <= MaxArrowArea &&
             b.W is >= MinArrowBox and <= MaxArrowBox && b.H is >= MinArrowBox and <= MaxArrowBox &&
             b.Cy >= bandY0 && b.Cy <= bandY1).ToList();
-        var row = PickRow(cands, bannerCx, frame.Width);
-        if (row is null) return null;
+        return PickRow(cands, bannerCx, frame.Width);
+    }
 
-        var result = new List<RuneArrow>(4);
-        foreach (var b in row)
+    // ---------- 모양 시그니처(회전 정지 판별) ----------
+    private const int SigN = 12; // 바운딩박스를 12×12 셀로 정규화
+
+    /// <summary>블롭 모양을 바운딩박스 정규화 12×12 그리드로 요약 — 회전 중이면 프레임마다 달라지고,
+    /// 멈춰 있으면(정답 표시 구간) 연속 프레임에서 같게 유지된다.</summary>
+    private static bool[] Signature(Blob b, int w)
+    {
+        var sig = new bool[SigN * SigN];
+        int bw = b.MaxX - b.MinX + 1, bh = b.MaxY - b.MinY + 1;
+        foreach (var p in b.Pixels)
         {
-            var (dir, _, _, _, _) = ClassifyScores(b, w);
-            result.Add(new RuneArrow(new PointF((float)(region.X + b.Cx), (float)(region.Y + b.Cy)), dir));
+            int cx = (p % w - b.MinX) * SigN / bw;
+            int cy = (p / w - b.MinY) * SigN / bh;
+            sig[cy * SigN + cx] = true;
         }
-        return result;
+        return sig;
+    }
+
+    /// <summary>두 시그니처가 '같은 모양'인가 — 일치 셀 비율 기준.</summary>
+    public static bool SigSimilar(bool[] a, bool[] b, double minMatch = 0.90)
+    {
+        if (a.Length != b.Length) return false;
+        int same = 0;
+        for (int i = 0; i < a.Length; i++) if (a[i] == b[i]) same++;
+        return (double)same / a.Length >= minMatch;
     }
 
     /// <summary>후보들 중 '화살표 줄' 4개 선택 — 같은 높이(±RowBandPx), 이웃 간격 35~280px,

@@ -663,9 +663,7 @@ public sealed class PositionWatcher : IDisposable
                     }
                     await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
                     await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
-                    var winSw = Stopwatch.StartNew();
-                    while (arrows is null && winSw.ElapsedMilliseconds < 1500)
-                        arrows = await DetectArrowsAsync(screenCrop, beforeCrop, ct).ConfigureAwait(false);
+                    arrows = await SolvePuzzleAsync(screenCrop, beforeCrop, ct).ConfigureAwait(false);
                 }
                 if (arrows is null)
                 {
@@ -721,45 +719,84 @@ public sealed class PositionWatcher : IDisposable
 
     private readonly List<Bitmap> _runeShots = new(); // 마지막 판정 버스트 프레임 — 진단 저장은 판정 뒤로 미룬다
 
-    /// <summary>화면에서 룬 퍼즐 화살표 4개 탐지. 주 경로: ~0.3초간 4프레임을 찍어 연속 차분의
-    /// 합집합으로 '하이라이트가 쓸고 지나가는' 화살표 전체를 채운다(바·배경·배너는 정지라 배제).
-    /// 애니메이션이 없으면 발동 전 프레임 차분으로 폴백.
-    /// screenCrop = 퍼즐 영역의 화면 절대 좌표 — 전체 창 PrintWindow(~120ms/장) 대신 영역만
-    /// 화면 복사(~15ms/장)해 취소 타이머(3초) 안에 끝낸다. beforeCrop = 발동 직전 프레임의 같은 영역.
-    /// 디스크 저장 등 느린 작업은 하지 않는다 — 프레임은 _runeShots에 보관했다가
-    /// 판정·입력이 끝난 뒤 <see cref="SaveRuneShots"/>로 저장.</summary>
-    private async Task<List<RuneArrow>?> DetectArrowsAsync(Rectangle screenCrop, Bitmap? beforeCrop, CancellationToken ct)
+    // 퍼즐 확정 파라미터 — 회전형(돌다가 정답 방향에서 잠깐 멈춤)과 정지형을 같은 규칙으로 처리:
+    // 화살표마다 '모양 시그니처+방향'이 연속 유지되는 구간(=멈춤)에서만 확정한다.
+    private const int PuzzleBudgetMs = 2300;  // 취소 타이머(~3초) 전에 입력을 시작해야 한다
+    private const int PuzzleSampleGapMs = 70; // 프레임 간격(캡처+분석 ~30-50ms 포함 실효 ~100-120ms)
+    private const int LockRun = 3;            // 확정 최소 연속 프레임
+    private const int LockSpanMs = 250;       // 확정 최소 지속시간 — 회전 사분면 체류 오확정 방지
+
+    /// <summary>퍼즐 화살표 4개 확정 — 매 프레임 채도 단독 인식(검증된 분리·분류)을 돌리며
+    /// 화살표별로 모양·방향이 <see cref="LockSpanMs"/> 이상 유지되는 순간(멈춤) 확정한다.
+    /// 정지형은 ~0.4초에 4개 모두, 회전형은 멈추는 구간을 기다린다. 예산 소진 시
+    /// 미확정 화살표는 다수결(멈춤 표본이 가장 많다) — 단 하나도 못 정하면 null.</summary>
+    private async Task<List<RuneArrow>?> SolvePuzzleAsync(Rectangle screenCrop, Bitmap? beforeCrop, CancellationToken ct)
     {
-        var frames = new List<Bitmap>(4);
-        for (int i = 0; i < 4; i++)
+        var sw = Stopwatch.StartNew();
+        var locked = new char?[4];
+        var centers = new PointF[4];
+        var runDir = new char[4]; var runLen = new int[4]; var runStart = new long[4]; var runSig = new bool[4][];
+        var votes = new Dictionary<char, int>[4];
+        for (int j = 0; j < 4; j++) votes[j] = new Dictionary<char, int>();
+        bool rowSeen = false, spinNoted = false;
+        int lockedCount = 0;
+
+        while (sw.ElapsedMilliseconds < PuzzleBudgetMs && lockedCount < 4)
         {
-            if (i > 0) await PreciseDelay.WaitAsync(90, ct).ConfigureAwait(false);
-            try { frames.Add(ScreenCapture.Capture(screenCrop)); } catch { /* 일시적 캡처 실패 무시 */ }
+            ct.ThrowIfCancellationRequested();
+            Bitmap? f = null;
+            try { f = ScreenCapture.Capture(screenCrop); } catch { /* 일시적 캡처 실패 */ }
+            if (f is not null)
+            {
+                List<ArrowSample>? row;
+                try
+                {
+                    row = RuneArrowDetector.AnalyzeFrame(f, beforeCrop, precropped: true);
+                }
+                finally
+                {
+                    if (_runeShots.Count < 4) _runeShots.Add(f); // 진단 보관(첫 4프레임)
+                    else f.Dispose();
+                }
+                if (row is not null)
+                {
+                    rowSeen = true;
+                    long now = sw.ElapsedMilliseconds;
+                    for (int j = 0; j < 4; j++)
+                    {
+                        centers[j] = row[j].Center;
+                        if (locked[j] is not null) continue;
+                        votes[j][row[j].Dir] = votes[j].GetValueOrDefault(row[j].Dir) + 1;
+                        // 멈춤 판정: '런 시작' 모양·방향이 계속 같아야 함 — 회전 중엔 모양이 프레임마다 달라 깨진다
+                        if (runSig[j] is not null && runDir[j] == row[j].Dir
+                            && RuneArrowDetector.SigSimilar(runSig[j], row[j].Sig))
+                        {
+                            runLen[j]++;
+                            if (runLen[j] >= LockRun && now - runStart[j] >= LockSpanMs) { locked[j] = runDir[j]; lockedCount++; }
+                        }
+                        else { runSig[j] = row[j].Sig; runDir[j] = row[j].Dir; runLen[j] = 1; runStart[j] = now; }
+                    }
+                    if (!spinNoted && sw.ElapsedMilliseconds > 800 && lockedCount < 4)
+                    { spinNoted = true; Note("화살표 회전 감지 — 멈춤 구간을 기다립니다"); }
+                }
+            }
+            if (lockedCount < 4) await PreciseDelay.WaitAsync(PuzzleSampleGapMs, ct).ConfigureAwait(false);
         }
-        List<RuneArrow>? res = null;
-        if (frames.Count >= 2)
+        if (!rowSeen) { Note("퍼즐 인식 실패 — 화살표 줄을 찾지 못함"); return null; }
+
+        var result = new List<RuneArrow>(4);
+        int voted = 0;
+        for (int j = 0; j < 4; j++)
         {
-            res = RuneArrowDetector.FindArrowsAnimated(frames, beforeCrop, precropped: true);
-            if (res is not null) Note("인식 경로 ①: 애니메이션 차분");
+            char d;
+            if (locked[j] is { } ld) d = ld;
+            else if (votes[j].Count > 0) { d = votes[j].MaxBy(kv => kv.Value).Key; voted++; }
+            else { Note("퍼즐 인식 실패 — 확정하지 못한 화살표 있음"); return null; }
+            result.Add(new RuneArrow(centers[j], d));
         }
-        if (res is null && frames.Count > 0)
-        {
-            res = RuneArrowDetector.FindArrows(frames[^1], beforeCrop, beforeCrop, precropped: true);
-            if (res is not null) Note("인식 경로 ②: 발동 전 차분");
-        }
-        if (res is null && frames.Count > 0)
-        {
-            // 차분 없이 채도 마스크만 — 발동 전 캡처(PrintWindow)와 판정 캡처(화면 복사)의 미세한
-            // 픽셀 차이로 차분이 오염되면 위 두 경로가 실패한다(23:33 실행). 배너 밴드·간격·크기·
-            // 정렬 검사가 오탐 줄을 막으므로 채도 단독으로도 두 맵 실측 프레임에서 정답을 냈다.
-            res = RuneArrowDetector.FindArrows(frames[^1], null, beforeCrop, precropped: true);
-            if (res is not null) Note("인식 경로 ③: 채도 단독");
-        }
-        if (res is null) Note($"버스트 인식 실패 — 3경로 모두 미인식 ({frames.Count}프레임)");
-        // 진단 보관은 '첫 버스트'(퍼즐이 확실히 열려 있던 순간) — 이후 버스트가 덮어쓰지 않는다
-        if (_runeShots.Count == 0) _runeShots.AddRange(frames);
-        else foreach (var f in frames) f.Dispose();
-        return res;
+        Note(voted == 0 ? $"퍼즐 확정 — 멈춤 4/4{(spinNoted ? " (회전)" : "")}"
+                        : $"퍼즐 확정 — 멈춤 {lockedCount}/4 + 다수결 {voted} (회전)");
+        return result;
     }
 
     /// <summary>마지막 판정 버스트를 logs\rune-frame-N.png·rune-puzzle.png로 저장(오답·실패 재현용,
