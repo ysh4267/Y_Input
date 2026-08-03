@@ -427,8 +427,10 @@ internal static class RuneArrowDetector
         catch { /* 진단 저장 실패 무시 */ }
     }
 
-    /// <summary>가장자리 프로파일 분류 — 화살표가 가리키는 쪽은 그 가장자리의 '가운데 1/3'이
-    /// 바깥 1/3들보다 볼록하다(셰브론·삼각형·축 있는 화살표 모두 해당). 점수 최대 방향 선택.</summary>
+    /// <summary>모양 분류 — '양끝 폭 비교': 화살표 머리 끝은 뾰족해서 수직 폭이 좁고,
+    /// 꼬리 끝은 축(shaft)·베이스라 넓다. 비대칭이 큰 축이 화살표 축이고 폭이 좁은 끝이 방향.
+    /// (이전의 '가운데 볼록' 지표는 축 달린 화살표에서 꼬리 축이 가운데 행만 길게 튀어나와
+    /// 4방향 모두 정반대로 뒤집혔다 — 22:44 오답 프레임으로 확인.)</summary>
     private static (char Dir, double Up, double Down, double Left, double Right) ClassifyScores(Blob b, int w)
     {
         int bw = b.MaxX - b.MinX + 1, bh = b.MaxY - b.MinY + 1;
@@ -445,30 +447,28 @@ internal static class RuneArrowDetector
             if (px > maxX[py]) maxX[py] = px;
         }
 
-        // 가운데 1/3 vs 바깥 1/3 평균(빈 열/행은 제외)
-        double AvgRange(int[] arr, int from, int to, bool isMin)
+        const int EndSlice = 3; // 끝 폭은 바깥쪽 이 개수 열/행의 평균으로(노이즈 완화)
+        double SpanAvg(int[] lo, int[] hi, int from, int to)
         {
             double sum = 0; int n = 0;
-            for (int i = Math.Max(0, from); i < Math.Min(arr.Length, to); i++)
+            for (int i = Math.Max(0, from); i < Math.Min(lo.Length, to); i++)
             {
-                if (arr[i] == int.MaxValue || arr[i] == int.MinValue) continue;
-                sum += arr[i]; n++;
+                if (lo[i] == int.MaxValue) continue; // 빈 열/행
+                sum += hi[i] - lo[i] + 1; n++;
             }
-            return n == 0 ? (isMin ? double.MaxValue : double.MinValue) : sum / n;
+            return n == 0 ? 0 : sum / n;
         }
-        int cw = Math.Max(1, bw / 3), ch = Math.Max(1, bh / 3);
-        double upScore = (Math.Min(AvgRange(minY, 0, cw, true), AvgRange(minY, bw - cw, bw, true))
-                          - AvgRange(minY, (bw - cw) / 2, (bw + cw) / 2, true)) / bh;
-        double downScore = (AvgRange(maxY, (bw - cw) / 2, (bw + cw) / 2, false)
-                          - Math.Max(AvgRange(maxY, 0, cw, false), AvgRange(maxY, bw - cw, bw, false))) / bh;
-        double leftScore = (Math.Min(AvgRange(minX, 0, ch, true), AvgRange(minX, bh - ch, bh, true))
-                          - AvgRange(minX, (bh - ch) / 2, (bh + ch) / 2, true)) / bw;
-        double rightScore = (AvgRange(maxX, (bh - ch) / 2, (bh + ch) / 2, false)
-                          - Math.Max(AvgRange(maxX, 0, ch, false), AvgRange(maxX, bh - ch, bh, false))) / bw;
+        double leftEnd = SpanAvg(minY, maxY, 0, EndSlice);
+        double rightEnd = SpanAvg(minY, maxY, bw - EndSlice, bw);
+        double topEnd = SpanAvg(minX, maxX, 0, EndSlice);
+        double bottomEnd = SpanAvg(minX, maxX, bh - EndSlice, bh);
 
-        double m = Math.Max(Math.Max(upScore, downScore), Math.Max(leftScore, rightScore));
-        char dir = m == upScore ? 'U' : m == downScore ? 'D' : m == leftScore ? 'L' : 'R';
-        return (dir, upScore, downScore, leftScore, rightScore);
+        double lScore = (rightEnd - leftEnd) / bh; // 양수 = 왼쪽 끝이 좁다 → 왼쪽이 머리
+        double uScore = (bottomEnd - topEnd) / bw; // 양수 = 위쪽 끝이 좁다 → 위쪽이 머리
+        char dir = Math.Abs(lScore) >= Math.Abs(uScore)
+            ? (lScore >= 0 ? 'L' : 'R')
+            : (uScore >= 0 ? 'U' : 'D');
+        return (dir, uScore, -uScore, lScore, -lScore);
     }
 
     private sealed record Blob(double Cx, double Cy, int Area, int MinX, int MinY, int MaxX, int MaxY, List<int> Pixels)
