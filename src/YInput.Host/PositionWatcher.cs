@@ -664,19 +664,33 @@ public sealed class PositionWatcher : IDisposable
         return MinimapDetector.FindRuneIcon(frame, mini);
     }
 
-    /// <summary>화면에서 룬 퍼즐 화살표 4개 탐지 — ~150ms 간격 두 프레임의 시간차 차분으로
-    /// '그라데이션이 흐르는' 화살표만 남긴다(바·배경·배너·반투명 바 너머 장식은 정지라 배제).
-    /// beforeSpace = 발동 직전 프레임(안내 배너 위치로 탐색 밴드 제한).
-    /// saveShot이면 판정 프레임을 logs\rune-puzzle.png로 남긴다(오답·실패 확인용, 덮어씀).</summary>
+    /// <summary>화면에서 룬 퍼즐 화살표 4개 탐지. 주 경로: ~0.6초간 5프레임을 찍어 연속 차분의
+    /// 합집합으로 '하이라이트가 쓸고 지나가는' 화살표 전체를 채운다(바·배경·배너는 정지라 배제).
+    /// 애니메이션이 없으면 발동 직전 프레임 차분으로 폴백. beforeSpace = 발동 직전 프레임
+    /// (배너 위치로 탐색 밴드 제한 겸용). saveShot이면 판정 프레임을 logs\rune-puzzle.png로 남긴다.</summary>
     private async Task<List<RuneArrow>?> DetectArrowsAsync(WatcherSettings s, Bitmap? beforeSpace, bool saveShot, CancellationToken ct)
     {
-        using var refFrame = CaptureGameFrame(s.Process, out _);
-        if (refFrame is null) return null;
-        await PreciseDelay.WaitAsync(150, ct).ConfigureAwait(false);
-        using var frame = CaptureGameFrame(s.Process, out _);
-        if (frame is null) return null;
-        if (saveShot) FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(frame));
-        return RuneArrowDetector.FindArrows(frame, refFrame, beforeSpace);
+        var frames = new List<Bitmap>(5);
+        try
+        {
+            for (int i = 0; i < 5; i++)
+            {
+                if (i > 0) await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
+                var f = CaptureGameFrame(s.Process, out _);
+                if (f is not null) frames.Add(f);
+            }
+            if (frames.Count == 0) return null;
+            if (saveShot) FileLog.SavePng("rune-puzzle", ScreenCapture.ToPng(frames[^1]));
+            var res = frames.Count >= 2 ? RuneArrowDetector.FindArrowsAnimated(frames, beforeSpace) : null;
+            if (res is not null) { FileLog.Write("info", "[위치보정:rune] 퍼즐 인식 경로: 애니메이션 차분"); return res; }
+            res = RuneArrowDetector.FindArrows(frames[^1], beforeSpace, beforeSpace);
+            if (res is not null) FileLog.Write("info", "[위치보정:rune] 퍼즐 인식 경로: 발동 전 차분 폴백");
+            else if (saveShot) // 인식 실패 — 오프라인 재현용으로 샘플 프레임 전부 보존(--rune-analyze 다중 입력)
+                for (int i = 0; i < frames.Count; i++)
+                    FileLog.SavePng($"rune-frame-{i}", ScreenCapture.ToPng(frames[i]));
+            return res;
+        }
+        finally { foreach (var f in frames) f.Dispose(); }
     }
 
     public void Dispose()
