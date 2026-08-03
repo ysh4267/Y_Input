@@ -20,6 +20,9 @@ internal static class Program
         System.Windows.Forms.Application.EnableVisualStyles();
         System.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
 
+        FileLog.Init(); // 설치 폴더\logs\ 에 실행/에러 로그 + 전역 예외 후킹(문제 추적용)
+        FileLog.Write("info", $"앱 시작 {Services.AppUpdater.CurrentVersion()} args=[{string.Join(' ', Environment.GetCommandLineArgs().Skip(1))}]");
+
         // 업데이트 마무리 역할: 새로 내려받은 exe가 --apply-update 로 실행되면 정식 앱을 띄우지 않고(뮤텍스도 안 잡음)
         // 옛 프로세스 종료를 기다렸다 실행 파일을 교체하고 정식 이름으로 재실행한다.
         var cmdArgs = Environment.GetCommandLineArgs();
@@ -100,6 +103,7 @@ internal static class Program
         // 메시지 루프(블로킹) — 종료 시까지
         System.Windows.Forms.Application.Run(tray);
 
+        FileLog.Write("info", $"종료 시작 (업데이트 재시작: {service.IsUpdating})");
         // 종료 워치독: 정리가 어딘가에서 걸리거나(드라이버 dispose 등) 정리 후에도 포그라운드
         // 스레드(Interception 수신 루프 등)가 남아 프로세스가 안 죽는 경우가 있었다 — 그러면
         // 업데이트 교체가 스테이지의 15초 강제종료까지 늘어져 '멈춘 것처럼' 보인다.
@@ -118,6 +122,7 @@ internal static class Program
         // 정리
         try { app.StopAsync().Wait(3000); } catch { /* ignore */ }
         try { (app as IDisposable)?.Dispose(); } catch { /* ignore */ }
+        FileLog.Write("info", "종료 정리 완료 — 프로세스 종료 대기(워치독 5초 내 강제 종료)");
     }
 
     /// <summary>이미 실행 중인 Y_Input을 종료시킨다 — 먼저 그레이스풀 종료(/api/app/quit, 눌린 입력 떼기)를 요청하고,

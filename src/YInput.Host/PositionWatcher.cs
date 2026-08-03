@@ -494,8 +494,11 @@ public sealed class PositionWatcher : IDisposable
     private static Rectangle ClampRect(Rectangle r, int maxW, int maxH) =>
         Rectangle.Intersect(r, new Rectangle(0, 0, maxW, maxH));
 
-    private void Status(string state, string message, int? miniDx = null, int? dx = null, double? score = null) =>
+    private void Status(string state, string message, int? miniDx = null, int? dx = null, double? score = null)
+    {
         _hub.Broadcast("watcherStatus", new { state, message, miniDx, dx, score });
+        FileLog.Write(state is "fail" ? "warn" : "info", $"[위치보정:{state}] {message}");
+    }
 
     private void Broadcast() { lock (_gate) _hub.Broadcast("watcherSettings", Snapshot(_settings)); }
 

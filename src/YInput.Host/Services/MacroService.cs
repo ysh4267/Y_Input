@@ -154,6 +154,7 @@ public sealed class MacroService
         var entry = new { level, message, time = DateTime.Now.ToString("HH:mm:ss") };
         lock (_logGate) { _recentLogs.AddLast(entry); while (_recentLogs.Count > 200) _recentLogs.RemoveFirst(); }
         _hub.Broadcast("log", entry);
+        FileLog.Write(level, message); // 설치 폴더\logs\ 파일에도 기록(사후 진단용)
     }
 
     /// <summary>최근 로그 스냅샷(진단용 GET /api/log/recent).</summary>
