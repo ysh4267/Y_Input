@@ -1143,11 +1143,21 @@ function collectMacros(out, text, fileName, label) {
 
 // ---------- WebSocket ----------
 let shuttingDown = false;
+let wsWasDown = false; // 연결이 끊겼다 붙었는지 — 업데이트 재시작 후 재연결 감지용
 function connectWs() {
   if (shuttingDown) return;
   const ws = new WebSocket(`ws://${location.host}/ws`);
-  ws.onopen = () => $('ws-dot').className = 'ws-dot on';
-  ws.onclose = () => { $('ws-dot').className = 'ws-dot off'; if (!shuttingDown) setTimeout(connectWs, 1500); };
+  ws.onopen = () => {
+    $('ws-dot').className = 'ws-dot on';
+    if (wsWasDown) {
+      wsWasDown = false;
+      // 업데이트 교체·재시작 후 새 인스턴스에 재연결됨 — 버전/업데이트 상태를
+      // '업데이트 확인'을 누른 것처럼 자동 새로고침(사이드탭 텍스트 갱신).
+      loadVersion();
+      onUpdateCheck().catch(() => {});
+    }
+  };
+  ws.onclose = () => { wsWasDown = true; $('ws-dot').className = 'ws-dot off'; if (!shuttingDown) setTimeout(connectWs, 1500); };
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     switch (msg.type) {
