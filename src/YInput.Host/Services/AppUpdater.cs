@@ -87,12 +87,49 @@ public static class AppUpdater
             upToDate ? "최신 상태" : $"새 버전 {latest.Tag} 사용 가능", latest.AssetUrl, latest.HtmlUrl);
     }
 
+    // 최신 릴리즈 캐시 — 잦은 '업데이트 확인'이 GitHub 요청 한도(비인증 60회/시간)를 태우지 않게 한다.
+    // TTL 안이면 네트워크 없이 캐시 반환. TTL 밖이면 ETag 조건부 요청(304는 한도에 안 잡힘) 후 갱신.
+    // 실패(한도 초과 등) 시엔 마지막 성공 결과로 대체해 확인 기능이 죽지 않게 한다.
+    private static readonly object CacheGate = new();
+    private static LatestRelease _cached;
+    private static bool _hasCache;
+    private static string _etag = "";
+    private static long _cacheAtMs;
+    private const int CacheTtlMs = 60_000; // 1분 — ETag 조건부 요청(304는 한도 무관)이라 짧아도 부담 없음
+
     private static (bool ok, LatestRelease latest, string error) TryFetchLatest()
+    {
+        lock (CacheGate)
+        {
+            if (_hasCache && Environment.TickCount64 - _cacheAtMs < CacheTtlMs)
+                return (true, _cached, "");
+            var r = FetchLatestCore();
+            if (r.ok) { _cached = r.latest; _hasCache = true; _cacheAtMs = Environment.TickCount64; return r; }
+            if (_hasCache) return (true, _cached, ""); // 실패 → 마지막 성공 결과로 대체(다음 TTL에 재시도)
+            return r;
+        }
+    }
+
+    private static (bool ok, LatestRelease latest, string error) FetchLatestCore()
     {
         try
         {
-            using var resp = Http.GetAsync(LatestApi).GetAwaiter().GetResult();
+            using var req = new HttpRequestMessage(HttpMethod.Get, LatestApi);
+            if (_etag.Length > 0) req.Headers.TryAddWithoutValidation("If-None-Match", _etag); // 304는 요청 한도에 안 잡힘
+            using var resp = Http.SendAsync(req).GetAwaiter().GetResult();
+            if (resp.StatusCode == System.Net.HttpStatusCode.NotModified && _hasCache)
+                return (true, _cached, "");
+            if ((int)resp.StatusCode is 403 or 429)
+            {
+                // 요청 한도 초과 — 해제까지 남은 시간을 알려준다.
+                var mins = 60;
+                if (resp.Headers.TryGetValues("X-RateLimit-Reset", out var vals)
+                    && long.TryParse(vals.FirstOrDefault(), out var resetUnix))
+                    mins = Math.Max(1, (int)Math.Ceiling((DateTimeOffset.FromUnixTimeSeconds(resetUnix) - DateTimeOffset.UtcNow).TotalMinutes));
+                return (false, default, $"GitHub 요청 한도 초과 — 약 {mins}분 후 자동 해제됩니다. 잠시 후 다시 확인하세요.");
+            }
             if (!resp.IsSuccessStatusCode) return (false, default, $"GitHub 응답 {(int)resp.StatusCode}");
+            _etag = resp.Headers.ETag?.Tag ?? _etag;
             var json = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
