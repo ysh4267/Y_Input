@@ -42,13 +42,20 @@ internal static class RuneArrowDetector
     private const int MinGapPx = 50, MaxGapPx = 280; // 화살표 이웃 간격 상식 범위(실측 85~125px) —
                                                      // 데미지 숫자·배너 글자 조각(13~35px) 배제
 
+    /// <summary>퍼즐 UI 탐색 영역(창 상대) — 캡처를 이 영역만 화면 복사로 뜨면 전체 창 캡처보다
+    /// 훨씬 빠르다(취소 타이머 3초 안에 인식·입력을 끝내야 함).</summary>
+    public static Rectangle PuzzleRegion(int frameW, int frameH) => new(
+        (int)(frameW * RegionX0), (int)(frameH * RegionY0),
+        (int)(frameW * (RegionX1 - RegionX0)), (int)(frameH * (RegionY1 - RegionY0)));
+
     /// <summary>주 경로 — 연속 캡처 프레임들(같은 크기, 시간순)의 차분 합집합으로 애니메이션
-    /// 화살표만 분리해 인식. bannerRef = 발동 직전 프레임(탐색 밴드 제한). 실패 시 null.</summary>
-    public static List<RuneArrow>? FindArrowsAnimated(IReadOnlyList<Bitmap> frames, Bitmap? bannerRef)
+    /// 화살표만 분리해 인식. bannerRef = 발동 직전 프레임(탐색 밴드 제한).
+    /// precropped = 입력이 이미 PuzzleRegion으로 잘려 있음(전체를 영역으로 사용). 실패 시 null.</summary>
+    public static List<RuneArrow>? FindArrowsAnimated(IReadOnlyList<Bitmap> frames, Bitmap? bannerRef, bool precropped = false)
     {
         if (frames.Count < 2) return null;
         var frame = frames[^1];
-        if (!TryRegion(frame, out var region)) return null;
+        if (!TryRegion(frame, precropped, out var region)) return null;
         foreach (var f in frames)
             if (f.Width != frame.Width || f.Height != frame.Height) return null;
 
@@ -65,9 +72,9 @@ internal static class RuneArrowDetector
 
     /// <summary>폴백 — 단일 프레임 + 발동 직전 프레임 차분(새로 나타난 채도 높은 픽셀)으로 인식.
     /// diffRef 없으면 채도 마스크만 사용(진단용). bannerRef = 탐색 밴드 제한.</summary>
-    public static List<RuneArrow>? FindArrows(Bitmap frame, Bitmap? diffRef = null, Bitmap? bannerRef = null)
+    public static List<RuneArrow>? FindArrows(Bitmap frame, Bitmap? diffRef = null, Bitmap? bannerRef = null, bool precropped = false)
     {
-        if (!TryRegion(frame, out var region)) return null;
+        if (!TryRegion(frame, precropped, out var region)) return null;
         if (diffRef is not null && (diffRef.Width != frame.Width || diffRef.Height != frame.Height)) diffRef = null;
 
         int w = region.Width, h = region.Height;
@@ -83,12 +90,11 @@ internal static class RuneArrowDetector
     }
 
     // ---------- 공통 파이프라인 ----------
-    private static bool TryRegion(Bitmap frame, out Rectangle region)
+    private static bool TryRegion(Bitmap frame, bool precropped, out Rectangle region)
     {
-        region = new Rectangle(
-            (int)(frame.Width * RegionX0), (int)(frame.Height * RegionY0),
-            (int)(frame.Width * (RegionX1 - RegionX0)), (int)(frame.Height * (RegionY1 - RegionY0)));
-        region = Rectangle.Intersect(region, new Rectangle(0, 0, frame.Width, frame.Height));
+        region = precropped
+            ? new Rectangle(0, 0, frame.Width, frame.Height)
+            : Rectangle.Intersect(PuzzleRegion(frame.Width, frame.Height), new Rectangle(0, 0, frame.Width, frame.Height));
         return region.Width >= 100 && region.Height >= 60;
     }
 
@@ -280,11 +286,11 @@ internal static class RuneArrowDetector
         {
             foreach (var p in pngPaths) frames.Add(new Bitmap(p));
             var frame = frames[^1];
-            // 작은 이미지(크롭)는 전체를 분석 — 화살표 크롭 단위 검증용
-            var region = frame.Width < 700
+            // 작은 이미지(퍼즐 영역 크롭·화살표 크롭)는 전체를 분석, 전체 창 캡처는 비율 영역 적용
+            var region = frame.Width < 700 || frame.Height < 500
                 ? new Rectangle(0, 0, frame.Width, frame.Height)
                 : default;
-            if (region == default && !TryRegion(frame, out region)) { sb.AppendLine("영역 계산 실패"); }
+            if (region == default && !TryRegion(frame, false, out region)) { sb.AppendLine("영역 계산 실패"); }
             else
             {
                 int w = region.Width, h = region.Height;
