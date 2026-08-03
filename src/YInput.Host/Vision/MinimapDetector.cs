@@ -14,7 +14,7 @@ internal readonly record struct DotCandidate(PointF Center, int Area, int BoxW, 
 /// </summary>
 internal static class MinimapDetector
 {
-    private const int MinBlobArea = 2;    // 1px 노이즈 제외
+    private const int MinBlobArea = 8;    // 글자·마커 파편(2~5px) 제외 — 플레이어 점은 3×3 이상
     private const int MaxBlobArea = 150;  // 큰 노란 UI 덩어리 제외
     private const int MaxBlobBox = 14;    // 점은 작다 — 넓게 퍼진 장식·텍스트 제외
     private const int TypicalDotArea = 24; // 플레이어 점 ≈ 지름 5~7px 원(스크린샷 기준)

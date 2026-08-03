@@ -451,6 +451,7 @@ public sealed class PositionWatcher : IDisposable
                 }
                 double miniDx = dot.Value.X - spot.DotX;
                 double releaseEarly = Math.Max(s.MiniTolerancePx, 1.2); // 키를 뗀 뒤 관성 미끄러짐 여유분
+                int rebounds = 0; // 도착/지나침 후 반대 방향 재보정 횟수 — 누를수록 짧게(최소 50ms)
 
                 while (Math.Abs(miniDx) > s.MiniTolerancePx && sw.ElapsedMilliseconds < s.MaxCorrectionMs)
                 {
@@ -461,13 +462,20 @@ public sealed class PositionWatcher : IDisposable
                     ushort key = miniDx > 0 ? ScLeft : ScRight;
                     int dirSign = Math.Sign(miniDx);
                     bool lostDot = false;
+                    // 첫 홀드는 도착할 때까지 무제한, 이후 되돌림은 220→132→79→50ms로 점점 짧게 눌러 미세 조정
+                    long holdCapMs = rebounds == 0 ? long.MaxValue
+                                                   : Math.Max(50, (long)(220 * Math.Pow(0.6, rebounds - 1)));
+                    var holdSw = Stopwatch.StartNew();
                     _backend.Send(new KeyboardEvent { Code = key, State = KeyDownE0 });
                     try
                     {
                         // 누른 채 연속 이동 — 걷는 동안 주기적으로 위치를 재며 도착 직전 또는 지나침에 뗀다
                         while (sw.ElapsedMilliseconds < s.MaxCorrectionMs)
                         {
-                            await PreciseDelay.WaitAsync(60, ct).ConfigureAwait(false);
+                            long remain = holdCapMs - holdSw.ElapsedMilliseconds;
+                            if (remain <= 0) break;                       // 되돌림 홀드 상한 도달
+                            await PreciseDelay.WaitAsync((int)Math.Min(60, remain), ct).ConfigureAwait(false);
+                            if (holdCapMs - holdSw.ElapsedMilliseconds <= 0) break;
                             var d2 = MeasureDot(s, dot);
                             if (d2 is null) { lostDot = true; break; } // 점 놓침 → 일단 멈추고 아래서 재평가
                             dot = d2;
@@ -477,6 +485,7 @@ public sealed class PositionWatcher : IDisposable
                         }
                     }
                     finally { try { _backend.Send(new KeyboardEvent { Code = key, State = KeyUpE0 }); } catch { } }
+                    rebounds++;
 
                     await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false); // 미끄러짐 정지 대기
                     var d3 = MeasureDot(s, dot);
