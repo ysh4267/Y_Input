@@ -634,7 +634,7 @@ public sealed class PositionWatcher : IDisposable
                 // 주의: 퍼즐이 열린 동안 스페이스를 또 누르면 '오답 입력'으로 처리돼 실패한다 —
                 // 발동당 스페이스는 딱 한 번, 재발동은 취소가 확실히 지난 뒤에만.
                 List<RuneArrow>? arrows = null;
-                for (int attempt = 0; attempt < 2 && arrows is null; attempt++)
+                for (int attempt = 0; attempt < 3 && arrows is null; attempt++) // 회전형은 멈춤을 놓칠 수 있어 관찰 창 3회
                 {
                     // 발동·캡처 중에도 게임이 전면이어야 한다 — 다른 창이 덮이면 스페이스가 그 창으로
                     // 들어가고 캡처에도 그 창이 찍힌다(20:37 실행: IDE가 덮여 인식 실패).
@@ -721,7 +721,7 @@ public sealed class PositionWatcher : IDisposable
 
     // 퍼즐 확정 파라미터 — 회전형(돌다가 정답 방향에서 잠깐 멈춤)과 정지형을 같은 규칙으로 처리:
     // 화살표마다 '모양 시그니처+방향'이 연속 유지되는 구간(=멈춤)에서만 확정한다.
-    private const int PuzzleBudgetMs = 2300;  // 취소 타이머(~3초) 전에 입력을 시작해야 한다
+    private const int PuzzleBudgetMs = 2800;  // 취소 타이머(~3초) 전에 입력을 '시작'하면 된다(입력이 타이머 리셋)
     private const int PuzzleSampleGapMs = 70; // 프레임 간격(캡처+분석 ~30-50ms 포함 실효 ~100-120ms)
     private const int LockRun = 3;            // 확정 최소 연속 프레임
     private const int LockSpanMs = 250;       // 확정 최소 지속시간 — 회전 사분면 체류 오확정 방지
@@ -783,6 +783,13 @@ public sealed class PositionWatcher : IDisposable
             if (lockedCount < 4) await PreciseDelay.WaitAsync(PuzzleSampleGapMs, ct).ConfigureAwait(false);
         }
         if (!rowSeen) { Note("퍼즐 인식 실패 — 화살표 줄을 찾지 못함"); return null; }
+        // 멈춤 확정이 3개 미만이면 다수결은 사실상 추측(00:30 실행: 멈춤 0/4 다수결 → 오답) —
+        // 포기하고 null을 돌려 퍼즐 취소 후 재발동으로 깨끗한 관찰 창을 다시 얻는 편이 낫다.
+        if (lockedCount < 3)
+        {
+            Note($"퍼즐 확정 실패 — 멈춤 {lockedCount}/4뿐(회전이 안 멈춤), 재발동 대기");
+            return null;
+        }
 
         var result = new List<RuneArrow>(4);
         int voted = 0;
@@ -790,8 +797,7 @@ public sealed class PositionWatcher : IDisposable
         {
             char d;
             if (locked[j] is { } ld) d = ld;
-            else if (votes[j].Count > 0) { d = votes[j].MaxBy(kv => kv.Value).Key; voted++; }
-            else { Note("퍼즐 인식 실패 — 확정하지 못한 화살표 있음"); return null; }
+            else { d = votes[j].MaxBy(kv => kv.Value).Key; voted++; }
             result.Add(new RuneArrow(centers[j], d));
         }
         Note(voted == 0 ? $"퍼즐 확정 — 멈춤 4/4{(spinNoted ? " (회전)" : "")}"
