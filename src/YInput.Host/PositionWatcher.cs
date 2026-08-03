@@ -15,12 +15,8 @@ public sealed class WatcherSettings
 {
     public string Process { get; set; } = "maplestory";
 
-    // 고정된 미니맵 영역(점 탐색 범위, 창 상대) — [미니맵 탐지] 버튼으로 1회 자동 감지해 고정하거나
-    // 수동 드래그로 지정한다. 이후 모든 측정은 이 고정 영역 안에서만 점을 찾는다.
-    public int MiniX { get; set; }
-    public int MiniY { get; set; }
-    public int MiniW { get; set; }
-    public int MiniH { get; set; }
+    // 미니맵 영역은 전역이 아니라 '매크로별'로 저장된다(Macro.MapleMinimap) — 메이플 블록이 든
+    // 매크로마다 자기 미니맵 rect를 갖고, 재생 훅과 편집기 측정 API가 그 rect를 넘겨받는다.
     /// <summary>미니맵 허용오차(px). 점은 서브픽셀 centroid로 재므로 1 미만도 의미 있다.</summary>
     public double MiniTolerancePx { get; set; } = 0.6;
 
@@ -145,27 +141,22 @@ public sealed class PositionWatcher : IDisposable
         return ScreenCapture.ToPng(bmp);
     }
 
-    /// <summary>[미니맵 탐지] — 지금 이 순간 1회 자동 감지해 미니맵 영역을 '고정'한다.
-    /// 흰 테두리 안 맵 영역을 우선, 없으면 검은 챠시. 실패 시 예외(수동 지정 안내).</summary>
+    /// <summary>[미니맵 탐지] — 지금 이 순간 1회 자동 감지해 영역을 반환한다(저장은 편집기가
+    /// 매크로에 한다). 흰 테두리 안 맵 영역을 우선, 없으면 검은 챠시. 실패 시 예외(수동 지정 안내).</summary>
     public object AutoDetectMinimap()
     {
-        lock (_gate)
-        {
-            var s = _settings;
-            using var frame = CaptureGameFrame(s.Process, out _)
-                ?? throw new InvalidOperationException($"'{s.Process}' 창을 찾을 수 없습니다. 게임이 실행 중인지 확인하세요.");
-            if (!MinimapDetector.TryDetect(frame, out var panel, out var mapArea, out _, out _,
-                                           s.DotMinR, s.DotMinG, s.DotMaxB, s.PanelMaxLum) || panel.IsEmpty)
-                throw new ArgumentException("미니맵을 자동으로 찾지 못했습니다 — 미니맵이 펼쳐져 있는지 확인하거나 [수동 지정]을 사용하세요.");
-            var r = mapArea.IsEmpty ? panel : mapArea;
-            _settings.MiniX = r.X; _settings.MiniY = r.Y; _settings.MiniW = r.Width; _settings.MiniH = r.Height;
-            Save(_settings);
-        }
-        Broadcast();
-        lock (_gate) return Snapshot(_settings);
+        WatcherSettings s; lock (_gate) s = Clone(_settings);
+        using var frame = CaptureGameFrame(s.Process, out _)
+            ?? throw new InvalidOperationException($"'{s.Process}' 창을 찾을 수 없습니다. 게임이 실행 중인지 확인하세요.");
+        if (!MinimapDetector.TryDetect(frame, out var panel, out var mapArea, out _, out _,
+                                       s.DotMinR, s.DotMinG, s.DotMaxB, s.PanelMaxLum) || panel.IsEmpty)
+            throw new ArgumentException("미니맵을 자동으로 찾지 못했습니다 — 미니맵이 펼쳐져 있는지 확인하거나 [수동 지정]을 사용하세요.");
+        var r = mapArea.IsEmpty ? panel : mapArea;
+        return new { x = r.X, y = r.Y, w = r.Width, h = r.Height };
     }
 
-    /// <summary>[수동 지정] — 마지막 캡처 프레임에서 드래그한 영역을 미니맵으로 고정. 점이 안 보이면 거부.</summary>
+    /// <summary>[수동 지정] — 마지막 캡처 프레임에서 드래그한 영역을 검증해 반환(저장은 편집기가
+    /// 매크로에 한다). 점이 안 보이면 거부.</summary>
     public object SetMinimapRegion(int x, int y, int w, int h)
     {
         lock (_gate)
@@ -175,22 +166,19 @@ public sealed class PositionWatcher : IDisposable
             if (rect.Width < 8 || rect.Height < 8) throw new ArgumentException("미니맵 영역이 너무 작습니다.");
             if (!MinimapDetector.TryFindPlayerDot(frame, rect, out _, _settings.DotMinR, _settings.DotMinG, _settings.DotMaxB))
                 throw new ArgumentException("선택한 영역에서 플레이어 노란 점을 찾지 못했습니다. 미니맵 맵 영역을 감싸게 다시 드래그하세요.");
-            _settings.MiniX = rect.X; _settings.MiniY = rect.Y; _settings.MiniW = rect.Width; _settings.MiniH = rect.Height;
-            Save(_settings);
+            return new { x = rect.X, y = rect.Y, w = rect.Width, h = rect.Height };
         }
-        Broadcast();
-        lock (_gate) return Snapshot(_settings);
     }
 
-    /// <summary>고정된 미니맵 확인용 미리보기 — 새 프레임에서 고정 영역(+여백)을 잘라 영역 테두리(초록)와
-    /// 현재 캐릭터 점(노란 링)을 그려 반환. 미지정/실패 시 null.</summary>
-    public byte[]? MinimapPreview()
+    /// <summary>미니맵 확인용 미리보기 — 새 프레임에서 주어진 영역(+여백)을 잘라 영역 테두리(초록)와
+    /// 현재 캐릭터 점(노란 링)을 그려 반환. 실패 시 null. (편집기 1열 미니맵 카드 썸네일)</summary>
+    public byte[]? MinimapPreview(int mx, int my, int mw, int mh)
     {
         WatcherSettings s; lock (_gate) s = Clone(_settings);
-        if (s.MiniW <= 0) return null;
+        if (mw <= 0 || mh <= 0) return null;
         using var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return null;
-        var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
+        var mini = new Rectangle(mx, my, mw, mh);
         var r = ClampRect(new Rectangle(mini.X - 10, mini.Y - 10, mini.Width + 20, mini.Height + 20), frame.Width, frame.Height);
         if (r.Width <= 0 || r.Height <= 0) return null;
         var cands = MinimapDetector.FindDots(frame, mini, s.DotMinR, s.DotMinG, s.DotMaxB);
@@ -217,16 +205,17 @@ public sealed class PositionWatcher : IDisposable
     private Bitmap? _liveFrame;  // 마지막 Live() 캡처 — live/frame·live/mini가 같은 프레임을 사용
     private PointF? _liveDot;    // 마지막 Live()에서 감지된 캐릭터 점(창 상대)
     private List<DotCandidate>? _liveCands; // 마지막 Live()의 노란 블롭 후보 전체(창 상대)
+    private Rectangle _liveMiniRect;        // 마지막 Live()에 쓴 미니맵 영역 — LiveMini 크롭용
 
     /// <summary>현재 게임 화면을 캡처해 미니맵 점·자동 패치 rect를 계산한다(키 입력 없음).
-    /// 이어지는 <see cref="LiveCrop"/>이 이 프레임에서 미리보기 이미지를 잘라낸다.</summary>
-    public object Live()
+    /// mini = 편집 중 매크로의 미니맵 영역(창 상대). 이어지는 LiveFrame/LiveMini가 이 프레임을 사용.</summary>
+    public object Live(int mx, int my, int mw, int mh)
     {
         lock (_gate)
         {
             var s = _settings;
-            if (s.MiniW <= 0)
-                return new { ok = false, needMinimap = true, error = "미니맵이 지정되지 않았습니다." };
+            if (mw <= 0 || mh <= 0)
+                return new { ok = false, needMinimap = true, error = "이 매크로에 미니맵이 지정되지 않았습니다." };
             var frame = CaptureGameFrame(s.Process, out _);
             if (frame is null)
                 return new { ok = false, needMinimap = false, error = $"'{s.Process}' 창을 찾을 수 없습니다." };
@@ -234,8 +223,9 @@ public sealed class PositionWatcher : IDisposable
             _liveFrame?.Dispose();
             _liveFrame = frame;
 
-            // 고정된 미니맵 영역 안에서만 캐릭터 점을 찾는다.
-            var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
+            // 매크로의 미니맵 영역 안에서만 캐릭터 점을 찾는다.
+            var mini = new Rectangle(mx, my, mw, mh);
+            _liveMiniRect = mini;
             var cands = MinimapDetector.FindDots(_liveFrame, mini, s.DotMinR, s.DotMinG, s.DotMaxB)
                 .Select(c => c with { Center = new PointF(c.Center.X + mini.X, c.Center.Y + mini.Y) }).ToList();
             bool dotFound = cands.Count > 0;
@@ -260,15 +250,14 @@ public sealed class PositionWatcher : IDisposable
         lock (_gate) return _liveFrame is null ? null : ScreenCapture.ToPng(_liveFrame);
     }
 
-    /// <summary>고정된 미니맵 미리보기(팝업용) — 고정 영역(+여백)을 잘라 영역 테두리(초록)와
+    /// <summary>미니맵 미리보기(팝업용) — 마지막 Live()에 쓴 영역(+여백)을 잘라 영역 테두리(초록)와
     /// 내 캐릭터 점(노란 링)을 그려 반환. 점 미탐지/프레임 없음이면 null.</summary>
     public byte[]? LiveMini()
     {
         lock (_gate)
         {
-            var s = _settings;
-            if (_liveFrame is null || _liveDot is not { } dot || s.MiniW <= 0) return null;
-            var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
+            if (_liveFrame is null || _liveDot is not { } dot || _liveMiniRect.Width <= 0) return null;
+            var mini = _liveMiniRect;
             var r = ClampRect(new Rectangle(mini.X - 8, mini.Y - 8, mini.Width + 16, mini.Height + 16),
                               _liveFrame.Width, _liveFrame.Height);
             if (r.Width <= 0 || r.Height <= 0) return null;
@@ -294,17 +283,17 @@ public sealed class PositionWatcher : IDisposable
     // ---------- 스팟(블록별 기준 위치) ----------
     /// <summary>확정 — 지금 이 순간의 화면을 새로 캡처해 미니맵 점 + 자동 패치 영역을 스팟으로 저장한다.
     /// (블록 확장 카드에서 실시간 미리보기를 보다가 [확정]을 눌렀을 때)</summary>
-    public object CaptureSpot(string id, int? anchorX = null, int? anchorY = null)
+    public object CaptureSpot(string id, int? anchorX, int? anchorY, int mx, int my, int mw, int mh)
     {
         RequireValidId(id);
         lock (_gate)
         {
             var s = _settings;
-            if (s.MiniW <= 0) throw new InvalidOperationException("미니맵이 지정되지 않았습니다 — 설정에서 [미니맵 탐지] 또는 [수동 지정]을 먼저 하세요.");
+            if (mw <= 0 || mh <= 0) throw new InvalidOperationException("이 매크로에 미니맵이 지정되지 않았습니다 — 편집기 1열의 [미니맵 위치] 카드에서 먼저 지정하세요.");
             using var frame = CaptureGameFrame(s.Process, out _)
                 ?? throw new InvalidOperationException($"'{s.Process}' 창을 찾을 수 없습니다. 게임이 실행 중인지 확인하세요.");
-            // 고정된 미니맵 영역 안에서 점 탐지 — Live 미리보기와 같은 기준이라 마커와 일치.
-            var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
+            // 매크로의 미니맵 영역 안에서 점 탐지 — Live 미리보기와 같은 기준이라 마커와 일치.
+            var mini = new Rectangle(mx, my, mw, mh);
             if (!MinimapDetector.TryFindPlayerDot(frame, mini, out var dot, s.DotMinR, s.DotMinG, s.DotMaxB))
                 throw new ArgumentException("고정된 미니맵 영역에서 플레이어 점을 찾지 못했습니다. 미니맵이 이동/접힘 상태인지 확인하세요.");
             // dot은 미니맵 영역 '상대' 좌표 그대로 저장 — 미니맵을 옮기거나 다시 고정해도 유효
@@ -365,14 +354,15 @@ public sealed class PositionWatcher : IDisposable
 
 
     /// <summary>키를 누르지 않고 스팟 기준 현재 이탈량만 측정(블록 카드의 테스트 버튼).</summary>
-    public object TestSpot(string id)
+    public object TestSpot(string id, int mx, int my, int mw, int mh)
     {
         RequireValidId(id);
         WatcherSettings s; (SpotData Data, GrayImage Gray)? spot;
         lock (_gate) { s = Clone(_settings); spot = ResolveSpot(id); }
         if (spot is not { } sp) return new { error = "지정된 위치가 없습니다. [지정하기]로 저장하세요." };
+        if (mw <= 0 || mh <= 0) return new { error = "이 매크로에 미니맵이 지정되지 않았습니다 — 1열의 [미니맵 위치] 카드에서 지정하세요." };
 
-        var cands = MeasureDots(s);
+        var cands = MeasureDots(s, new Rectangle(mx, my, mw, mh));
         int candCount = cands?.Count ?? 0;
         double? miniDx = null;
         // 미리보기(Live)와 같은 기준(점 크기 기반)으로 내 캐릭터 점을 고른다 —
@@ -392,10 +382,11 @@ public sealed class PositionWatcher : IDisposable
     // ---------- 보정(재생 훅) ----------
     /// <summary>
     /// '위치 보정' 스텝의 실제 수행(Player.PositionCorrect 훅). 스텝의 spotId에 지정된 자리로 되돌린다.
+    /// miniCfg = 재생 중 매크로의 미니맵 영역(Macro.MapleMinimap) — 없으면 no-op(상태 방송만).
     /// 취소(정지)는 OCE로 전파해 재생을 즉시 멈추고, 그 외 오류는 삼켜 재생을 계속한다.
     /// 어떤 경로로도 방향키가 눌린 채 남지 않는다. 스팟 미지정이면 no-op(상태 방송만).
     /// </summary>
-    public async Task CorrectAsync(string? spotId, CancellationToken ct)
+    public async Task CorrectAsync(MapleMinimap? miniCfg, string? spotId, CancellationToken ct)
     {
         WatcherSettings s; (SpotData Data, GrayImage Gray)? resolved;
         lock (_gate)
@@ -404,6 +395,8 @@ public sealed class PositionWatcher : IDisposable
             resolved = string.IsNullOrEmpty(spotId) || !IsValidId(spotId) ? null : ResolveSpot(spotId);
         }
         if (resolved is not { } sp) { Status("skip", "이 블록에 지정된 위치가 없어 보정을 건너뜁니다. 편집기에서 [지정하기]로 저장하세요."); return; }
+        if (miniCfg is not { W: > 0, H: > 0 }) { Status("skip", "이 매크로에 미니맵 정보가 없어 보정을 건너뜁니다 — 편집기에서 미니맵을 지정하세요."); return; }
+        var mini = new Rectangle(miniCfg.X, miniCfg.Y, miniCfg.W, miniCfg.H);
         if (!_sem.Wait(0)) return; // 다른 매크로가 이미 보정 중 → 스킵
 
         try
@@ -414,7 +407,7 @@ public sealed class PositionWatcher : IDisposable
 
             // ── 1단계: 내 캐릭터 점 식별 — 노란 블롭이 여러 개면(NPC 마커 등) 살짝 걸어보고
             //           '움직인' 블롭을 내 캐릭터로 잠근다(마커·타인 점은 안 움직임) ──
-            var dots0 = MeasureDots(s);
+            var dots0 = MeasureDots(s, mini);
             if (dots0 is null || dots0.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 보정을 포기합니다."); return; }
             PointF? dot;
             if (dots0.Count == 1) dot = dots0[0].Center;
@@ -423,12 +416,12 @@ public sealed class PositionWatcher : IDisposable
                 Status("coarse", $"노란 블롭 {dots0.Count}개 — 살짝 이동해 내 캐릭터를 식별합니다");
                 await TapAsync(ScLeft, 90, ct).ConfigureAwait(false); // 왼쪽으로 프로브(어차피 보정으로 되돌아옴)
                 await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
-                var dots1 = MeasureDots(s);
+                var dots1 = MeasureDots(s, mini);
                 if (dots1 is null || dots1.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 보정을 포기합니다."); return; }
                 // 폴백도 저장 위치 근접이 아닌 크기 기반 — 근접 선택은 정지 블롭에 고정될 수 있다.
                 dot = IdentifyMovedLeft(dots0, dots1) ?? MinimapDetector.Pick(dots1).Center;
             }
-            var walk = await WalkToXAsync(s, dot.Value, spot.DotX, s.MiniTolerancePx, sw, s.MaxCorrectionMs,
+            var walk = await WalkToXAsync(s, mini, dot.Value, spot.DotX, s.MiniTolerancePx, sw, s.MaxCorrectionMs,
                                           "coarse", "미니맵 보정 중", ct).ConfigureAwait(false);
             if (walk.Result == Walk.NotForeground) { Status("skip", "게임 창이 전면에서 벗어나 보정을 중단합니다."); return; }
             if (walk.Result == Walk.LostDot) { Status("fail", "보정 중 미니맵 점을 놓쳤습니다."); return; }
@@ -453,7 +446,7 @@ public sealed class PositionWatcher : IDisposable
 
     /// <summary>미니맵 X 목표까지 좌우 걷기 — 연속 홀드 + 홀드 중 폴링(도착 직전/지나침에 뗌) +
     /// 감쇠 리바운드(220→132→79→50ms) + 뗀 뒤 SettleMs 대기 후 재측정. 위치 보정·룬 이동 공용.</summary>
-    private async Task<(Walk Result, PointF Dot)> WalkToXAsync(WatcherSettings s, PointF dot, double targetX,
+    private async Task<(Walk Result, PointF Dot)> WalkToXAsync(WatcherSettings s, Rectangle mini, PointF dot, double targetX,
         double tol, Stopwatch sw, long maxMs, string state, string label, CancellationToken ct)
     {
         double miniDx = dot.X - targetX;
@@ -482,7 +475,7 @@ public sealed class PositionWatcher : IDisposable
                     if (remain <= 0) break;                       // 되돌림 홀드 상한 도달
                     await PreciseDelay.WaitAsync((int)Math.Min(60, remain), ct).ConfigureAwait(false);
                     if (holdCapMs - holdSw.ElapsedMilliseconds <= 0) break;
-                    var d2 = MeasureDot(s, dot);
+                    var d2 = MeasureDot(s, mini, dot);
                     if (d2 is null) break; // 점 놓침 → 일단 멈추고 정지 후 재평가
                     dot = d2.Value;
                     miniDx = dot.X - targetX;
@@ -495,7 +488,7 @@ public sealed class PositionWatcher : IDisposable
 
             // 관성·가속 때문에 키를 뗀 뒤에도 조금 미끄러진다 — 고정 시간만큼 기다렸다 측정
             await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
-            var d3 = MeasureDot(s, dot);
+            var d3 = MeasureDot(s, mini, dot);
             if (d3 is null) return (Walk.LostDot, dot); // 홀드 중 일시 놓침은 허용, 정지 후에도 없으면 실패
             dot = d3.Value;
             miniDx = dot.X - targetX;
@@ -506,13 +499,13 @@ public sealed class PositionWatcher : IDisposable
 
     // ---------- 룬 사용(재생 훅) ----------
     /// <summary>블록 카드 [테스트] — 키 입력 없이 미니맵의 룬 아이콘·내 점 위치와 상대 거리만 측정.</summary>
-    public object RuneTest()
+    public object RuneTest(int mx, int my, int mw, int mh)
     {
         WatcherSettings s; lock (_gate) s = Clone(_settings);
-        if (s.MiniW <= 0) return new { error = "미니맵이 지정되지 않았습니다 — 설정에서 [미니맵 탐지]를 먼저 하세요." };
+        if (mw <= 0 || mh <= 0) return new { error = "이 매크로에 미니맵이 지정되지 않았습니다 — 1열의 [미니맵 위치] 카드에서 지정하세요." };
         using var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return new { error = $"'{s.Process}' 창을 찾을 수 없습니다." };
-        var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
+        var mini = new Rectangle(mx, my, mw, mh);
         var rune = MinimapDetector.FindRuneIcon(frame, mini);
         var cands = MinimapDetector.FindDots(frame, mini, s.DotMinR, s.DotMinG, s.DotMaxB);
         PointF? dot = cands.Count > 0 ? MinimapDetector.Pick(cands).Center : null;
@@ -531,20 +524,21 @@ public sealed class PositionWatcher : IDisposable
     /// 화면에 뜬 방향키 퍼즐(화살표 4개)을 인식해 자동 입력한다.
     /// 미니맵에 룬이 없으면 건너뛰고 다음 스텝 진행. 취소는 OCE로 전파, 그 외 오류는 삼킨다.
     /// </summary>
-    public async Task RuneUseAsync(CancellationToken ct)
+    public async Task RuneUseAsync(MapleMinimap? miniCfg, CancellationToken ct)
     {
         WatcherSettings s; lock (_gate) s = Clone(_settings);
-        if (s.MiniW <= 0) { Status("skip", "미니맵이 지정되지 않아 룬 사용을 건너뜁니다."); return; }
+        if (miniCfg is not { W: > 0, H: > 0 }) { Status("skip", "이 매크로에 미니맵 정보가 없어 룬 사용을 건너뜁니다 — 편집기에서 미니맵을 지정하세요."); return; }
+        var mini = new Rectangle(miniCfg.X, miniCfg.Y, miniCfg.W, miniCfg.H);
         if (!_sem.Wait(0)) return; // 다른 매크로가 보정/룬 수행 중 → 스킵
 
         try
         {
             if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면이 아니라 룬 사용을 건너뜁니다."); return; }
-            if (MeasureRune(s) is null) { Status("skip", "미니맵에 룬(보라 다이아) 아이콘이 없어 건너뜁니다."); return; }
+            if (MeasureRune(s, mini) is null) { Status("skip", "미니맵에 룬(보라 다이아) 아이콘이 없어 건너뜁니다."); return; }
             var sw = Stopwatch.StartNew();
 
             // ── 1단계: 내 캐릭터 점 식별(위치 보정과 동일 — 여러 개면 프로브 이동으로 확인) ──
-            var dots0 = MeasureDots(s);
+            var dots0 = MeasureDots(s, mini);
             if (dots0 is null || dots0.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 룬 사용을 포기합니다."); return; }
             PointF dot;
             if (dots0.Count == 1) dot = dots0[0].Center;
@@ -553,7 +547,7 @@ public sealed class PositionWatcher : IDisposable
                 Status("rune", $"노란 블롭 {dots0.Count}개 — 살짝 이동해 내 캐릭터를 식별합니다");
                 await TapAsync(ScLeft, 90, ct).ConfigureAwait(false);
                 await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
-                var dots1 = MeasureDots(s);
+                var dots1 = MeasureDots(s, mini);
                 if (dots1 is null || dots1.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 룬 사용을 포기합니다."); return; }
                 dot = IdentifyMovedLeft(dots0, dots1) ?? MinimapDetector.Pick(dots1).Center;
             }
@@ -563,11 +557,11 @@ public sealed class PositionWatcher : IDisposable
             {
                 ct.ThrowIfCancellationRequested();
                 if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 룬 사용을 중단합니다."); return; }
-                if (MeasureRune(s) is not { } rune) { Status("fail", "이동 중 미니맵에서 룬 아이콘을 놓쳤습니다."); return; }
+                if (MeasureRune(s, mini) is not { } rune) { Status("fail", "이동 중 미니맵에서 룬 아이콘을 놓쳤습니다."); return; }
 
                 if (Math.Abs(dot.X - rune.X) > RuneTolX)
                 {
-                    var walk = await WalkToXAsync(s, dot, rune.X, RuneTolX, sw, RuneMaxMs, "rune", "룬으로 이동 중", ct).ConfigureAwait(false);
+                    var walk = await WalkToXAsync(s, mini, dot, rune.X, RuneTolX, sw, RuneMaxMs, "rune", "룬으로 이동 중", ct).ConfigureAwait(false);
                     if (walk.Result == Walk.NotForeground) { Status("skip", "게임 창이 전면에서 벗어나 룬 사용을 중단합니다."); return; }
                     if (walk.Result == Walk.LostDot) { Status("fail", "이동 중 미니맵 점을 놓쳤습니다."); return; }
                     dot = walk.Dot;
@@ -596,13 +590,13 @@ public sealed class PositionWatcher : IDisposable
                     finally { try { _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyUpE0 }); } catch { } }
                 }
                 await PreciseDelay.WaitAsync(JumpSettleMs, ct).ConfigureAwait(false); // 착지·정지 대기
-                var d = MeasureDot(s, dot);
+                var d = MeasureDot(s, mini, dot);
                 if (d is null) { Status("fail", "이동 중 미니맵 점을 놓쳤습니다."); return; }
                 dot = d.Value;
             }
 
             // 최종 도착 확인
-            if (MeasureRune(s) is not { } runeF) { Status("fail", "미니맵에서 룬 아이콘을 놓쳤습니다."); return; }
+            if (MeasureRune(s, mini) is not { } runeF) { Status("fail", "미니맵에서 룬 아이콘을 놓쳤습니다."); return; }
             if (Math.Abs(dot.X - runeF.X) > RuneTolX || Math.Abs(dot.Y - runeF.Y) > RuneTolY)
             {
                 Status("fail", $"룬 도달 시간 초과(잔여 dx {dot.X - runeF.X:+0.0;-0.0}px · dy {dot.Y - runeF.Y:+0.0;-0.0}px).");
@@ -644,13 +638,12 @@ public sealed class PositionWatcher : IDisposable
         finally { _sem.Release(); }
     }
 
-    /// <summary>미니맵 고정 영역에서 룬(보라 다이아) 아이콘 위치(미니맵 상대). 없으면 null.</summary>
-    private PointF? MeasureRune(WatcherSettings s)
+    /// <summary>미니맵 영역에서 룬(보라 다이아) 아이콘 위치(미니맵 상대). 없으면 null.</summary>
+    private PointF? MeasureRune(WatcherSettings s, Rectangle mini)
     {
-        if (s.MiniW <= 0) return null;
         using var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return null;
-        return MinimapDetector.FindRuneIcon(frame, new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH));
+        return MinimapDetector.FindRuneIcon(frame, mini);
     }
 
     /// <summary>화면에서 룬 퍼즐 화살표 4개 탐지. saveShot이면 판정에 쓴 프레임을
@@ -684,11 +677,11 @@ public sealed class PositionWatcher : IDisposable
             if (!File.Exists(json) || !File.Exists(png)) return null;
             var data = JsonSerializer.Deserialize<SpotData>(File.ReadAllText(json));
             if (data is null || data.PatchW <= 0) return null;
-            // 마이그레이션 → 현행: 점 좌표는 '고정 미니맵 영역 상대'.
-            // 창 상대(DotFrame)였으면 현재 고정 영역 원점을 빼서 변환(미니맵을 옮겼다면 재지정 권장).
+            // 마이그레이션 → 현행: 점 좌표는 '미니맵 영역 상대'.
+            // 창 상대(DotFrame)였으면 구버전 전역 미니맵 원점을 빼서 변환(없으면 재지정 필요).
             if (!data.DotRel)
             {
-                if (data.DotFrame) { data.DotX -= _settings.MiniX; data.DotY -= _settings.MiniY; }
+                if (data.DotFrame && LegacyMinimap is { } lm) { data.DotX -= lm.X; data.DotY -= lm.Y; }
                 data.DotRel = true; data.DotFrame = true;
                 try { File.WriteAllText(json, JsonSerializer.Serialize(data)); } catch { /* 무시 */ }
             }
@@ -701,22 +694,21 @@ public sealed class PositionWatcher : IDisposable
         catch { return null; }
     }
 
-    /// <summary>프레임을 찍어 '고정된 미니맵 영역' 안에서 플레이어 점(미니맵 상대, 서브픽셀)을 찾는다.
-    /// 창/점/미니맵 미지정이면 null. near = 직전(또는 저장) 위치(미니맵 상대) — 추적으로 다른 점으로 튀는 것을 막는다.</summary>
-    private PointF? MeasureDot(WatcherSettings s, PointF? near = null)
+    /// <summary>프레임을 찍어 매크로의 미니맵 영역 안에서 플레이어 점(미니맵 상대, 서브픽셀)을 찾는다.
+    /// 창/점 미탐지면 null. near = 직전(또는 저장) 위치(미니맵 상대) — 추적으로 다른 점으로 튀는 것을 막는다.</summary>
+    private PointF? MeasureDot(WatcherSettings s, Rectangle mini, PointF? near = null)
     {
-        var cands = MeasureDots(s);
+        var cands = MeasureDots(s, mini);
         if (cands is null || cands.Count == 0) return null;
         return MinimapDetector.Pick(cands, near).Center; // 미니맵 상대 좌표
     }
 
-    /// <summary>고정 미니맵 영역 안의 점 후보 블롭 전체(미니맵 상대). 창/미니맵 미지정이면 null.</summary>
-    private List<DotCandidate>? MeasureDots(WatcherSettings s)
+    /// <summary>미니맵 영역 안의 점 후보 블롭 전체(미니맵 상대). 창 미탐지면 null.</summary>
+    private List<DotCandidate>? MeasureDots(WatcherSettings s, Rectangle mini)
     {
-        if (s.MiniW <= 0) return null;
+        if (mini.Width <= 0 || mini.Height <= 0) return null;
         using var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return null;
-        var mini = new Rectangle(s.MiniX, s.MiniY, s.MiniW, s.MiniH);
         return MinimapDetector.FindDots(frame, mini, s.DotMinR, s.DotMinG, s.DotMaxB);
     }
 
@@ -791,17 +783,44 @@ public sealed class PositionWatcher : IDisposable
     private object Snapshot(WatcherSettings s) => new
     {
         process = s.Process,
-        hasMinimap = s.MiniW > 0,
-        miniX = s.MiniX, miniY = s.MiniY, miniW = s.MiniW, miniH = s.MiniH,
         minScore = s.MinScore, miniTolerancePx = s.MiniTolerancePx,
         settleMs = s.SettleMs, maxCorrectionMs = s.MaxCorrectionMs,
     };
 
     // ---------- 영속 ----------
+    /// <summary>구버전 전역 미니맵 영역(watcher.json에 남아 있던 값). Program이 시작 시 메이플 블록이
+    /// 있는 매크로들로 이관한 뒤 <see cref="ClearLegacyMinimap"/>를 호출해 정리한다.</summary>
+    public (int X, int Y, int W, int H)? LegacyMinimap { get; private set; }
+
+    /// <summary>레거시 전역 미니맵 정리 — watcher.json을 현행 스키마(미니맵 필드 없음)로 다시 쓴다.</summary>
+    public void ClearLegacyMinimap()
+    {
+        LegacyMinimap = null;
+        lock (_gate) Save(_settings);
+    }
+
+    private sealed class LegacyMiniFields
+    {
+        public int MiniX { get; set; }
+        public int MiniY { get; set; }
+        public int MiniW { get; set; }
+        public int MiniH { get; set; }
+    }
+
     private WatcherSettings Load()
     {
         WatcherSettings s;
-        try { s = File.Exists(_statePath) ? (JsonSerializer.Deserialize<WatcherSettings>(File.ReadAllText(_statePath)) ?? new()) : new(); }
+        try
+        {
+            var json = File.Exists(_statePath) ? File.ReadAllText(_statePath) : null;
+            s = json is null ? new() : JsonSerializer.Deserialize<WatcherSettings>(json) ?? new();
+            // 구버전 전역 미니맵 필드가 남아 있으면 보관 — 시작 시 매크로별로 이관된다.
+            if (json is not null)
+            {
+                var lm = JsonSerializer.Deserialize<LegacyMiniFields>(json);
+                if (lm is { MiniW: > 0, MiniH: > 0 }) LegacyMinimap = (lm.MiniX, lm.MiniY, lm.MiniW, lm.MiniH);
+            }
+        }
         catch { return new(); }
         // 구버전 기본값 마이그레이션(사용자가 직접 조정한 값은 유지).
         if (s.MiniTolerancePx == 1) s.MiniTolerancePx = 0.6;
@@ -829,7 +848,6 @@ public sealed class PositionWatcher : IDisposable
     private static WatcherSettings Clone(WatcherSettings s) => new()
     {
         Process = s.Process,
-        MiniX = s.MiniX, MiniY = s.MiniY, MiniW = s.MiniW, MiniH = s.MiniH,
         MiniTolerancePx = s.MiniTolerancePx,
         DotMinR = s.DotMinR, DotMinG = s.DotMinG, DotMaxB = s.DotMaxB, PanelMaxLum = s.PanelMaxLum,
         MinScore = s.MinScore, PatchW = s.PatchW, PatchH = s.PatchH,

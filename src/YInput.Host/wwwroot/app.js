@@ -112,30 +112,16 @@ function renderWatcher(s) {
   wtSettings = s;
   const tol = $('wt-tol'); if (tol && document.activeElement !== tol) tol.value = s.miniTolerancePx;
   const mx = $('wt-maxms'); if (mx && document.activeElement !== mx) mx.value = s.maxCorrectionMs;
-  const info = $('wt-info');
-  const thumb = $('wt-mini-thumb');
-  if (s.hasMinimap) {
-    if (info) info.textContent = `미니맵 고정됨 ${s.miniW}×${s.miniH}px — 각 위치는 편집기의 🧭 위치 보정 블록에서 [지정하기]로 저장하세요.`;
-    if (thumb) { thumb.src = '/api/watcher/minimap/preview?ts=' + Date.now(); thumb.hidden = false; }
-  } else {
-    if (info) info.textContent = '미니맵이 지정되지 않았습니다 — [미니맵 탐지]를 눌러 고정하세요.';
-    if (thumb) thumb.hidden = true;
-  }
   renderWatcherWinSelect();
 }
 
-// ---------- 미니맵 고정(자동 탐지 1회 / 수동 드래그) ----------
-async function onMinimapAuto() {
-  wtSetStatus('미니맵 자동 탐지 중…');
-  try {
-    renderWatcher(await api.watcherMinimapAuto());
-    wtSetStatus('미니맵을 감지해 고정했습니다 — 아래 미리보기에서 초록 테두리를 확인하세요.');
-    log('info', '위치 지킴이: 미니맵을 자동 감지해 고정했습니다.');
-  } catch (e) { wtSetStatus(e.message, true); }
-}
+// ---------- 미니맵 수동 지정 모달(편집기 1열 카드에서 호출) ----------
+// 미니맵 영역은 전역이 아니라 매크로별 — 결과 rect를 콜백으로 넘겨 편집기가 매크로에 저장한다.
+let wtSel = null;       // 수동 지정 드래그 선택(표시 px)
+let wtFrameUrl = null;  // 캡처 프레임 blob URL
+let wtPickCb = null;    // 지정 완료 콜백(rect) — 편집기 카드가 주입
 
-let wtSel = null;      // 수동 지정 드래그 선택(표시 px)
-let wtFrameUrl = null; // 캡처 프레임 blob URL
+function openMinimapPicker(cb) { wtPickCb = cb; openMinimapModal(); }
 
 async function openMinimapModal() {
   try {
@@ -204,10 +190,9 @@ function wireMinimapModal() {
       w: Math.round(wtSel.w * scale), h: Math.round(wtSel.h * scale),
     };
     try {
-      renderWatcher(await api.watcherMinimap(rect));
+      const validated = await api.watcherMinimap(rect); // 서버 검증(노란 점 포함 여부) 후 확정 rect
       closeMinimapModal();
-      wtSetStatus('미니맵을 수동 지정으로 고정했습니다.');
-      log('info', '위치 지킴이: 미니맵을 수동 지정했습니다.');
+      if (wtPickCb) { wtPickCb(validated); wtPickCb = null; }
     } catch (e) { wtSetStatus(e.message, true); }
   };
   $('wt-recapture').onclick = () => openMinimapModal();
@@ -323,7 +308,7 @@ function log(level, message, time) {
 }
 
 // ---------- 편집기(녹화는 편집기 안 '녹화하기' 카드로 통합) ----------
-const editor = createEditor({ log, onSaved: loadMacros, getStatus: () => state.status, getMacros: () => state.macros });
+const editor = createEditor({ log, onSaved: loadMacros, getStatus: () => state.status, getMacros: () => state.macros, openMinimapPicker });
 
 // ---------- 상태 ----------
 function renderStatus(s) {
@@ -1290,9 +1275,7 @@ function wire() {
     try { renderWatcher(await api.setWatcher({ process: p })); } catch (e) { log('error', e.message); }
   };
   $('wt-win-refresh').onclick = async () => { await loadOverlayWindows(); renderWatcherWinSelect(); };
-  $('wt-mini-auto').onclick = onMinimapAuto;
-  $('wt-mini-manual').onclick = openMinimapModal;
-  wireMinimapModal();
+  wireMinimapModal(); // 미니맵 수동 지정 모달 — 편집기 1열 [미니맵 위치] 카드에서 사용
   $('wt-tol').onchange = async () => {
     const v = parseFloat($('wt-tol').value);
     if (Number.isFinite(v)) try { renderWatcher(await api.setWatcher({ miniTolerancePx: v })); } catch (e) { log('error', e.message); }

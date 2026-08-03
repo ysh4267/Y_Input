@@ -274,7 +274,8 @@ public static class ApiEndpoints
         app.MapGet("/api/watcher", () => Results.Json(watcher.Get()));
         app.MapPost("/api/watcher", (WatcherBody? b) => Results.Json(
             watcher.Update(b?.Process, b?.MaxCorrectionMs, b?.MinScore, b?.MiniTolerancePx)));
-        // 미니맵 고정: [탐지] 1회 자동 감지 / 수동 드래그 지정(frame 캡처 → 영역 전송) / 확인용 미리보기
+        // 미니맵(매크로별): [탐지] 1회 자동 감지 / 수동 드래그 지정(frame 캡처 → 영역 전송) — 결과 rect는
+        // 편집기가 매크로(mapleMinimap)에 저장한다. 미리보기는 rect를 쿼리로 받아 그린다.
         app.MapPost("/api/watcher/minimap/auto", () => Guard(() =>
             Task.FromResult(Results.Json(watcher.AutoDetectMinimap()))));
         app.MapGet("/api/watcher/frame", () => Guard(() =>
@@ -282,9 +283,9 @@ public static class ApiEndpoints
         app.MapPost("/api/watcher/minimap", (RegionBody? b) => Guard(() =>
             Task.FromResult(b is null ? Results.BadRequest(new { error = "영역이 필요합니다." })
                                       : Results.Json(watcher.SetMinimapRegion(b.X, b.Y, b.W, b.H)))));
-        app.MapGet("/api/watcher/minimap/preview", () => Guard(() =>
+        app.MapGet("/api/watcher/minimap/preview", (int x, int y, int w, int h) => Guard(() =>
         {
-            var png = watcher.MinimapPreview();
+            var png = watcher.MinimapPreview(x, y, w, h);
             return Task.FromResult(png is null
                 ? Results.NotFound(new { error = "미니맵이 지정되지 않았거나 캡처에 실패했습니다." })
                 : Results.File(png, "image/png"));
@@ -301,16 +302,17 @@ public static class ApiEndpoints
                 : Results.File(png, "image/png"));
         }));
         // 확정: 지금 화면을 캡처해 이 블록의 기준 위치로 저장(확장 카드의 [확정] 버튼).
-        // body {x,y} = 사용자가 클릭한 캐릭터 앵커(창 상대) — 카메라 레이지 무브로 캐릭터가 중앙에 없을 수 있음.
-        app.MapPost("/api/watcher/spots/{id}/capture", (string id, RegionBody? b) => Guard(() =>
-            Task.FromResult(Results.Json(watcher.CaptureSpot(id, b?.X, b?.Y)))));
-        app.MapPost("/api/watcher/spots/{id}/test", (string id) => Guard(() =>
-            Task.FromResult(Results.Json(watcher.TestSpot(id)))));
+        // body {x,y} = 사용자가 클릭한 캐릭터 앵커(창 상대), mini* = 편집 중 매크로의 미니맵 영역.
+        app.MapPost("/api/watcher/spots/{id}/capture", (string id, SpotCaptureBody? b) => Guard(() =>
+            Task.FromResult(Results.Json(watcher.CaptureSpot(id, b?.X, b?.Y,
+                b?.MiniX ?? 0, b?.MiniY ?? 0, b?.MiniW ?? 0, b?.MiniH ?? 0)))));
+        app.MapPost("/api/watcher/spots/{id}/test", (string id, MiniBody? b) => Guard(() =>
+            Task.FromResult(Results.Json(watcher.TestSpot(id, b?.MiniX ?? 0, b?.MiniY ?? 0, b?.MiniW ?? 0, b?.MiniH ?? 0)))));
         // 룬 사용 블록 [테스트] — 키 입력 없이 미니맵의 룬 아이콘·내 점 상대 거리만 측정
-        app.MapPost("/api/watcher/rune/test", () => Guard(() =>
-            Task.FromResult(Results.Json(watcher.RuneTest()))));
-        // 실시간 미리보기(확장 카드 폴링): JSON 측정값 → 같은 프레임 전체 PNG
-        app.MapGet("/api/watcher/live", () => Results.Json(watcher.Live()));
+        app.MapPost("/api/watcher/rune/test", (MiniBody? b) => Guard(() =>
+            Task.FromResult(Results.Json(watcher.RuneTest(b?.MiniX ?? 0, b?.MiniY ?? 0, b?.MiniW ?? 0, b?.MiniH ?? 0)))));
+        // 실시간 미리보기(확장 카드 폴링): JSON 측정값 → 같은 프레임 전체 PNG. 쿼리 = 매크로의 미니맵 영역.
+        app.MapGet("/api/watcher/live", (int x, int y, int w, int h) => Results.Json(watcher.Live(x, y, w, h)));
         app.MapGet("/api/watcher/live/frame", () =>
         {
             var png = watcher.LiveFrame();
@@ -469,6 +471,11 @@ public static class ApiEndpoints
     private sealed record WatcherBody(string? Process = null, int? MaxCorrectionMs = null,
                                       double? MinScore = null, double? MiniTolerancePx = null);
     private sealed record RegionBody(int X = 0, int Y = 0, int W = 0, int H = 0);
+    // 편집 중 매크로의 미니맵 영역(창 상대) — 스팟/룬 측정 API가 이 rect 안에서만 점을 찾는다.
+    private sealed record MiniBody(int MiniX = 0, int MiniY = 0, int MiniW = 0, int MiniH = 0);
+    // 스팟 확정: X/Y = 캐릭터 앵커(창 상대) + 미니맵 영역
+    private sealed record SpotCaptureBody(int? X = null, int? Y = null,
+                                          int MiniX = 0, int MiniY = 0, int MiniW = 0, int MiniH = 0);
     private sealed record RecordStartBody(
         bool Keyboard = true,
         bool MouseButtons = true,

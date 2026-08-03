@@ -33,5 +33,18 @@ public sealed class Macro
     /// <summary>마지막 수정 시각(UTC, ISO8601). 호스트가 저장 시 설정.</summary>
     public DateTimeOffset ModifiedUtc { get; set; }
 
+    /// <summary>메이플 카테고리 블록(위치 보정·룬 사용)이 공유하는 이 매크로 전용 미니맵 영역(게임 창 상대).
+    /// null = 미지정 — 편집기는 메이플 블록이 있으면 지정 전 저장을 막는다.</summary>
+    public MapleMinimap? MapleMinimap { get; set; }
+
     public bool IsInfinite => LoopCount <= 0;
+}
+
+/// <summary>매크로별 미니맵 고정 영역(게임 창 상대 px). 스팟 점 좌표는 이 영역 상대로 저장된다.</summary>
+public sealed class MapleMinimap
+{
+    public int X { get; set; }
+    public int Y { get; set; }
+    public int W { get; set; }
+    public int H { get; set; }
 }

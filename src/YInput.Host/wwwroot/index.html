@@ -101,6 +101,7 @@
                 <button class="pal-item" data-type="text" draggable="true"><span class="pal-ico type-text">🔤</span> 텍스트</button>
                 <button class="pal-item" data-type="loop" draggable="true"><span class="pal-ico type-loopStart">🔁</span> 반복 (N회)</button>
                 <button class="pal-item" data-type="macroRef" draggable="true"><span class="pal-ico type-macroRef">🧩</span> 매크로 실행</button>
+                <div class="palette-title palette-title-maple">메이플</div>
                 <button class="pal-item" data-type="positionCorrect" draggable="true"><span class="pal-ico type-positionCorrect">🧭</span> 위치 보정 <span class="pal-sub">자리 이탈 복귀</span></button>
                 <button class="pal-item" data-type="runeUse" draggable="true"><span class="pal-ico type-runeUse">💠</span> 룬 사용 <span class="pal-sub">이동·발동·퍼즐</span></button>
               </aside>
@@ -209,18 +210,11 @@
       </section>
       <section class="drawer-sec">
         <h3>위치 지킴이</h3>
-        <p class="hint">매크로 편집기에서 <b>🧭 위치 보정</b> 블록을 원하는 위치에 넣으면, 재생이 그 블록에 도달했을 때 캐릭터가 저장된 자리에서 벗어나 있는지 확인해 <b>미니맵 점</b>으로 대략 복귀시키고 저장해둔 <b>기준 화면</b>과 대조해 미세 조정합니다. 게임 창이 전면일 때만 동작합니다.</p>
+        <p class="hint">매크로 편집기의 <b>메이플</b> 블록(🧭 위치 보정 · 💠 룬 사용)이 사용하는 공통 설정입니다. <b>미니맵 영역은 매크로별</b>로 편집기 스텝 목록 1열의 [미니맵 위치] 카드에서 지정합니다. 게임 창이 전면일 때만 동작합니다.</p>
         <div class="row" style="margin-top:10px">
           <select id="wt-winlist" class="ov-select"></select>
           <button id="wt-win-refresh" class="btn ghost sm" title="실행 중 창 목록 새로고침">↻</button>
         </div>
-        <p class="hint" style="margin-top:10px"><b>미니맵 고정</b> — [미니맵 탐지]를 누르면 그 순간 1회 자동 감지해 크기·위치를 고정합니다. 결과가 마음에 안 들면 [수동 지정]으로 직접 드래그하세요.</p>
-        <div class="row">
-          <button id="wt-mini-auto" class="btn ghost sm">미니맵 탐지</button>
-          <button id="wt-mini-manual" class="btn ghost sm">수동 지정</button>
-        </div>
-        <img id="wt-mini-thumb" class="wt-mini-thumb" alt="고정된 미니맵" hidden />
-        <p id="wt-info" class="hint">—</p>
         <div class="row wt-nums">
           <label>허용오차(미니맵px) <input id="wt-tol" type="number" min="0" max="10" step="0.1"></label>
           <label>최대 보정(ms) <input id="wt-maxms" type="number" min="500" max="60000" step="500"></label>
@@ -265,9 +259,9 @@
   <div id="wt-modal" class="wt-modal" hidden>
     <div class="wt-modal-head">
       <b>미니맵 수동 지정</b>
-      <span class="wt-modal-hint">미니맵의 맵 영역(흰 테두리 안)을 드래그로 감싸세요 — 내 캐릭터 노란 점이 보여야 합니다</span>
+      <span class="wt-modal-hint">미니맵의 맵 영역(흰 테두리 안)을 드래그로 감싸세요 — 내 캐릭터 노란 점이 보여야 합니다. 지정한 영역은 편집 중인 매크로에 저장됩니다</span>
       <div class="row">
-        <button id="wt-apply" class="btn primary sm" disabled>이 영역으로 고정</button>
+        <button id="wt-apply" class="btn primary sm" disabled>이 영역으로 지정</button>
         <button id="wt-recapture" class="btn ghost sm">다시 캡처</button>
         <button id="wt-modal-cancel" class="btn ghost sm">취소</button>
       </div>

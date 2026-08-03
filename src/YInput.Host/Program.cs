@@ -85,6 +85,17 @@ internal static class Program
         var watcher = new PositionWatcher(dataRoot, hub, backend); // 위치 지킴이('위치 보정' 스텝의 실제 수행자)
         service.PositionCorrectHook = watcher.CorrectAsync;
         service.RuneUseHook = watcher.RuneUseAsync;
+        // 구버전 전역 미니맵 → 메이플 블록이 있는 매크로들로 1회 이관 후 정리(미니맵은 이제 매크로별)
+        if (watcher.LegacyMinimap is { } lm)
+        {
+            try
+            {
+                var n = service.AdoptLegacyMinimap(lm.X, lm.Y, lm.W, lm.H);
+                if (n > 0) FileLog.Write("info", $"전역 미니맵 설정을 매크로 {n}개로 이관했습니다.");
+            }
+            catch (Exception ex) { FileLog.Error("미니맵 이관", ex); }
+            watcher.ClearLegacyMinimap();
+        }
 
         var app = BuildWebApp(service, hub, sync, widgets, overlay, watcher, url);
         app.StartAsync().GetAwaiter().GetResult();

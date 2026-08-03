@@ -353,6 +353,16 @@ input[type=range] { accent-color: var(--accent); }
 @media (max-width: 820px) { .editor-body { grid-template-columns: 1fr; } }
 .palette { align-self: start; display: flex; flex-direction: column; gap: 8px; background: var(--card2); border: 1px solid var(--border); border-radius: 11px; padding: 14px 16px; }
 .palette-title { font-size: 11.5px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .4px; margin: 2px 2px 4px; }
+.palette-title-maple { margin-top: 14px; color: var(--t-gamepad); }
+
+/* 1열 고정 미니맵 카드 — 이 매크로의 메이플 블록(위치 보정·룬 사용)이 공유하는 미니맵 영역 */
+.maple-mini-card { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin-bottom: 6px;
+  border: 1px dashed rgba(192,132,252,.45); border-radius: 10px; font-size: 12px; font-weight: 600; }
+.maple-mini-card .muted { font-weight: 400; min-width: 0; }
+.maple-mini-card.warn { border-color: rgba(251,146,60,.75); background: rgba(251,146,60,.07); }
+.maple-mini-thumb { max-height: 52px; max-width: 180px; border-radius: 6px; border: 1px solid var(--border2); image-rendering: pixelated; }
+.maple-mini-card.shake { animation: maple-shake .4s; }
+@keyframes maple-shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-4px)} 75%{transform:translateX(4px)} }
 .pal-item { display: flex; align-items: center; gap: 8px; text-align: left; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 10px 15px; font-size: 13px; font-weight: 600; cursor: grab; white-space: nowrap; }
 .pal-item:hover { border-color: var(--accent); background: var(--card3); }
 .pal-item:active { cursor: grabbing; }
@@ -536,7 +546,6 @@ input[type=range] { accent-color: var(--accent); }
 .spot-anchor::after { top: 50%; left: 0; right: 0; height: 2px; transform: translateY(-50%); }
 .spot-anchor-box { position: absolute; transform: translate(-50%, -50%); border: 1.5px solid var(--accent); border-radius: 4px; background: rgba(79,140,255,.10); box-shadow: 0 0 8px rgba(79,140,255,.4); pointer-events: none; }
 .spot-dot-marker { position: absolute; width: 10px; height: 10px; border-radius: 50%; border: 2px solid #ffd83b; transform: translate(-50%, -50%); box-shadow: 0 0 7px #ffd83b; pointer-events: none; }
-.wt-mini-thumb { display: block; max-width: 100%; margin-top: 8px; border: 1px solid var(--border2); border-radius: 8px; image-rendering: pixelated; }
 
 /* 캐릭터 위치 지정 팝업(별도 오버레이) */
 .spot-popup { position: fixed; inset: 0; z-index: 1500; background: rgba(8,10,14,.9); display: flex; align-items: center; justify-content: center; padding: 20px; }

@@ -45,11 +45,29 @@ public sealed class MacroService
     /// <summary>로컬 매크로 변경 후 호출(Program이 GitHubSync.SchedulePush로 연결) — 동기화 푸시 예약.</summary>
     public Action? MacrosChanged { get; set; }
 
-    /// <summary>'위치 보정' 스텝에서 실행할 훅(Program이 PositionWatcher.CorrectAsync로 연결). 인자 = 스팟 id.</summary>
-    public Func<string?, CancellationToken, Task>? PositionCorrectHook { get; set; }
+    /// <summary>'위치 보정' 스텝에서 실행할 훅(Program이 PositionWatcher.CorrectAsync로 연결).
+    /// 인자 = 재생 중 매크로의 미니맵 영역 + 스팟 id.</summary>
+    public Func<MapleMinimap?, string?, CancellationToken, Task>? PositionCorrectHook { get; set; }
 
-    /// <summary>'룬 사용' 스텝에서 실행할 훅(Program이 PositionWatcher.RuneUseAsync로 연결).</summary>
-    public Func<CancellationToken, Task>? RuneUseHook { get; set; }
+    /// <summary>'룬 사용' 스텝에서 실행할 훅(Program이 PositionWatcher.RuneUseAsync로 연결).
+    /// 인자 = 재생 중 매크로의 미니맵 영역.</summary>
+    public Func<MapleMinimap?, CancellationToken, Task>? RuneUseHook { get; set; }
+
+    /// <summary>구버전 전역 미니맵 영역을 메이플 블록(위치 보정·룬 사용)이 있고 아직 미니맵이 없는
+    /// 매크로들에 이관한다(시작 시 1회). 이관한 매크로 수 반환.</summary>
+    public int AdoptLegacyMinimap(int x, int y, int w, int h)
+    {
+        int n = 0;
+        foreach (var m in _library.LoadAll())
+        {
+            if (m.MapleMinimap is not null) continue;
+            if (!m.Steps.Any(s => s.Event is PositionCorrectEvent or RuneUseEvent)) continue;
+            m.MapleMinimap = new MapleMinimap { X = x, Y = y, W = w, H = h };
+            _library.Save(m);
+            n++;
+        }
+        return n;
+    }
 
     private void NotifyChanged() => MacrosChanged?.Invoke();
 
@@ -207,9 +225,12 @@ public sealed class MacroService
         if (_running.TryRemove(id, out var existing)) { existing.Stop(); BroadcastStatus(); return; }
 
         var macro = _library.Load(id) ?? throw new FileNotFoundException("매크로를 찾을 수 없습니다: " + id);
+        var expanded = ExpandMacro(macro); // 메이플 블록의 미니맵은 전개 결과에 승계(최상위 우선, 없으면 참조 매크로 것)
         var player = new Player(_backend); // 매크로마다 독립 Player → 서로 비동기·동시 재생
-        player.PositionCorrect = PositionCorrectHook; // '위치 보정' 스텝 도달 시 실행
-        player.RuneUse = RuneUseHook;                 // '룬 사용' 스텝 도달 시 실행
+        // 메이플 스텝(위치 보정·룬 사용)은 이 매크로의 미니맵 영역을 공유한다.
+        var hookPc = PositionCorrectHook; var hookRune = RuneUseHook;
+        if (hookPc is not null) player.PositionCorrect = (spotId, ct) => hookPc(expanded.MapleMinimap, spotId, ct);
+        if (hookRune is not null) player.RuneUse = ct => hookRune(expanded.MapleMinimap, ct);
         // 진행 보고는 스텝마다(최대 ~1000/s) 오므로, ProgressBroadcaster가 매크로별 최신값만 ~60Hz로 합쳐 전송한다.
         player.Progress += (_, p) => _progress.Report(id, p);
         player.Failed += (_, ex) => Log("error", $"재생 오류({macro.Name}): {ex.Message}");
@@ -218,7 +239,7 @@ public sealed class MacroService
         _running[id] = player;
         Log("info", $"재생 시작: {macro.Name}");
         BroadcastStatus();
-        _ = player.PlayAsync(ExpandMacro(macro)); // 완료 시 Stopped 핸들러가 _running에서 제거
+        _ = player.PlayAsync(expanded); // 완료 시 Stopped 핸들러가 _running에서 제거
     }
 
     /// <summary>모든 재생 중 매크로를 정지(킬 스위치).</summary>
@@ -233,8 +254,10 @@ public sealed class MacroService
     {
         var flat = new List<MacroStep>();
         var path = new HashSet<string>();
+        MapleMinimap? refMini = null; // 참조 매크로가 가진 미니맵 — 최상위에 없을 때 승계(첫 것 우선)
         void Walk(Macro m)
         {
+            refMini ??= m == top ? null : m.MapleMinimap;
             foreach (var s in m.Steps)
             {
                 if (s.Event is MacroRefEvent r)
@@ -258,6 +281,7 @@ public sealed class MacroService
             Id = top.Id, Name = top.Name, Steps = flat,
             LoopCount = top.LoopCount, SpeedMultiplier = top.SpeedMultiplier,
             RandomizeDelayPercent = top.RandomizeDelayPercent, Trigger = top.Trigger, Enabled = top.Enabled,
+            MapleMinimap = top.MapleMinimap ?? refMini,
         };
     }
 

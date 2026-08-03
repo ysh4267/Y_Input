@@ -25,7 +25,7 @@ const ICON = {
   del: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 4.3H13.4"/><path d="M6.4 4.3V3.2A1.1 1.1 0 0 1 7.5 2.1H8.5A1.1 1.1 0 0 1 9.6 3.2V4.3"/><path d="M3.9 4.3 4.6 13A1.3 1.3 0 0 0 5.9 14.2H10.1A1.3 1.3 0 0 0 11.4 13L12.1 4.3"/><path d="M6.6 6.9V11.3M9.4 6.9V11.3"/></svg>',
 };
 
-export function createEditor({ log, onSaved, getStatus, getMacros }) {
+export function createEditor({ log, onSaved, getStatus, getMacros, openMinimapPicker }) {
   let editing = null;
   let selected = new Set();   // 선택된 스텝의 _uid 집합
   let lastUid = null;         // Shift 범위 선택 기준
@@ -151,6 +151,8 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
       empty.textContent = '왼쪽 “동작”을 여기로 끌어다 놓거나 클릭해 추가하세요';
       wrap.appendChild(empty);
     } else {
+      // 메이플 블록(위치 보정·룬 사용)이 있으면 1열에 매크로별 미니맵 카드 고정 표시
+      if (hasMapleBlocks()) wrap.appendChild(buildMapleMiniCard());
       editing.steps.forEach((step, i) => wrap.appendChild(buildRow(step, i)));
       renderPairLines();
       applyLoopStyles();
@@ -358,6 +360,69 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
     }
   }
 
+  // ---------- 메이플 카테고리(위치 보정·룬 사용) — 매크로별 미니맵 공유 ----------
+  const MAPLE_TYPES = new Set(['positionCorrect', 'runeUse']);
+  const hasMapleBlocks = (m = editing) => !!m && (m.steps || []).some((s) => MAPLE_TYPES.has(s.event['$type']));
+  // 측정 API에 넘길 미니맵 rect(body) — 미지정이면 0으로 가서 서버가 안내 메시지를 준다
+  const miniBody = () => {
+    const mm = editing && editing.mapleMinimap;
+    return mm ? { miniX: mm.x, miniY: mm.y, miniW: mm.w, miniH: mm.h } : {};
+  };
+
+  function setMapleMinimap(rect) {
+    editing.mapleMinimap = { x: rect.x, y: rect.y, w: rect.w, h: rect.h };
+    markEdited();
+    renderSteps();
+  }
+
+  /// 1열 고정 카드 — 이 매크로의 메이플 블록들이 공유하는 미니맵 영역 표시·지정
+  function buildMapleMiniCard() {
+    const card = document.createElement('div');
+    const mm = editing.mapleMinimap;
+    card.className = 'maple-mini-card' + (mm ? '' : ' warn');
+    card.id = 'maple-mini-card';
+
+    const ico = document.createElement('span'); ico.className = 'step-ico type-runeUse'; ico.textContent = '🗺';
+    const name = document.createElement('span'); name.className = 'tname'; name.textContent = '미니맵 위치';
+    const info = document.createElement('span'); info.className = 'muted';
+    const thumb = document.createElement('img'); thumb.className = 'maple-mini-thumb'; thumb.alt = '미니맵 미리보기'; thumb.hidden = true;
+    if (mm) {
+      info.textContent = `지정됨 ${mm.w}×${mm.h}px @ (${mm.x}, ${mm.y}) — 이 매크로의 메이플 블록이 공유`;
+      thumb.src = `/api/watcher/minimap/preview?x=${mm.x}&y=${mm.y}&w=${mm.w}&h=${mm.h}&ts=${Date.now()}`;
+      thumb.onload = () => { thumb.hidden = false; };
+      thumb.onerror = () => { thumb.hidden = true; };
+    } else {
+      info.textContent = '⚠ 미지정 — 지정 전에는 이 매크로를 저장할 수 없습니다';
+    }
+
+    const bAuto = document.createElement('button'); bAuto.className = 'btn ghost sm'; bAuto.type = 'button';
+    bAuto.textContent = mm ? '다시 탐지' : '자동 탐지';
+    bAuto.onclick = async (e) => {
+      e.stopPropagation();
+      info.textContent = '미니맵 자동 탐지 중…';
+      try { setMapleMinimap(await api.watcherMinimapAuto()); log('info', '미니맵 위치를 자동 감지해 이 매크로에 저장했습니다.'); }
+      catch (err) { info.textContent = err.message; }
+    };
+    const bManual = document.createElement('button'); bManual.className = 'btn ghost sm'; bManual.type = 'button';
+    bManual.textContent = '수동 지정';
+    bManual.onclick = (e) => {
+      e.stopPropagation();
+      openMinimapPicker && openMinimapPicker((rect) => { setMapleMinimap(rect); log('info', '미니맵 위치를 수동 지정으로 이 매크로에 저장했습니다.'); });
+    };
+
+    card.append(ico, name, bAuto, bManual, thumb, info);
+    return card;
+  }
+
+  // 미니맵 미지정으로 저장이 막혔을 때 카드 강조(흔들림)
+  function flagMiniWarn() {
+    const card = document.getElementById('maple-mini-card');
+    if (!card) return;
+    card.classList.remove('shake');
+    void card.offsetWidth; // 리플로우로 애니메이션 재시작
+    card.classList.add('shake');
+  }
+
   // ---------- 룬 사용 카드 — 설정 없음, 테스트(미니맵에서 룬·내 점 상대 거리)만 제공 ----------
   function buildRuneDetail(td) {
     const info = document.createElement('span'); info.className = 'muted';
@@ -368,7 +433,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
       e.stopPropagation();
       info.textContent = '측정 중…';
       try {
-        const r = await api.watcherRuneTest();
+        const r = await api.watcherRuneTest(miniBody());
         if (r.error) { info.textContent = r.error; return; }
         const parts = [];
         if (!r.runeFound) parts.push('미니맵에 룬 아이콘 없음 — 재생 시 이 블록은 건너뜀');
@@ -399,7 +464,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
       if (!ev.spotId) return;
       info.textContent = '측정 중…';
       try {
-        const r = await api.watcherSpotTest(ev.spotId);
+        const r = await api.watcherSpotTest(ev.spotId, miniBody());
         if (r.error) { info.textContent = r.error; return; }
         const sg = (v) => (v > 0 ? '+' : '') + v;
         const parts = [];
@@ -519,13 +584,20 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
 
     const poll = async () => {
       if (busy || !alive()) return;
+      // 매크로에 미니맵이 없으면 서버 호출 없이 지정 유도(1열 카드 또는 이 팝업의 [미니맵 탐지])
+      if (!editing.mapleMinimap) {
+        liveInfo = null; cross.hidden = true; abox.hidden = true; dotMark.hidden = true; miniCol.hidden = true; bConfirm.disabled = true;
+        bMini.hidden = false;
+        stat.textContent = '이 매크로에 미니맵이 지정되지 않았습니다 — [미니맵 탐지]를 누르세요.';
+        return;
+      }
       try {
-        const live = await api.watcherLive();
+        const live = await api.watcherLive(miniBody());
         if (!alive()) return; // 폴링 중 닫힘
         if (!live.ok) {
           liveInfo = null; cross.hidden = true; abox.hidden = true; dotMark.hidden = true; miniCol.hidden = true; bConfirm.disabled = true;
           bMini.hidden = !live.needMinimap;
-          stat.textContent = live.error + (live.needMinimap ? ' — [미니맵 탐지]를 누르거나 설정에서 수동 지정하세요.' : '');
+          stat.textContent = live.error + (live.needMinimap ? ' — [미니맵 탐지]를 누르세요.' : '');
           return;
         }
         bMini.hidden = true;
@@ -549,8 +621,11 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
     bMini.onclick = async (e) => {
       e.stopPropagation();
       stat.textContent = '미니맵 자동 탐지 중…';
-      try { await api.watcherMinimapAuto(); stat.textContent = '미니맵을 고정했습니다.'; poll(); }
-      catch (err) { stat.textContent = err.message; }
+      try {
+        setMapleMinimap(await api.watcherMinimapAuto()); // 이 매크로에 저장(1열 카드와 동일)
+        stat.textContent = '미니맵 위치를 이 매크로에 저장했습니다.';
+        poll();
+      } catch (err) { stat.textContent = err.message; }
     };
     bConfirm.onclick = async (e) => {
       e.stopPropagation();
@@ -559,7 +634,7 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
       try {
         // 확정할 때마다 새 스팟 id — 블록을 복제해도 서로 다른 자리를 가질 수 있다
         const id = (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2)).replace(/[^0-9a-zA-Z-]/g, '');
-        await api.watcherSpotCapture(id, anchor);
+        await api.watcherSpotCapture(id, { ...anchor, ...miniBody() });
         pushUndo();
         ev.spotId = id;
         closeSpotPopup();
@@ -1137,6 +1212,12 @@ export function createEditor({ log, onSaved, getStatus, getMacros }) {
   async function save(opts = {}) {
     const target = editing; // 저장 대상 고정 — 저장 도중 다른 매크로로 전환돼도 엉뚱한 곳에 id를 쓰지 않게
     if (!target) return null;
+    // 메이플 블록(위치 보정·룬 사용)이 있는데 미니맵이 미지정이면 저장 차단 — 1열 카드에서 지정해야 저장된다.
+    if (hasMapleBlocks(target) && !target.mapleMinimap) {
+      if (!opts.quiet) log('warn', '미니맵 위치가 지정되지 않아 저장할 수 없습니다 — 스텝 목록 1열의 [미니맵 위치] 카드에서 자동 탐지 또는 수동 지정을 하세요.');
+      flagMiniWarn();
+      return null;
+    }
     try {
       const m = collect(target);
       const saved = m.id ? await api.updateMacro(m.id, m) : await api.createMacro(m);

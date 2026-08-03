@@ -75,8 +75,10 @@ export const api = {
   watcherMinimapAuto: () => request('POST', '/api/watcher/minimap/auto'),
   watcherMinimap: (r) => request('POST', '/api/watcher/minimap', r),
   watcherSpot: (id) => request('GET', `/api/watcher/spots/${id}`),
-  watcherSpotCapture: (id, anchor) => request('POST', `/api/watcher/spots/${id}/capture`, anchor || {}),
-  watcherSpotTest: (id) => request('POST', `/api/watcher/spots/${id}/test`),
-  watcherRuneTest: () => request('POST', '/api/watcher/rune/test'),
-  watcherLive: () => request('GET', '/api/watcher/live'),
+  // body = 앵커 {x,y} + 매크로별 미니맵 {miniX..miniH}
+  watcherSpotCapture: (id, body) => request('POST', `/api/watcher/spots/${id}/capture`, body || {}),
+  watcherSpotTest: (id, mini) => request('POST', `/api/watcher/spots/${id}/test`, mini || {}),
+  watcherRuneTest: (mini) => request('POST', '/api/watcher/rune/test', mini || {}),
+  watcherLive: (mini) => request('GET',
+    `/api/watcher/live?x=${mini?.miniX ?? 0}&y=${mini?.miniY ?? 0}&w=${mini?.miniW ?? 0}&h=${mini?.miniH ?? 0}`),
 };
