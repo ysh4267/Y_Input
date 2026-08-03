@@ -787,13 +787,19 @@ public sealed class PositionWatcher : IDisposable
                 try { f = ScreenCapture.Capture(screenCrop); } catch { /* 일시적 캡처 실패 */ }
                 if (f is not null)
                 {
-                    var row = RuneArrowDetector.AnalyzeFrame(f, win, beforeCrop, precropped: true);
-                    if (_runeShots.Count < 4) _runeShots.Add(f); // 진단 보관(첫 4프레임)
-                    win.Add(f);
-                    while (win.Count > 3)
+                    List<ArrowSample>? row;
+                    // finally로 f의 소유권을 win/_runeShots에 반드시 넘긴다 — AnalyzeFrame이
+                    // 예외를 던지면(캡처 자원 고갈 등) f가 어디에도 없어 누수되던 회귀 방지
+                    try { row = RuneArrowDetector.AnalyzeFrame(f, win, beforeCrop, precropped: true); }
+                    finally
                     {
-                        var old = win[0]; win.RemoveAt(0);
-                        if (!_runeShots.Contains(old)) old.Dispose();
+                        if (_runeShots.Count < 4) _runeShots.Add(f); // 진단 보관(첫 4프레임)
+                        win.Add(f);
+                        while (win.Count > 3)
+                        {
+                            var old = win[0]; win.RemoveAt(0);
+                            if (!_runeShots.Contains(old)) old.Dispose();
+                        }
                     }
                     if (row is not null)
                     {

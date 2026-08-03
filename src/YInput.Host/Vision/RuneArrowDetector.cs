@@ -35,8 +35,6 @@ internal static class RuneArrowDetector
                                            // 지우고 화살표(선명한 무지개)만 남긴다. 00:45 프레임 검증값
     private const double BannerWideFrac = 0.30; // 안내 배너 판정: 가로 이 비율 이상 변한 행
     private const int BannerMinRows = 6;        // 그런 행이 연속 이만큼 = 배너
-    private const double ArrowBandFrac = 0.15;  // 배너(어두운 띠) '하단'부터 창 높이의 이 비율 안에서만 화살표 탐색
-                                                // — 화살표 줄은 항상 텍스트 배너 띠 바로 아래(실측 ~30px)의 밝은 필 안
     private const int MinThick = 4;      // 얇은 구조 제거: 가로·세로 연속 두께 하한 — 화살표 코어(반투명
                                          // 합성으로 작아짐)는 살리고 1~3px 외곽선·궤적만 지운다
     private const int MinPieceArea = 4;  // 블롭 조각 최소 픽셀 — 반투명 합성으로 화살표가 점묘처럼
@@ -100,42 +98,54 @@ internal static class RuneArrowDetector
         return Detect(frame, bannerRef, mask, region, w, h, thinFilter: true, FullFrameH(frame, precropped));
     }
 
-    /// <summary>퍼즐(안내 배너)이 지금 떠 있는지 — 열린 퍼즐에 스페이스를 다시 누르면 오답 입력이
-    /// 되므로 재발동 전 확인용. 배너 = bannerRef(발동 전) 대비 '가로로 넓게 변한' 행이면서
-    /// 지금 두 프레임(frameA→frameB, ~180ms 간격) 사이에는 '정지'인 행 — 몹·이펙트로 화면이
-    /// 계속 변하는 맵에서 '아직 열려 있음' 오판을 막는다(정적 오버레이만 배너로 인정).</summary>
-    public static bool PuzzlePresent(Bitmap frameA, Bitmap frameB, Bitmap? bannerRef, bool precropped = false)
-    {
-        if (bannerRef is null) return false;
-        if (bannerRef.Width != frameB.Width || bannerRef.Height != frameB.Height) return false;
-        if (frameA.Width != frameB.Width || frameA.Height != frameB.Height) return false;
-        if (!TryRegion(frameB, precropped, out var region)) return false;
-        int w = region.Width, h = region.Height;
+    /// <summary>배너 띠(안내 텍스트 배경)의 창 기준 세로 구간 — 실측 두 맵 동일(상단 ≈ 20%H).</summary>
+    private const double BannerStripTopFrac = 0.18, BannerStripBotFrac = 0.28;
+    private const int PresentMinPx = 250; // 텍스트 신호 임계 — 안내 텍스트 글리프는 수백~수천 px
 
-        var (vsBefore, lumBefore, lumNow) = RowStats(bannerRef, frameB, region, DiffMin); // 발동 전 대비
-        var (vsNow, _, _) = RowStats(frameA, frameB, region, DiffMin);                    // 지금 움직임
-        int wide = (int)(w * BannerWideFrac), still = (int)(w * 0.05);
-        int run = 0;
-        for (int y = 0; y < h; y++)
-        {
-            // 배너 행 = 발동 전과 넓게 다르면서, (지금 정지) 또는 (뚜렷이 어두워짐 — 반투명 배너 너머로
-            // 몹·이펙트가 비쳐 '정지'가 깨지는 맵 대비: 어두운 띠가 덮이면 행 평균 밝기가 떨어진다)
-            if (vsBefore[y] >= wide && (vsNow[y] <= still || lumBefore[y] - lumNow[y] >= 10))
-            {
-                if (++run >= BannerMinRows) return true;
-            }
-            else run = 0;
-        }
-        return false;
+    /// <summary>퍼즐(안내 배너)이 지금 떠 있는지 — 열린 퍼즐에 스페이스를 다시 누르면 오답 입력이
+    /// 되므로 재발동 전 확인용. 신호 = 배너 띠의 <b>창 기준 고정 구간</b>(18~28%H)에서
+    /// '발동 전과 다름 + 지금 정지 + 채도 높음'인 픽셀 수 — 안내 텍스트("방향키" 주황 글리프)는
+    /// 퍼즐이 떠 있는 동안(회전 중에도) 항상 정지·선명·새로 나타난 픽셀 수백 개를 만든다.
+    /// 이전의 행 단위 어두워짐/정지/평탄화 판정은 불타는 맵에서 전부 오판했다(불꽃이 사라진
+    /// 자리는 영구 어두움 → 01:17 재발동 포기, 반투명 띠 너머 고대비 배경은 평탄화 무효).</summary>
+    public static bool PuzzlePresent(Bitmap frameA, Bitmap frameB, Bitmap? bannerRef, bool precropped = false)
+        => PresentPixelCount(frameA, frameB, bannerRef, precropped) >= PresentMinPx;
+
+    /// <summary>배너 텍스트 신호 픽셀 수 — <see cref="PuzzlePresent"/>의 원값(진단 출력용).</summary>
+    internal static int PresentPixelCount(Bitmap frameA, Bitmap frameB, Bitmap? bannerRef, bool precropped = false)
+    {
+        if (bannerRef is null) return 0;
+        if (bannerRef.Width != frameB.Width || bannerRef.Height != frameB.Height) return 0;
+        if (frameA.Width != frameB.Width || frameA.Height != frameB.Height) return 0;
+        if (!TryRegion(frameB, precropped, out var region)) return 0;
+        int fullH = FullFrameH(frameB, precropped);
+        int offset = (int)(RegionY0 * fullH);
+        int sy0 = Math.Clamp((int)(BannerStripTopFrac * fullH) - offset, 0, region.Height - 1);
+        int sy1 = Math.Clamp((int)(BannerStripBotFrac * fullH) - offset, sy0, region.Height - 1);
+        var strip = new Rectangle(region.X, region.Y + sy0, region.Width, sy1 - sy0 + 1);
+        int w = strip.Width, h = strip.Height;
+
+        var vivid = VividMask(frameB, strip, w, h);
+        var fresh = new bool[w * h];
+        AccumulateDiff(bannerRef, frameB, strip, w, h, DiffMin, fresh);
+        var moving = new bool[w * h];
+        AccumulateDiff(frameA, frameB, strip, w, h, AnimDiffMin, moving);
+        int count = 0;
+        for (int i = 0; i < vivid.Length; i++)
+            if (vivid[i] && fresh[i] && !moving[i]) count++;
+        return count;
     }
 
-    /// <summary>행별 픽셀 차이 개수(|ΔR|+|ΔG|+|ΔB| ≥ min)와 행 평균 밝기(a·b 각각).</summary>
-    private static (int[] Diff, double[] LumA, double[] LumB) RowStats(Bitmap a, Bitmap b, Rectangle region, int min)
+    /// <summary>행별 픽셀 차이 개수(|ΔR|+|ΔG|+|ΔB| ≥ min), 행 평균 밝기, 행 밝기 표준편차(a·b 각각).
+    /// 표준편차는 배너 판정용 — 어두운 반투명 띠가 덮이면 행의 명암 대비가 눌려 표준편차가 떨어진다.</summary>
+    private static (int[] Diff, double[] LumA, double[] LumB, double[] StdA, double[] StdB) RowStats(Bitmap a, Bitmap b, Rectangle region, int min)
     {
         int w = region.Width, h = region.Height;
         var counts = new int[h];
         var lumA = new double[h];
         var lumB = new double[h];
+        var stdA = new double[h];
+        var stdB = new double[h];
         var da = a.LockBits(region, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
         var db = b.LockBits(region, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
         try
@@ -146,23 +156,28 @@ internal static class RuneArrowDetector
                 {
                     byte* ra = (byte*)da.Scan0 + y * da.Stride;
                     byte* rb = (byte*)db.Scan0 + y * db.Stride;
-                    int c = 0; long sa = 0, sb2 = 0;
+                    int c = 0; long sa = 0, sb2 = 0, qa = 0, qb = 0;
                     for (int x = 0; x < w; x++)
                     {
                         int i4 = x * 4;
                         int d = Math.Abs(ra[i4] - rb[i4]) + Math.Abs(ra[i4 + 1] - rb[i4 + 1]) + Math.Abs(ra[i4 + 2] - rb[i4 + 2]);
                         if (d >= min) c++;
-                        sa += ra[i4] + ra[i4 + 1] + ra[i4 + 2];
-                        sb2 += rb[i4] + rb[i4 + 1] + rb[i4 + 2];
+                        int la = ra[i4] + ra[i4 + 1] + ra[i4 + 2];
+                        int lb2 = rb[i4] + rb[i4 + 1] + rb[i4 + 2];
+                        sa += la; sb2 += lb2;
+                        qa += (long)la * la; qb += (long)lb2 * lb2;
                     }
                     counts[y] = c;
-                    lumA[y] = sa / (3.0 * w);
-                    lumB[y] = sb2 / (3.0 * w);
+                    double ma = sa / (double)w, mb = sb2 / (double)w;
+                    lumA[y] = ma / 3.0;
+                    lumB[y] = mb / 3.0;
+                    stdA[y] = Math.Sqrt(Math.Max(0, qa / (double)w - ma * ma)) / 3.0;
+                    stdB[y] = Math.Sqrt(Math.Max(0, qb / (double)w - mb * mb)) / 3.0;
                 }
             }
         }
         finally { a.UnlockBits(da); b.UnlockBits(db); }
-        return (counts, lumA, lumB);
+        return (counts, lumA, lumB, stdA, stdB);
     }
 
     // ---------- 공통 파이프라인 ----------
@@ -206,6 +221,10 @@ internal static class RuneArrowDetector
         List<Blob>? row = null;
         if (diffBefore is not null && prevs.Count >= 1)
         {
+            // 고채도(80)·완화(45) 두 마스크를 모두 시도해 '면적이 고른' 줄을 채택 — 어떤 맵은
+            // 고채도에서 화살표가 침식돼 조각나고(면적 제각각), 어떤 맵은 완화에서 불꽃 잔광이
+            // 화살표에 들러붙어 한 블롭만 커진다. 균일한 쪽이 깨끗한 분리다(동률이면 면적 합 큰 쪽).
+            List<Blob>? best = null; double bestRatio = double.MaxValue; int bestArea = 0;
             foreach (int sat in (int[])[VividSatStrict, VividSat])
             {
                 var mi = VividMask(frame, region, w, h, sat);
@@ -215,9 +234,14 @@ internal static class RuneArrowDetector
                     for (int i = 0; i < mi.Length; i++) mi[i] &= vp[i];
                 }
                 for (int i = 0; i < mi.Length; i++) mi[i] &= diffBefore[i];
-                row = DetectRow(frame, bannerRef, mi, region, w, h, thinFilter: true, fullH);
-                if (row is not null) break;
+                var r = DetectRow(frame, bannerRef, mi, region, w, h, thinFilter: true, fullH);
+                if (r is null) continue;
+                double ratio = (double)r.Max(b => b.Area) / r.Min(b => b.Area);
+                int area = r.Sum(b => b.Area);
+                if (ratio < bestRatio - 0.01 || (Math.Abs(ratio - bestRatio) <= 0.01 && area > bestArea))
+                { best = r; bestRatio = ratio; bestArea = area; }
             }
+            row = best;
         }
         if (row is null && diffBefore is not null && prevs.Count >= 1)
         {
@@ -261,19 +285,28 @@ internal static class RuneArrowDetector
     /// <summary>진단 CLI에서만 설정 — DetectRow가 밴드·후보·선택 결과를 이 콜백으로 알린다.</summary>
     internal static Action<string>? DiagLog;
 
-    /// <summary>마스크에서 '화살표 줄' 블롭 4개 선택(왼쪽부터). 실패 시 null.</summary>
-    private static List<Blob>? DetectRow(Bitmap frame, Bitmap? bannerRef, bool[] mask, Rectangle region, int w, int h, bool thinFilter, int fullFrameH)
+    /// <summary>마스크에서 '화살표 줄' 블롭 4개 선택(왼쪽부터). fullArea = 밴드·중심 제약 없이
+    /// 전 영역 탐색(진단 전용 — 밴드 기하가 틀리는 창 크기를 확인할 때). 실패 시 null.</summary>
+    private static List<Blob>? DetectRow(Bitmap frame, Bitmap? bannerRef, bool[] mask, Rectangle region, int w, int h, bool thinFilter, int fullFrameH, bool fullArea = false)
     {
         if (thinFilter) ThinFilter(mask, w, h);
-        var (bandY0, bandY1, bannerCx) = BannerBand(frame, bannerRef, region, w, h, fullFrameH);
+        var (bandY0, bandY1, bannerCx) = fullArea ? (0, h - 1, -1.0) : BannerBand(w, h, fullFrameH);
 
         var cands = MergeNear(FindBlobs(mask, w, h)).Where(b =>
             b.Area is >= MinArrowArea and <= MaxArrowArea &&
             b.W is >= MinArrowBox and <= MaxArrowBox && b.H is >= MinArrowBox and <= MaxArrowBox &&
             b.Cy >= bandY0 && b.Cy <= bandY1).ToList();
         var row = PickRow(cands, bannerCx, frame.Width);
-        DiagLog?.Invoke($"밴드 y{region.Y + bandY0}..{region.Y + bandY1} 중심X {(bannerCx >= 0 ? (region.X + bannerCx).ToString("0") : "-")} 후보 {cands.Count}"
-            + (row is null ? " → 줄 없음" : " → " + string.Join(" ", row.Select(b => $"({region.X + b.Cx:0},{region.Y + b.Cy:0})a{b.Area}"))));
+        if (DiagLog is not null)
+        {
+            DiagLog($"밴드 y{region.Y + bandY0}..{region.Y + bandY1} 중심X {(bannerCx >= 0 ? (region.X + bannerCx).ToString("0") : "-")} 후보 {cands.Count}"
+                + (row is null ? " → 줄 없음" : " → " + string.Join(" ", row.Select(b => $"({region.X + b.Cx:0},{region.Y + b.Cy:0})a{b.Area}"))));
+            foreach (var b in cands.OrderBy(b => b.Cx))
+            {
+                var (dir, up, _, left, _) = ClassifyScores(b, w);
+                DiagLog($"  후보 ({region.X + b.Cx:0},{region.Y + b.Cy:0}) a{b.Area} {b.W}x{b.H} {dir} |L{left:+0.00;-0.00}|U{up:+0.00;-0.00}|");
+            }
+        }
         return row;
     }
 
@@ -306,13 +339,17 @@ internal static class RuneArrowDetector
 
     /// <summary>후보들 중 '화살표 줄' 4개 선택 — 같은 높이(±RowBandPx), 이웃 간격 35~280px,
     /// 크기 유사(최대/최소 면적 ≤5배), 배너 중심 정렬(±12% 폭). 조건을 만족하는 조합 중
-    /// 면적 합이 크고 배너 중심에 가까운 것. 없으면 null.</summary>
+    /// '면적 합 − 박스 불균일 벌점 − 중심 이탈'이 최대인 것. 화살표 4개는 글리프 크기가 같아
+    /// 바운딩 박스가 거의 동일(22~30px)하고, 불꽃 잔광·이펙트 블롭은 박스가 튄다(34x28, 49x57 —
+    /// 01:16·00:45 실행에서 면적만으로는 정크가 진짜 화살표를 밀어냈다). 모양 비대칭은 판별자로
+    /// 못 쓴다 — 진짜 ←도 침식되면 |0.06|까지 떨어진다(00:45 sat80). 없으면 null.</summary>
     private static List<Blob>? PickRow(List<Blob> cands, double bannerCx, int frameW)
     {
         if (cands.Count < 4) return null;
-        var top = cands.OrderByDescending(b => b.Area).Take(14).OrderBy(b => b.Cx).ToList();
-        List<Blob>? best = null; double bestScore = double.MinValue;
+        // 상위 20개 — 불타는 맵은 노이즈 블롭이 커서 14개 컷으로는 작은 화살표가 밀려났다
+        var top = cands.OrderByDescending(b => b.Area).Take(20).OrderBy(b => b.Cx).ToList();
         int n = top.Count;
+        List<Blob>? best = null; double bestScore = double.MinValue;
         for (int a = 0; a < n - 3; a++)
             for (int b2 = a + 1; b2 < n - 2; b2++)
                 for (int c = b2 + 1; c < n - 1; c++)
@@ -338,7 +375,10 @@ internal static class RuneArrowDetector
                             if (off > frameW * 0.12) continue; // 배너 축에서 벗어난 줄(우측 팝업창 등) 배제
                             centerPenalty = off * 2;
                         }
-                        double score = combo.Sum(x => (double)x.Area) - centerPenalty;
+                        double wRatio = combo.Max(x => x.W) / (double)combo.Min(x => x.W);
+                        double hRatio = combo.Max(x => x.H) / (double)combo.Min(x => x.H);
+                        double boxPenalty = 300 * (wRatio - 1 + hRatio - 1);
+                        double score = combo.Sum(x => (double)x.Area) - centerPenalty - boxPenalty;
                         if (score > bestScore) { bestScore = score; best = combo.ToList(); }
                     }
         return best;
@@ -432,63 +472,20 @@ internal static class RuneArrowDetector
             mask[i] = mask[i] && hRun[i] >= MinThick && vRun[i] >= MinThick;
     }
 
-    /// <summary>안내 배너("룬을 해방하려면…") 탐색 — bannerRef 대비 '가로로 넓게 변한' 행 중
-    /// <b>가장 뚜렷이 어두워진 행(피크)</b>을 포함하는 연속 어두운 띠를 배너로 잡고, 그 띠의
-    /// <b>하단부터</b> 창 높이 15% 아래까지를 화살표 밴드로 반환. 화살표 줄은 항상 텍스트 배너
-    /// 띠 바로 아래 밝은 필 안에 있다 — 띠 '상단'부터 밴드를 잡으면 배너의 주황색 텍스트
-    /// 글리프("방향키")가 화살표 후보로 섞여 오답이 된다(00:45 불타는 맵: ④경로가 텍스트를
-    /// 화살표로 분류). '첫 어두워진 행' 대신 '피크 기준 상대 임계'를 쓰는 이유: 몹·불꽃으로
-    /// 화면 전체가 변하는 맵에서는 어두워짐≥8인 행이 배너 밖에도 산발해 첫 행이 엉뚱한 곳에
-    /// 걸린다. CenterX = 피크 행의 변한 픽셀 범위 중앙(화살표 줄 축 정렬 검증용). 못 찾으면 (전체, -1).</summary>
-    private static (int Y0, int Y1, double CenterX) BannerBand(Bitmap frame, Bitmap? bannerRef, Rectangle region, int w, int h, int fullFrameH)
+    /// <summary>화살표 탐색 밴드 — <b>창 기준 고정 기하</b>. 룬 퍼즐 UI는 창 기준 고정 위치다
+    /// (실측 두 맵 동일: 배너 띠 상단 ≈ 창높이 20%, 안내 텍스트 ≈ 23~27%, 화살표 줄 ≈ 29.5~33%).
+    /// 발동 전 차분·어두워짐으로 배너를 '탐지'하는 방식은 불타는 맵에서 세 번 다르게 실패했다
+    /// (첫 행 오검출 → 불꽃 노이즈 / 피크 앵커 → 불꽃이 사라진 자리 어두워짐이 배너보다 큼) —
+    /// 배경과 무관한 고정 밴드가 유일하게 안정적이다. 텍스트 글리프(≤27%)는 밴드 밖.
+    /// CenterX = 탐색 영역 가로 중앙(퍼즐 UI는 창 중앙 정렬 — 우측 팝업 줄 배제용).</summary>
+    private const double ArrowBandTopFrac = 0.28, ArrowBandBotFrac = 0.42;
+
+    private static (int Y0, int Y1, double CenterX) BannerBand(int w, int h, int fullFrameH)
     {
-        if (bannerRef is null || bannerRef.Width != frame.Width || bannerRef.Height != frame.Height) return (0, h - 1, -1);
-        var (diff, lumBefore, lumNow) = RowStats(bannerRef, frame, region, DiffMin);
-        int wide = (int)(w * BannerWideFrac);
-        var dark = new double[h];
-        double maxDark = 0; int peak = -1;
-        for (int y = 0; y < h; y++)
-        {
-            dark[y] = diff[y] >= wide ? lumBefore[y] - lumNow[y] : 0;
-            if (dark[y] > maxDark) { maxDark = dark[y]; peak = y; }
-        }
-        if (peak < 0 || maxDark < 8) return (0, h - 1, -1);
-
-        double thr = Math.Max(8.0, maxDark * 0.5);
-        int top = peak, bot = peak;
-        while (top > 0 && dark[top - 1] >= thr) top--;
-        while (bot < h - 1 && dark[bot + 1] >= thr) bot++;
-        if (bot - top + 1 < BannerMinRows) return (0, h - 1, -1);
-
-        double cx = RowChangedCenter(bannerRef, frame, region, peak);
-        int y0 = Math.Min(h - 1, bot + 1);
-        return (y0, Math.Min(h - 1, y0 + (int)(fullFrameH * ArrowBandFrac)), cx);
-    }
-
-    /// <summary>한 행에서 bannerRef 대비 변한 픽셀들의 가로 중앙.</summary>
-    private static double RowChangedCenter(Bitmap a, Bitmap b, Rectangle region, int y)
-    {
-        int w = region.Width;
-        var rowRect = new Rectangle(region.X, region.Y + y, w, 1);
-        var da = a.LockBits(rowRect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
-        var db = b.LockBits(rowRect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
-        try
-        {
-            unsafe
-            {
-                byte* ra = (byte*)da.Scan0;
-                byte* rb = (byte*)db.Scan0;
-                int minX = w, maxX = -1;
-                for (int x = 0; x < w; x++)
-                {
-                    int i4 = x * 4;
-                    int d = Math.Abs(ra[i4] - rb[i4]) + Math.Abs(ra[i4 + 1] - rb[i4 + 1]) + Math.Abs(ra[i4 + 2] - rb[i4 + 2]);
-                    if (d >= DiffMin) { if (x < minX) minX = x; if (x > maxX) maxX = x; }
-                }
-                return maxX < 0 ? w / 2.0 : (minX + maxX) / 2.0;
-            }
-        }
-        finally { a.UnlockBits(da); b.UnlockBits(db); }
+        int offset = (int)(RegionY0 * fullFrameH); // 탐색 영역 상단의 창 기준 y (크롭·전체 프레임 공통)
+        int y0 = Math.Clamp((int)(ArrowBandTopFrac * fullFrameH) - offset, 0, h - 1);
+        int y1 = Math.Clamp((int)(ArrowBandBotFrac * fullFrameH) - offset, y0, h - 1);
+        return (y0, y1, w / 2.0);
     }
 
     /// <summary>진단 CLI(--rune-analyze) — 저장된 퍼즐 스크린샷으로 인식 과정을 재현해
@@ -566,19 +563,21 @@ internal static class RuneArrowDetector
                     // 행별 배너 신호 프로파일 — '넓게 변한' 행 연속 구간과 어두워짐 정도
                     if (beforeRef.Width == frame.Width && beforeRef.Height == frame.Height)
                     {
-                        var (dRows, lb, ln) = RowStats(beforeRef, frame, region, DiffMin);
+                        var (dRows, lb, ln, sdBefore, sdNow) = RowStats(beforeRef, frame, region, DiffMin);
                         int wideThr = (int)(w * BannerWideFrac);
-                        sb.AppendLine($"— 행별 배너 신호 (폭변화 ≥{wideThr}px + 어두워짐 ≥8 구간) —");
+                        sb.AppendLine($"— 행별 배너 신호 (폭변화 ≥{wideThr}px + 어두워짐 ≥8 구간, 평탄화=표준편차 전→후) —");
                         for (int y = 0; y < h;)
                         {
                             if (dRows[y] < wideThr || lb[y] - ln[y] < 8) { y++; continue; }
-                            int y0 = y; double dkSum = 0, dkMax = 0;
+                            int y0 = y; double dkSum = 0, dkMax = 0, sdbSum = 0, sdnSum = 0;
                             while (y < h && dRows[y] >= wideThr && lb[y] - ln[y] >= 8)
                             {
                                 double dk = lb[y] - ln[y];
-                                dkSum += dk; dkMax = Math.Max(dkMax, dk); y++;
+                                dkSum += dk; dkMax = Math.Max(dkMax, dk);
+                                sdbSum += sdBefore[y]; sdnSum += sdNow[y]; y++;
                             }
-                            sb.AppendLine($"  y {region.Y + y0}..{region.Y + y - 1} ({y - y0}행) 어두워짐 평균 {dkSum / (y - y0):0.0} 최대 {dkMax:0.0}");
+                            int n2 = y - y0;
+                            sb.AppendLine($"  y {region.Y + y0}..{region.Y + y - 1} ({n2}행) 어두워짐 평균 {dkSum / n2:0.0} 최대 {dkMax:0.0} 표준편차 {sdbSum / n2:0.0}→{sdnSum / n2:0.0}");
                         }
                     }
                     string Dirs(List<RuneArrow>? a) => a is null ? "실패"
@@ -592,7 +591,9 @@ internal static class RuneArrowDetector
                         ThinFilter(m2, w, h);
                         SaveMaskPng(m2, w, h, pngPaths[0] + ".mask-diffbefore.png");
                     }
-                    var band = BannerBand(frame, beforeRef, region, w, h, FullFrameH(frame, pre));
+                    if (frames.Count >= 2)
+                        sb.AppendLine($"배너 텍스트 신호 = {PresentPixelCount(frames[^2], frames[^1], beforeRef, pre)}px (임계 {PresentMinPx} — PuzzlePresent)");
+                    var band = BannerBand(w, h, FullFrameH(frame, pre));
                     sb.AppendLine($"— 실전 경로 재현 (배너 밴드 y {region.Y + band.Y0}..{region.Y + band.Y1}, 중심X {(band.CenterX >= 0 ? (region.X + band.CenterX).ToString("0") : "미탐지")}) —");
                     DiagLog = s => sb.AppendLine($"      [{s}]");
                     try
@@ -621,6 +622,9 @@ internal static class RuneArrowDetector
                                 SaveMaskPng(mi, w, h, pngPaths[0] + $".mask-vivid-and-{sat}.png");
                                 var r5 = DetectRow(frame, beforeRef, mi, region, w, h, thinFilter: false, FullFrameH(frame, pre));
                                 sb.AppendLine($"  ⑤ 채도 교집합(sat{sat}): {(r5 is null ? "실패" : string.Join(" ", r5.Select(b => ClassifyScores(b, w).Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })))}");
+                                // ⑥ 같은 마스크를 배너 밴드 없이 전 영역에서 — 밴드 기하가 틀리는 창 크기 대비
+                                var r6 = DetectRow(frame, beforeRef, mi, region, w, h, thinFilter: false, FullFrameH(frame, pre), fullArea: true);
+                                sb.AppendLine($"  ⑥ 교집합 전영역(sat{sat}): {(r6 is null ? "실패" : string.Join(" ", r6.Select(b => ClassifyScores(b, w).Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })))}");
                             }
                         }
                     }
