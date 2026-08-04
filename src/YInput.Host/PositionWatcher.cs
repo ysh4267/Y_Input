@@ -596,15 +596,20 @@ public sealed class PositionWatcher : IDisposable
         {
             if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면이 아니라 룬 사용을 건너뜁니다."); return; }
             // 룬 존재 확인 — 매크로는 룬 유무와 무관하게 주기적으로 실행되는 전제라, 없으면 '룬 없음'으로
-            // 결론 내리고 이 과정을 즉시 끝낸다(있을 때만 가서 깐다). 한 프레임 캡처 노이즈로
-            // 오판하지 않게 짧은 재확인 한 번만 거친다. 위치는 여기서 1회만 측정 — 이후 갱신하지 않는다.
-            var rune0 = MeasureRune(s, mini);
-            if (rune0 is null)
+            // 결론 내고 즉시 끝낸다(있을 때만 가서 깐다). 단일 프레임 검출만 믿으면 보라 이펙트·마커
+            // 오탐이 '유령 룬' 이동을 유발한다(사용자 관측 2026-08-04) — 룬은 움직이지 않으므로
+            // 같은 자리(±2px)에서 3연속 검출될 때만 인정한다. 미탐 프레임이 섞여도 잡게 최대 6프레임 관찰.
+            PointF? runeCand = null; int runeHits = 0;
+            for (int i = 0; i < 6 && runeHits < 3; i++)
             {
-                await PreciseDelay.WaitAsync(150, ct).ConfigureAwait(false);
-                rune0 = MeasureRune(s, mini);
+                if (i > 0) await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
+                var m = MeasureRune(s, mini);
+                if (m is { } p && runeCand is { } c && Math.Abs(p.X - c.X) <= 2 && Math.Abs(p.Y - c.Y) <= 2) runeHits++;
+                else if (m is { } p2) { runeCand = p2; runeHits = 1; } // 새 후보(첫 검출 또는 위치 불일치) — 다시 센다
+                else { runeCand = null; runeHits = 0; }               // 검출 끊김 — 오탐/이펙트로 보고 리셋
             }
-            if (rune0 is not { } runeAt) { Status("skip", "미니맵에 룬 없음 — 이번 회차를 바로 종료합니다."); return; }
+            if (runeHits < 3 || runeCand is not { } runeAt)
+            { Status("skip", $"미니맵에 룬 없음(연속 검출 {runeHits}/3) — 이번 회차를 바로 종료합니다."); return; }
             // 목표지점 지정(사용자 지정) — 아이콘은 발판보다 몇 px 위에 그려지므로 '아이콘보다 약간 아래'
             // 즉 실제 발판 높이를 목표로 잡는다. 이후 이동·도착 판정은 전부 이 지점 기준.
             runeAt.Y += (float)RuneIconYOffset;
