@@ -60,6 +60,13 @@ public static class FileLog
         try { File.WriteAllBytes(Path.Combine(_dir, name + ".png"), png); } catch { /* 무시 */ }
     }
 
+    /// <summary>진단 텍스트를 logs\name.txt로 저장(UTF-8, 덮어씀) — 룬 각도 시계열·투표 트레이스 등.</summary>
+    public static void SaveText(string name, string content)
+    {
+        if (_dir.Length == 0) return;
+        try { File.WriteAllText(Path.Combine(_dir, name + ".txt"), content); } catch { /* 무시 */ }
+    }
+
     /// <summary>prefix로 시작하는 진단 PNG 삭제 — 이전 실행 잔재가 재현 분석에 섞이지 않게.</summary>
     public static void DeletePngs(string prefix)
     {

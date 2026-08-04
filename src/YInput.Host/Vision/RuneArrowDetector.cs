@@ -890,7 +890,8 @@ internal static class RuneArrowDetector
                     if (PositionWatcher.IsRotating(angleT[j], angleV[j])) lastRotAt[j] = n1;
                     bool rotActive = n1 - lastRotAt[j] <= 3;
                     if (rotActive)
-                        PositionWatcher.TryDetectRecoil(j, angleT[j], angleV[j], votes, ref lockedCount, locked);
+                        PositionWatcher.TryDetectRecoil(j, angleT[j], angleV[j], votes, ref lockedCount, locked,
+                            m => sb.AppendLine($"      {m}")); // 투표 이벤트(직전각→착지각·피벗·방위)를 해당 스트립 아래 기록
                     parts.Add($"{(rotActive ? "회" : "정")}{(a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })}{a.AngleDeg:000}°a{a.Area}m{a.MovingPx}{(lockedCount > before1 ? "★락" : "")}");
                 }
                 sb.AppendLine($"f{fi:00} {t,5:0}ms  {string.Join("  ", parts)}");

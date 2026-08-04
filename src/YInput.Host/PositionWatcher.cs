@@ -712,9 +712,9 @@ public sealed class PositionWatcher : IDisposable
                         }
                         if (open)
                         {
-                            SaveRuneShots(beforeCrop, includeStrips: true);
-                            // 타임아웃 시점의 실제 화면도 남긴다 — '아직 열려 있음'이 진짜인지
-                            // PuzzlePresent 오판인지 다음 진단에서 구분하기 위함
+                            // 직전 시도 실패 시점에 프레임·스트립은 이미 저장됨 — 여기서는
+                            // 타임아웃 시점의 실제 화면만 남긴다('아직 열려 있음'이 진짜인지
+                            // PuzzlePresent 오판인지 다음 진단에서 구분하기 위함)
                             try { using var cf = ScreenCapture.Capture(screenCrop); FileLog.SavePng("rune-close", ScreenCapture.ToPng(cf)); } catch { }
                             Status("fail", "퍼즐이 닫히지 않아 재발동을 포기합니다(당시 화면 logs\\rune-close.png).");
                             return;
@@ -812,11 +812,14 @@ public sealed class PositionWatcher : IDisposable
 
                     // 남은 관찰 예산 = 취소 타이머까지의 여유(확인에 쓴 시간 차감)
                     int budget = Math.Max(900, PuzzleBudgetMs - (int)spaceSw.ElapsedMilliseconds);
+                    ClearRuneShots(); // 시도별 증거 분리 — 재발동은 퍼즐을 새로 굴리므로 이전 시도 프레임이 섞이면 안 된다
                     arrows = await SolvePuzzleAsync(screenCrop, beforeCrop, budget, ct).ConfigureAwait(false);
+                    // 실패 즉시 저장 — 다음 시도 진입 전에 남겨야 전면 이탈·취소 등 어떤 경로로 끝나도
+                    // 마지막 시도의 증거(프레임·스트립)가 디스크에 있다(11:47 실행: 전면 이탈 종료로 미저장).
+                    if (arrows is null) SaveRuneShots(beforeCrop, includeStrips: true);
                 }
                 if (arrows is null)
                 {
-                    SaveRuneShots(beforeCrop, includeStrips: true); // 실패 재현용 — 시간 제약이 끝났으니 이제 저장
                     Status("fail", "룬 퍼즐 화살표를 인식하지 못했습니다 — 직접 입력해 주세요(logs\\rune-puzzle.png 확인).");
                     return;
                 }
@@ -1119,11 +1122,35 @@ public sealed class PositionWatcher : IDisposable
             foreach (var b in win) if (!_runeShots.Contains(b)) b.Dispose();
             if (prevFast is not null && !_runeShots.Contains(prevFast)) prevFast.Dispose();
         }
-        if (!rowSeen && pos is null) { Note("퍼즐 인식 실패 — 화살표 줄을 찾지 못함"); return null; }
+        // 실패 트레이스 — 화살표별 잠금·반동 투표·각도 시계열을 logs\rune-solve.txt로 남긴다
+        // (스트립 이미지 없이도 '반동 미관측'의 원인 — 투표 분산·각도 노이즈·표본 공백 — 을 즉시 판독).
+        void DumpSolveTrace(string why)
+        {
+            try
+            {
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"{DateTime.Now:HH:mm:ss.fff} 퍼즐 확정 실패({why}) t={sw.ElapsedMilliseconds}ms lock={lockedCount}/4 회전관측={rotatingSeen} 고속={fastMode} pos={(pos is null ? "미확보" : "고정")}");
+                for (int j = 0; j < 4; j++)
+                {
+                    sb.Append($"[{j}] lock={locked[j]?.ToString() ?? "?"} 투표 R:{recoilVotes[j, 0]} U:{recoilVotes[j, 1]} L:{recoilVotes[j, 2]} D:{recoilVotes[j, 3]}");
+                    if (pos is not null) sb.Append($" pos=({pos[j].X:F0},{pos[j].Y:F0})");
+                    sb.AppendLine();
+                    var t = angleT[j]; var v = angleV[j];
+                    sb.Append("    ");
+                    for (int k = Math.Max(0, v.Count - 60); k < v.Count; k++) sb.Append($"{t[k]:F0}:{v[k]:F0}° ");
+                    sb.AppendLine();
+                }
+                FileLog.SaveText("rune-solve", sb.ToString());
+            }
+            catch { /* 진단 저장 실패 무시 */ }
+        }
+
+        if (!rowSeen && pos is null) { DumpSolveTrace("줄 미인식"); Note("퍼즐 인식 실패 — 화살표 줄을 찾지 못함"); return null; }
         // 4개 전부 확정될 때만 입력한다 — 회전 중 표본의 다수결은 추측이라 오답이 된다
         // (00:41 실행: 멈춤 3/4 + 다수결 1 → ↑ ↑ ↑ ← 오답 입력). 미달이면 재발동으로 재관찰.
         if (lockedCount < 4)
         {
+            DumpSolveTrace("반동 미관측");
             Note($"퍼즐 확정 실패 — {lockedCount}/4뿐(반동 미관측), 재발동 대기");
             return null;
         }
@@ -1155,7 +1182,7 @@ public sealed class PositionWatcher : IDisposable
     /// <summary>회전 화살표의 반동 감지 — 각도 시계열에서 시간당 회전량(중앙값 각속도) 대비
     /// '스텝 급감(딸깍) 또는 역행'이 생긴 지점의 각도를 4방위로 투표, <see cref="RecoilHits"/>회
     /// 이상 같은 방위에 쌓이고 2위의 2배 이상이면 확정. 각도 0=→, 90=↑ (반시계 양수).</summary>
-    internal static void TryDetectRecoil(int j, List<double> ts, List<double> deg, int[,] votes, ref int lockedCount, char?[] locked)
+    internal static void TryDetectRecoil(int j, List<double> ts, List<double> deg, int[,] votes, ref int lockedCount, char?[] locked, Action<string>? diag = null)
     {
         int n = deg.Count;
         if (n < 6) return; // 각속도 기준선을 잡을 최소 표본
@@ -1183,9 +1210,16 @@ public sealed class PositionWatcher : IDisposable
         double last = steps[^1];
         bool anomaly = Math.Abs(last) <= omega * 0.35 || Math.Sign(last) != rotSign;
         if (!anomaly) return;
-        double at = deg[^2]; // 반동이 일어난 구간의 시작 각도(딸깍 직전 위치가 정답에 가장 가깝다)
+        // 피벗(정답 방위) 추정 = 스냅백 '착지각'(deg[^1]) — 격발은 표본 사이에서 일어나 피벗
+        // 자체는 못 찍지만, 스냅백은 항상 피벗 근처(실측 −5~+12°)에 착지한다. fail4 재현: 진짜
+        // 반동 4건의 착지각 102/90/355/8° vs 정답 90/90/0/0°. 반면 '격발 직전 표본'(deg[^2])의
+        // 오차는 회전속도×샘플 간격에 비례(50ms 틱·33°/틱이면 최대 ~33°, 틱을 놓치면 66°+)라
+        // 45° 스냅 경계를 넘어 인접 방위로 투표가 갈라질 수 있다(11:47 실행: 회전 2개 반동
+        // 미관측 2/4 실패의 유력 원인 · fail4 재현에서도 2:1 턱걸이 락).
+        double at = deg[^1];
         int cardinal = (int)Math.Round(((at % 360 + 360) % 360) / 90.0) % 4; // 0=R 1=U 2=L 3=D
         votes[j, cardinal]++;
+        diag?.Invoke($"반동표[{j + 1}] {deg[^2]:F0}°→{deg[^1]:F0}° → {cardinal switch { 0 => 'R', 1 => 'U', 2 => 'L', _ => 'D' }}");
 
         int best = 0, bestC = -1, second = 0;
         for (int c = 0; c < 4; c++)
