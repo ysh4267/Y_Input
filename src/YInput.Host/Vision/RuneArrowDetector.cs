@@ -33,6 +33,9 @@ internal static class RuneArrowDetector
     private const int VividSat = 45;     // 채도 판정: (최대-최소) 하한 — 반투명 합성으로 채도가 깎이므로 느슨하게
     private const int VividSatStrict = 80; // 교집합 경로용 고채도 — 필 너머로 비치는 불꽃 잔광(둔탁한 웜톤)은
                                            // 지우고 화살표(선명한 무지개)만 남긴다. 00:45 프레임 검증값
+    private const int VividSatUltra = 140; // 로컬 글리프 분리용 초고채도 — 애니메이션 배경 장식(수정 반짝임,
+                                           // sat 80~120대)까지 지우고 순수 무지개 글리프(sat 150+)만 남긴다.
+                                           // 10:14 실행: sat80으로는 수정 홍수가 회전 글리프를 삼켰다
     private const double BannerWideFrac = 0.30; // 안내 배너 판정: 가로 이 비율 이상 변한 행
     private const int BannerMinRows = 6;        // 그런 행이 연속 이만큼 = 배너
     private const int MinThick = 4;      // 얇은 구조 제거: 가로·세로 연속 두께 하한 — 화살표 코어(반투명
@@ -271,39 +274,54 @@ internal static class RuneArrowDetector
 
     /// <summary>한 화살표의 로컬 분석 결과. Dir = 4방위 분류(정지 글리프용), Sig = 모양 시그니처,
     /// AngleDeg = 가리키는 각도(0=→, 90=↑, 반시계 양수; 회전 글리프 추적용), Area = 픽셀 수,
-    /// Center = 블롭 중심(프레임 절대 좌표 — 회전 핵이 어긋난 위치 추정을 자기 보정하는 데 쓴다).</summary>
-    internal readonly record struct LocalArrow(char Dir, bool[] Sig, double AngleDeg, int Area, PointF Center);
+    /// Center = 블롭 중심(프레임 절대 좌표 — 회전 핵이 어긋난 위치 추정을 자기 보정하는 데 쓴다),
+    /// MovingPx = 박스 안 '채도 높고 직전 프레임과 다른' 픽셀 수 — 회전 중 여부 판별용
+    /// (움직임 마스크의 블롭은 글리프가 아니라 '변화 영역' 조각이라 각도에는 절대 쓰지 않는다).</summary>
+    internal readonly record struct LocalArrow(char Dir, bool[] Sig, double AngleDeg, int Area, PointF Center, int MovingPx);
 
-    /// <summary>프레임의 지정 사각형(한 화살표 주변)만 분석 — 고채도(색 무관) ∧ 발동 전 차분 마스크에서
-    /// <b>글리프 크기(60~1200px, 박스≤60)이면서 중심에 가장 가까운</b> 병합 블롭을 취해 방향·시그니처·
-    /// <b>연속 각도</b>를 잰다('가장 큰 블롭'은 불타는 맵에서 배경 잔광 덩어리를 삼킨다 — 면적 2000+).
-    /// 각도 = 주축(관성) 방향에 머리쪽(픽셀이 많은 반쪽 — 화살촉 삼각형이 축봉보다 두껍다)을 얹은 값.
-    /// 실패 시 null.</summary>
-    internal static LocalArrow? AnalyzeArrowAt(Bitmap frame, Bitmap? bannerRef, Rectangle localRect)
+    /// <summary>프레임의 지정 사각형(한 화살표 주변)만 분석.
+    /// 글리프 = 초고채도(140→80→45 체인) ∧ 발동 전 차분 — 애니메이션 배경 장식(수정 반짝임,
+    /// sat 80~120)은 초고채도가 지우고, 순수 무지개 글리프만 남는다. 회전 여부는 별도로
+    /// '채도 ∧ 직전 프레임 차분' 픽셀 수(MovingPx)로만 판별한다. '글리프 크기(60~1200px,
+    /// 박스≤60) + 중심 근접' 블롭 선택, 두께 필터 없음(회전형은 속이 빈 외곽선이라 지워진다).
+    /// 각도 = 주축(관성) + 머리쪽(픽셀 많은 반쪽). 실패 시 null.</summary>
+    internal static LocalArrow? AnalyzeArrowAt(Bitmap frame, Bitmap? bannerRef, Bitmap? prevFrame, Rectangle localRect)
     {
         var bounds = new Rectangle(0, 0, frame.Width, frame.Height);
         var rect = Rectangle.Intersect(localRect, bounds);
         if (rect.Width < 12 || rect.Height < 12) return null;
         if (bannerRef is null || bannerRef.Width != frame.Width || bannerRef.Height != frame.Height) return null;
+        if (ReferenceEquals(frame, bannerRef)) return null; // 자기 자신 차분 = 같은 비트맵 이중 잠금
+        if (prevFrame is not null && (ReferenceEquals(frame, prevFrame)
+            || prevFrame.Width != frame.Width || prevFrame.Height != frame.Height)) prevFrame = null;
         int w = rect.Width, h = rect.Height;
 
+        Blob? Pick(bool[] mask) => MergeNear(FindBlobs(mask, w, h))
+            .Where(x => x.Area is >= 60 and <= 1200 && x.W <= 60 && x.H <= 60)
+            .OrderBy(x => Math.Pow(x.Cx - w / 2.0, 2) + Math.Pow(x.Cy - h / 2.0, 2))
+            .FirstOrDefault();
+
         Blob? pick = null;
-        foreach (int sat in (int[])[VividSatStrict, VividSat])
+        var fresh = new bool[w * h];
+        AccumulateDiff(bannerRef, frame, rect, w, h, DiffMin, fresh);
+        foreach (int sat in (int[])[VividSatUltra, VividSatStrict, VividSat])
         {
             var mask = VividMask(frame, rect, w, h, sat, requireWarm: false);
-            var fresh = new bool[w * h];
-            AccumulateDiff(bannerRef, frame, rect, w, h, DiffMin, fresh);
             for (int i = 0; i < mask.Length; i++) mask[i] &= fresh[i];
-            ThinFilter(mask, w, h); // 잔광 다리·글로우 절단 — 화살표가 정크와 붙는 것 방지
-
-            pick = MergeNear(FindBlobs(mask, w, h))
-                .Where(x => x.Area is >= 60 and <= 1200 && x.W <= 60 && x.H <= 60)
-                .OrderBy(x => Math.Pow(x.Cx - w / 2.0, 2) + Math.Pow(x.Cy - h / 2.0, 2))
-                .FirstOrDefault();
+            pick = Pick(mask);
             if (pick is not null) break;
         }
         if (pick is null) return null;
         var b = pick;
+
+        int movingPx = 0;
+        if (prevFrame is not null)
+        {
+            var vv = VividMask(frame, rect, w, h, requireWarm: false);
+            var mv = new bool[w * h];
+            AccumulateDiff(prevFrame, frame, rect, w, h, AnimDiffMin, mv);
+            for (int i = 0; i < vv.Length; i++) if (vv[i] && mv[i]) movingPx++;
+        }
 
         var (dir, _, _, _, _) = ClassifyScores(b, w);
         var sig = Signature(b, w);
@@ -326,7 +344,7 @@ internal static class RuneArrowDetector
         double deg = phi * 180 / Math.PI;
         if (headNeg > headPos) deg += 180;
         deg = (deg % 360 + 360) % 360;
-        return new LocalArrow(dir, sig, deg, b.Area, new PointF((float)(rect.X + b.Cx), (float)(rect.Y + b.Cy)));
+        return new LocalArrow(dir, sig, deg, b.Area, new PointF((float)(rect.X + b.Cx), (float)(rect.Y + b.Cy)), movingPx);
     }
 
     private static List<RuneArrow>? Detect(Bitmap frame, Bitmap? bannerRef, bool[] mask, Rectangle region, int w, int h, bool thinFilter, int fullFrameH)
@@ -562,6 +580,13 @@ internal static class RuneArrowDetector
     /// 여러 개(rune-frame-N 연속 캡처) = 실전과 같은 애니메이션 차분 합집합.</summary>
     public static void AnalyzeToFile(params string[] pngPaths)
     {
+        // 스트립(rune-strip-NN) 입력이면 회전 반동 파형 재현 모드로 — 각 스트립의 화살표별
+        // 로컬 방향·각도 시계열과, 실전 반동 감지가 각 표본에서 내렸을 판정을 그대로 찍는다.
+        if (pngPaths.Any(p => Path.GetFileName(p).Contains("rune-strip", StringComparison.OrdinalIgnoreCase)))
+        {
+            AnalyzeStripsToFile(pngPaths);
+            return;
+        }
         var sb = new System.Text.StringBuilder();
         var frames = new List<Bitmap>();
         Bitmap? beforeRef = null;
@@ -707,9 +732,9 @@ internal static class RuneArrowDetector
                                     foreach (var p in af)
                                     {
                                         var rect = new Rectangle((int)(p.Center.X - box7 / 2.0), (int)(p.Center.Y - box7 / 2.0), box7, box7);
-                                        var la = AnalyzeArrowAt(frames[fi], beforeRef, rect);
+                                        var la = AnalyzeArrowAt(frames[fi], beforeRef, fi > 0 ? frames[fi - 1] : null, rect);
                                         parts.Add(la is { } a
-                                            ? $"{(a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })}{a.AngleDeg:000}°a{a.Area}"
+                                            ? $"{(a.MovingPx >= 40 ? "회" : "정")}{(a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })}{a.AngleDeg:000}°a{a.Area}"
                                             : "×");
                                     }
                                     sb.AppendLine($"     f{fi}: {string.Join("  ", parts)}");
@@ -724,6 +749,150 @@ internal static class RuneArrowDetector
         catch (Exception ex) { sb.AppendLine("오류: " + ex); }
         finally { foreach (var f in frames) f.Dispose(); }
         File.WriteAllText(pngPaths[0] + ".analysis.txt", sb.ToString());
+    }
+
+    /// <summary>스트립 녹화(밴드 크롭, ~50ms 간격) 재현 — 위치를 잡고 스트립마다 화살표별
+    /// 로컬 방향·각도를 찍으며, 실전 반동 감지(PositionWatcher.TryDetectRecoil)를 그대로 돌려
+    /// 어느 표본에서 락이 걸렸을지 재현한다. 출력: 첫 스트립 경로 + ".analysis.txt".</summary>
+    private static void AnalyzeStripsToFile(string[] pngPaths)
+    {
+        var sb = new System.Text.StringBuilder();
+        Bitmap? before = null, beforeStrip = null;
+        var strips = new List<(string Name, Bitmap Bmp)>();
+        try
+        {
+            foreach (var p in pngPaths)
+            {
+                if (Path.GetFileName(p).Contains("rune-before", StringComparison.OrdinalIgnoreCase)) before = new Bitmap(p);
+                else strips.Add((Path.GetFileName(p), new Bitmap(p)));
+            }
+            if (before is null) { sb.AppendLine("rune-before가 필요합니다(밴드 기준 크롭용)"); return; }
+            var bandRect = ArrowBandRect(before.Width, before.Height);
+            beforeStrip = before.Clone(bandRect, before.PixelFormat);
+            int skipped = strips.RemoveAll(s => s.Bmp.Width != beforeStrip.Width || s.Bmp.Height != beforeStrip.Height);
+            if (skipped > 0) sb.AppendLine($"크기 불일치 스트립 {skipped}장 제외");
+            if (strips.Count == 0) { sb.AppendLine("스트립 없음"); return; }
+            int w = beforeStrip.Width, h = beforeStrip.Height;
+            var region = new Rectangle(0, 0, w, h);
+            sb.AppendLine($"스트립 {strips.Count}장 ({w}x{h}), 기준 밴드 {bandRect}");
+
+            // 위치 획득 — 기준 후보를 차례로 시도: ① rune-before의 밴드 크롭, ② 첫 스트립
+            // (녹화 초반은 퍼즐이 뜨기 전이라 같은 카메라의 깨끗한 기준이 된다 — rune-before는
+            // 시도 사이 카메라 밀림으로 낡을 수 있다). 차분 없이 채도 단독은 배경 장식(수정 등)이
+            // 홍수를 일으켜 회전 화살표를 삼키므로 쓰지 않는다.
+            PointF[]? pos = null;
+            Bitmap activeRef = beforeStrip;
+            foreach (var (refName, refBmp) in new (string, Bitmap)[] { ("before", beforeStrip), ("strip0", strips[0].Bmp) })
+            {
+                for (int si = 0; si < strips.Count && pos is null; si++)
+                {
+                    var (name, s) = strips[si];
+                    if (ReferenceEquals(s, refBmp)) continue;
+                    // 고채도(80) ∧ 기준 차분, 두께 필터 없음 — 회전형 외곽선 글리프를 살리면서
+                    // 배경 장식(수정 등)은 차분이, 필 테두리 링은 박스 크기 제한이 걸러준다
+                    var mask = VividMask(s, region, w, h, VividSatStrict, requireWarm: false);
+                    var fresh = new bool[w * h];
+                    AccumulateDiff(refBmp, s, region, w, h, DiffMin, fresh);
+                    for (int i = 0; i < mask.Length; i++) mask[i] &= fresh[i];
+                    if (si == 45) SaveMaskPng((bool[])mask.Clone(), w, h, pngPaths[0] + $".mask-{refName}-s45.png");
+                    DiagLog = si is < 2 or (>= 44 and < 47) ? line => sb.AppendLine($"  [{refName}/{name}] {line}") : null;
+                    List<Blob>? row;
+                    try { row = DetectRow(s, refBmp, mask, region, w, h, thinFilter: false, h, fullArea: true); }
+                    finally { DiagLog = null; }
+                    if (row is not null)
+                    {
+                        pos = row.Select(b => new PointF((float)b.Cx, (float)b.Cy)).ToArray();
+                        activeRef = refBmp;
+                        sb.AppendLine($"위치({refName}/{name}): " + string.Join(" ", pos.Select(p => $"({p.X:0},{p.Y:0})")));
+                    }
+                }
+                if (pos is not null) break;
+            }
+            if (pos is null)
+            {
+                // 폴백: 부분 줄로 4슬롯 격자 추정 — 회전 글리프가 배경 홍수(수정 반짝임 등)에 묻혀
+                // 줄 4개가 안 채워지는 맵 대비. 같은 y(±10)에서 간격 70~110의 이웃 쌍을 찾고,
+                // 격자 중심이 밴드 중앙(≈필 중앙)에 가장 가까운 배치를 택한다. EMA가 잔차를 수렴시킨다.
+                for (int si = 10; si < strips.Count && pos is null; si += 5)
+                {
+                    var (name, s) = strips[si];
+                    var mask = VividMask(s, region, w, h, VividSatStrict, requireWarm: false);
+                    var fresh = new bool[w * h];
+                    AccumulateDiff(strips[0].Bmp, s, region, w, h, DiffMin, fresh);
+                    for (int i = 0; i < mask.Length; i++) mask[i] &= fresh[i];
+                    var cands = MergeNear(FindBlobs(mask, w, h))
+                        .Where(x => x.Area is >= 100 and <= 1200 && x.W is >= 12 and <= 60 && x.H is >= 12 and <= 60)
+                        .OrderBy(x => x.Cx).ToList();
+                    for (int a1 = 0; a1 < cands.Count - 1 && pos is null; a1++)
+                        for (int b1 = a1 + 1; b1 < cands.Count && pos is null; b1++)
+                        {
+                            double gap = cands[b1].Cx - cands[a1].Cx;
+                            if (gap < 70 || gap > 110 || Math.Abs(cands[b1].Cy - cands[a1].Cy) > 10) continue;
+                            double bestOff = double.MaxValue; PointF[]? bestLat = null;
+                            for (int shift = 0; shift < 4; shift++)
+                            {
+                                double x0 = cands[a1].Cx - shift * gap;
+                                if (x0 < 30 || x0 + 3 * gap > w - 30) continue;
+                                double centerOff = Math.Abs(x0 + 1.5 * gap - w / 2.0);
+                                if (centerOff < bestOff)
+                                {
+                                    bestOff = centerOff;
+                                    bestLat = Enumerable.Range(0, 4)
+                                        .Select(k => new PointF((float)(x0 + k * gap), (float)cands[a1].Cy)).ToArray();
+                                }
+                            }
+                            if (bestLat is not null)
+                            {
+                                pos = bestLat;
+                                activeRef = strips[0].Bmp;
+                                sb.AppendLine($"위치(격자 추정 {name}, 쌍 ({cands[a1].Cx:0},{cands[a1].Cy:0})+({cands[b1].Cx:0},{cands[b1].Cy:0})): "
+                                              + string.Join(" ", pos.Select(p => $"({p.X:0},{p.Y:0})")));
+                            }
+                        }
+                }
+            }
+            if (pos is null) { sb.AppendLine("위치 획득 실패 — 어떤 스트립에서도 줄을 못 찾음"); return; }
+
+            const int box = 64;
+            var locked = new char?[4];
+            int lockedCount = 0;
+            var votes = new int[4, 4];
+            var angleT = new List<double>[4]; var angleV = new List<double>[4];
+            for (int j = 0; j < 4; j++) { angleT[j] = new List<double>(); angleV[j] = new List<double>(); }
+            for (int fi = 0; fi < strips.Count; fi++)
+            {
+                double t = fi * 50.0; // 명목 50ms 간격
+                var parts = new List<string>();
+                for (int j = 0; j < 4; j++)
+                {
+                    if (locked[j] is { } d0) { parts.Add($"[확정{d0}]"); continue; }
+                    var rect = new Rectangle((int)(pos[j].X - box / 2.0), (int)(pos[j].Y - box / 2.0), box, box);
+                    var la = AnalyzeArrowAt(strips[fi].Bmp, activeRef, fi > 0 ? strips[fi - 1].Bmp : null, rect);
+                    if (la is not { } a) { parts.Add("×"); continue; }
+                    if (a.Area >= 60)
+                        pos[j] = new PointF((float)(pos[j].X * 0.7 + a.Center.X * 0.3), (float)(pos[j].Y * 0.7 + a.Center.Y * 0.3));
+                    int before1 = lockedCount;
+                    bool rotating = a.MovingPx >= 40;
+                    if (rotating)
+                    {
+                        angleT[j].Add(t); angleV[j].Add(a.AngleDeg);
+                        PositionWatcher.TryDetectRecoil(j, angleT[j], angleV[j], votes, ref lockedCount, locked);
+                    }
+                    parts.Add($"{(rotating ? "회" : "정")}{(a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })}{a.AngleDeg:000}°a{a.Area}m{a.MovingPx}{(lockedCount > before1 ? "★락" : "")}");
+                }
+                sb.AppendLine($"f{fi:00} {t,5:0}ms  {string.Join("  ", parts)}");
+            }
+            sb.AppendLine("반동 투표 [R U L D]:");
+            for (int j = 0; j < 4; j++)
+                sb.AppendLine($"  화살표{j + 1}: {votes[j, 0]} {votes[j, 1]} {votes[j, 2]} {votes[j, 3]}  확정 {(locked[j] is { } dd ? dd.ToString() : "-")}");
+        }
+        catch (Exception ex) { sb.AppendLine("오류: " + ex); }
+        finally
+        {
+            before?.Dispose(); beforeStrip?.Dispose();
+            foreach (var (_, b) in strips) b.Dispose();
+            File.WriteAllText(pngPaths[0] + ".analysis.txt", sb.ToString());
+        }
     }
 
     /// <summary>진단용 — 마스크를 흑백 PNG로 저장(어느 단계에서 화살표가 지워지는지 확인).</summary>

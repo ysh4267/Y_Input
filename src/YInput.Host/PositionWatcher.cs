@@ -709,6 +709,20 @@ public sealed class PositionWatcher : IDisposable
                             return;
                         }
                         await PreciseDelay.WaitAsync(300, ct).ConfigureAwait(false);
+
+                        // 재발동 전 기준 프레임 재캡처 — 시도 사이에 몹 넉백·카메라 이동으로 화면이
+                        // 밀리면 처음의 before가 낡아 '발동 전 차분'이 배경 정크로 가득 찬다(10:14 실행:
+                        // 기둥 엣지가 통째로 차분에 찍혀 화살표가 정크와 병합돼 후보 탈락). 지금은
+                        // 퍼즐이 닫혀 있음이 확인된 직후라 깨끗한 기준이 된다.
+                        var freshBefore = CaptureGameFrame(s.Process, out _);
+                        if (freshBefore is not null && beforeFrame is not null
+                            && freshBefore.Width == beforeFrame.Width && freshBefore.Height == beforeFrame.Height)
+                        {
+                            beforeFrame.Dispose(); beforeFrame = freshBefore;
+                            beforeCrop?.Dispose();
+                            beforeCrop = freshBefore.Clone(puzzleReg, freshBefore.PixelFormat);
+                        }
+                        else freshBefore?.Dispose();
                     }
                     await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
                     var spaceSw = Stopwatch.StartNew(); // 취소 타이머 기준점(마지막 입력 = 이 스페이스)
@@ -879,48 +893,54 @@ public sealed class PositionWatcher : IDisposable
         for (int j = 0; j < 4; j++) { angleT[j] = new List<double>(); angleV[j] = new List<double>(); }
 
         bool fastMode = false, rotatingSeen = false;
+        Bitmap? prevFast = null; // 고속 모드의 직전 틱 프레임 — '움직임' 마스크 기준
 
-        // 미확정 화살표들의 로컬 분석 한 회 — 각도 표본 추가 + 반동 감지 + 위치 EMA 보정.
-        // 고속 모드에서는 무거운 줄 인식이 멈추므로 정지 확정(시그니처 런)도 로컬 표본으로 잇는다.
-        void LocalPass(Bitmap frame, long now)
+        // 미확정 화살표들의 로컬 분석 한 회. prev = 직전 프레임(움직임 판별 기준).
+        //  · 움직이는 글리프(회전) → 각도 표본 추가 + 반동 감지 + 초반 회전 판정
+        //  · 정지 글리프 → 고속 모드에서는 로컬 시그니처 런으로 정지 확정을 잇는다
+        //    (무거운 경로가 멈추므로; 소스가 달라 무거운 경로 런과는 리셋으로 갈라진다)
+        void LocalPass(Bitmap frame, Bitmap? prev, long now)
         {
             for (int j = 0; j < 4; j++)
             {
                 if (locked[j] is not null) continue;
                 var rect = new Rectangle((int)(pos![j].X - posBox / 2.0), (int)(pos[j].Y - posBox / 2.0), posBox, posBox);
-                var la = RuneArrowDetector.AnalyzeArrowAt(frame, beforeCrop, rect);
+                var la = RuneArrowDetector.AnalyzeArrowAt(frame, beforeCrop, prev, rect);
                 if (la is not { } a) continue;
                 if (a.Area >= 60)
                     pos[j] = new PointF((float)(pos[j].X * 0.7 + a.Center.X * 0.3),
                                         (float)(pos[j].Y * 0.7 + a.Center.Y * 0.3));
-                angleT[j].Add(now); angleV[j].Add(a.AngleDeg);
-                TryDetectRecoil(j, angleT[j], angleV[j], recoilVotes, ref lockedCount, locked);
 
-                if (fastMode)
+                if (a.MovingPx >= 40)
                 {
-                    // 고속 모드의 정지 확정 — 로컬 시그니처 런(무거운 경로와 소스가 달라 혼용하지 않는다)
+                    angleT[j].Add(now); angleV[j].Add(a.AngleDeg);
+                    TryDetectRecoil(j, angleT[j], angleV[j], recoilVotes, ref lockedCount, locked);
+                    if (!fastMode && !rotatingSeen && angleV[j].Count >= 4)
+                    {
+                        // 초반 회전 판정 — 최근 3스텝이 전부 같은 방향으로 ≥15°/100ms면 회전 중
+                        bool rot = true; int sgn = 0;
+                        var tv = angleT[j]; var av = angleV[j];
+                        for (int k = av.Count - 3; k < av.Count; k++)
+                        {
+                            double d = (av[k] - av[k - 1]) % 360;
+                            if (d > 180) d -= 360; else if (d <= -180) d += 360;
+                            double rate = d * 100 / Math.Max(40, tv[k] - tv[k - 1]);
+                            if (Math.Abs(rate) < 15) { rot = false; break; }
+                            int s = Math.Sign(rate);
+                            if (sgn == 0) sgn = s; else if (s != sgn) { rot = false; break; }
+                        }
+                        if (rot) rotatingSeen = true;
+                    }
+                }
+                else if (fastMode)
+                {
+                    // 고속 모드의 정지 확정 — 로컬 시그니처 런
                     if (runSig[j] is not null && runDir[j] == a.Dir && RuneArrowDetector.SigSimilar(runSig[j], a.Sig))
                     {
                         runLen[j]++;
                         if (runLen[j] >= LockRun && now - runStart[j] >= LockSpanMs) { locked[j] = runDir[j]; lockedCount++; }
                     }
                     else { runSig[j] = a.Sig; runDir[j] = a.Dir; runLen[j] = 1; runStart[j] = now; }
-                }
-                else if (!rotatingSeen && angleV[j].Count >= 4)
-                {
-                    // 초반 회전 판정 — 최근 3스텝이 전부 같은 방향으로 ≥15°/100ms면 회전 중
-                    bool rot = true; int sgn = 0;
-                    var tv = angleT[j]; var av = angleV[j];
-                    for (int k = av.Count - 3; k < av.Count; k++)
-                    {
-                        double d = (av[k] - av[k - 1]) % 360;
-                        if (d > 180) d -= 360; else if (d <= -180) d += 360;
-                        double rate = d * 100 / Math.Max(40, tv[k] - tv[k - 1]);
-                        if (Math.Abs(rate) < 15) { rot = false; break; }
-                        int s = Math.Sign(rate);
-                        if (sgn == 0) sgn = s; else if (s != sgn) { rot = false; break; }
-                    }
-                    if (rot) rotatingSeen = true;
                 }
             }
         }
@@ -942,11 +962,16 @@ public sealed class PositionWatcher : IDisposable
                     {
                         try
                         {
-                            LocalPass(ff, sw.ElapsedMilliseconds);
+                            LocalPass(ff, prevFast, sw.ElapsedMilliseconds);
                             RecordStrip(ff);
                             if (_runeShots.Count < 4) _runeShots.Add(ff);
                         }
-                        finally { if (!_runeShots.Contains(ff)) ff.Dispose(); }
+                        finally
+                        {
+                            // 직전 틱 프레임으로 보관(움직임 마스크 기준) — 이전 것은 정리
+                            if (prevFast is not null && !_runeShots.Contains(prevFast)) prevFast.Dispose();
+                            prevFast = ff;
+                        }
                     }
                     long wait = FastTickMs - (sw.ElapsedMilliseconds - tickStart);
                     if (lockedCount < 4 && wait > 0) await PreciseDelay.WaitAsync((int)wait, ct).ConfigureAwait(false);
@@ -1000,7 +1025,7 @@ public sealed class PositionWatcher : IDisposable
 
                         // 로컬 추적 — 위치가 고정된 뒤: 회전 화살표의 각도 시계열 + 반동 감지.
                         // 로컬 블롭 중심으로 위치를 서서히 보정(회전 핵 어긋남 수렴).
-                        if (pos is not null) LocalPass(f, now);
+                        if (pos is not null) LocalPass(f, win.Count > 0 ? win[^1] : null, now);
 
                         // 회전 판정(초반 1초 내 각도 진행 감지) → 고속 모드 전환 + 예산 연장
                         if (!fastMode && rotatingSeen && pos is not null)
@@ -1038,14 +1063,18 @@ public sealed class PositionWatcher : IDisposable
                     try { f2 = ScreenCapture.Capture(screenCrop); } catch { /* 일시적 캡처 실패 */ }
                     if (f2 is not null)
                     {
-                        try { LocalPass(f2, sw.ElapsedMilliseconds); RecordStrip(f2); }
+                        try { LocalPass(f2, win.Count > 0 ? win[^1] : null, sw.ElapsedMilliseconds); RecordStrip(f2); }
                         finally { f2.Dispose(); }
                     }
                 }
                 if (lockedCount < 4) await PreciseDelay.WaitAsync(PuzzleSampleGapMs, ct).ConfigureAwait(false);
             }
         }
-        finally { foreach (var b in win) if (!_runeShots.Contains(b)) b.Dispose(); }
+        finally
+        {
+            foreach (var b in win) if (!_runeShots.Contains(b)) b.Dispose();
+            if (prevFast is not null && !_runeShots.Contains(prevFast)) prevFast.Dispose();
+        }
         if (!rowSeen && pos is null) { Note("퍼즐 인식 실패 — 화살표 줄을 찾지 못함"); return null; }
         // 4개 전부 확정될 때만 입력한다 — 회전 중 표본의 다수결은 추측이라 오답이 된다
         // (00:41 실행: 멈춤 3/4 + 다수결 1 → ↑ ↑ ↑ ← 오답 입력). 미달이면 재발동으로 재관찰.
@@ -1064,7 +1093,7 @@ public sealed class PositionWatcher : IDisposable
     /// <summary>회전 화살표의 반동 감지 — 각도 시계열에서 시간당 회전량(중앙값 각속도) 대비
     /// '스텝 급감(딸깍) 또는 역행'이 생긴 지점의 각도를 4방위로 투표, <see cref="RecoilHits"/>회
     /// 이상 같은 방위에 쌓이고 2위의 2배 이상이면 확정. 각도 0=→, 90=↑ (반시계 양수).</summary>
-    private static void TryDetectRecoil(int j, List<double> ts, List<double> deg, int[,] votes, ref int lockedCount, char?[] locked)
+    internal static void TryDetectRecoil(int j, List<double> ts, List<double> deg, int[,] votes, ref int lockedCount, char?[] locked)
     {
         int n = deg.Count;
         if (n < 6) return; // 각속도 기준선을 잡을 최소 표본
