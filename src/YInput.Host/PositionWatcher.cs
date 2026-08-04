@@ -749,41 +749,9 @@ public sealed class PositionWatcher : IDisposable
                 // 스페이스 후에는 무조건 열렸다고 전제하고 인식 1회 — 실패하면 오류로 띄우고 끝.
                 // 인식 실패는 재시도로 덮지 않고 증거(rune-*.png·rune-solve.txt)로 남겨 고친다.
 
-                // 발동 직전 위치 재확인 — 이동·대기 사이 몹에게 밀려났으면 스페이스가 빗나가
-                // 퍼즐이 아예 안 열린다(10:51 실행: 밀려난 채 발동 → 빈 화면 인식만 낭비).
+                // 넉백 재확인·복귀 없음(사용자 지정 — 캐릭터는 몹에게 맞아도 밀려나지 않는다).
+                // 도착 → 스페이스 → 인식, 끝.
                 if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 룬 발동을 중단합니다."); return; }
-                bool rewalked = false;
-                var dchk = MeasureDot(s, mini, dot);
-                if (dchk is { } dv)
-                {
-                    dot = dv;
-                    if (Math.Abs(dot.X - runeAt.X) > RuneTolX || Math.Abs(dot.Y - runeAt.Y) > CorrectTolY)
-                    {
-                        Status("rune", $"룬에서 밀려남(dx {dot.X - runeAt.X:+0.0;-0.0} · dy {dot.Y - runeAt.Y:+0.0;-0.0}px) — 다시 이동합니다");
-                        switch (await MoveToRuneAsync(12000).ConfigureAwait(false))
-                        {
-                            case 1: Status("skip", "게임 창이 전면에서 벗어나 룬 발동을 중단합니다."); return;
-                            case 2: Status("fail", "이동 중 미니맵 점을 놓쳤습니다."); return;
-                            case 3: Status("fail", "룬 위치로 복귀하지 못했습니다."); return;
-                        }
-                        rewalked = true;
-                    }
-                }
-
-                // 기준 프레임 재캡처 — 복귀 후에는 몹 넉백·카메라 이동으로 처음의 before가 낡아
-                // '발동 전 차분'이 배경 정크로 가득 찬다(10:14·10:51 실행). 퍼즐이 닫힌 상태다.
-                if (rewalked)
-                {
-                    var freshBefore = CaptureGameFrame(s.Process, out _);
-                    if (freshBefore is not null && beforeFrame is not null
-                        && freshBefore.Width == beforeFrame.Width && freshBefore.Height == beforeFrame.Height)
-                    {
-                        beforeFrame.Dispose(); beforeFrame = freshBefore;
-                        beforeCrop?.Dispose();
-                        beforeCrop = freshBefore.Clone(puzzleReg, freshBefore.PixelFormat);
-                    }
-                    else freshBefore?.Dispose();
-                }
                 await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
                 var spaceSw = Stopwatch.StartNew();
                 await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
