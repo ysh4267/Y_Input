@@ -497,7 +497,7 @@ public sealed class PositionWatcher : IDisposable
 
     /// <summary>미니맵 X 목표까지 좌우 이동 — 연속 홀드 + 홀드 중 폴링(도착 직전/지나침에 뗌) +
     /// 멀면(>FlashJumpMinDx) Alt 따닥 더블점프 도약 + 남은 거리 비례 5단계 리바운드
-    /// (≥6px 280 / ≥4px 220 / ≥2.5px 160 / ≥1.5px 110 / 그 외 70ms) +
+    /// (≥6px 280 / ≥4px 220 / ≥2.5px 160 / ≥1.5px 110 / 그 외 50ms) +
     /// 뗀 뒤 SettleMs 대기 후 재측정. 위치 보정·룬 이동 공용.</summary>
     private async Task<(Walk Result, PointF Dot)> WalkToXAsync(WatcherSettings s, Rectangle mini, PointF dot, double targetX,
         double tol, Stopwatch sw, long maxMs, string state, string label, CancellationToken ct)
@@ -523,7 +523,7 @@ public sealed class PositionWatcher : IDisposable
                            : adx >= 4.0 ? 220
                            : adx >= 2.5 ? 160
                            : adx >= 1.5 ? 110
-                           : 70;
+                           : 50; // 최소 50ms — 진짜 미세조정용(사용자 지정)
             var holdSw = Stopwatch.StartNew();
             long lastFjAt = -FlashJumpCooldownMs; // 홀드 시작 즉시 1회 도약 가능
             _backend.Send(new KeyboardEvent { Code = key, State = KeyDownE0 });
