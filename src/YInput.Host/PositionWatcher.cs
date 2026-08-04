@@ -757,11 +757,7 @@ public sealed class PositionWatcher : IDisposable
                         // 열린 퍼즐에 스페이스를 누르면 '오답 입력'이 되어 실패한다(21:57 실행) —
                         // 화면에서 배너가 실제로 사라진 것을 확인한 뒤에만 재발동한다(고정 시간 가정 금지).
                         Status("rune", "퍼즐 인식 실패 — 퍼즐이 닫히기를 기다렸다 다시 발동합니다");
-                        // 닫힘 판정은 '배너 신호 AND 화살표 줄' — 배너 신호(PuzzlePresent)만으로는
-                        // 룬 쿨다운 안내문("아직 효과를 받을 수 없습니다")의 청록 텍스트가 띠 구간에
-                        // 찍혀 '아직 열림'으로 오판, 8초를 허비하고 포기했다(18:05 실행). 줄 인식이
-                        // 프레임 단위로 흔들리는 맵이 있어 '닫힘으로 보이는 폴링 2연속'일 때만 닫힘 확정.
-                        bool open = true; int closedPolls = 0;
+                        bool open = true;
                         var closeSw = Stopwatch.StartNew();
                         while (open && closeSw.ElapsedMilliseconds < 8000)
                         {
@@ -770,10 +766,7 @@ public sealed class PositionWatcher : IDisposable
                                 using var fa = ScreenCapture.Capture(screenCrop);
                                 await PreciseDelay.WaitAsync(180, ct).ConfigureAwait(false);
                                 using var fb = ScreenCapture.Capture(screenCrop);
-                                bool looksOpen = RuneArrowDetector.PuzzlePresent(fa, fb, beforeCrop, precropped: true)
-                                    && RuneArrowDetector.AnalyzeFrame(fb, fa, beforeCrop, precropped: true) is not null;
-                                closedPolls = looksOpen ? 0 : closedPolls + 1;
-                                open = closedPolls < 2;
+                                open = RuneArrowDetector.PuzzlePresent(fa, fb, beforeCrop, precropped: true);
                             }
                             catch { /* 일시적 캡처 실패 — 다음 폴링 */ }
                             if (open) await PreciseDelay.WaitAsync(250, ct).ConfigureAwait(false);
@@ -829,44 +822,9 @@ public sealed class PositionWatcher : IDisposable
                     var spaceSw = Stopwatch.StartNew(); // 취소 타이머 기준점(마지막 입력 = 이 스페이스)
                     await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
 
-                    // 첫 발동(attempt 0)은 무조건 열린 것으로 전제(사용자 지정 2026-08-04 — 관찰 즉시 시작).
-                    // 재발동은 룬 '재사용 쿨다운'에 막힐 수 있다(18:05 실행: 닫힘 직후 재발동 →
-                    // "아직 효과를 받을 수 없습니다(남은 시간 2초)" → 퍼즐 없는 화면을 4초 관찰,
-                    // 쿨다운 안내문이 배너 신호까지 위조). 열림 확인은 '화살표 줄'로만 — 안내문은
-                    // 줄을 못 위조한다. 안 열렸으면 1.2초 간격으로 스페이스를 다시 눌러 쿨다운을 넘긴다.
-                    if (attempt > 0)
-                    {
-                        bool reopened = false;
-                        for (int fire = 0; fire < 3 && !reopened; fire++)
-                        {
-                            if (fire > 0)
-                            {
-                                await PreciseDelay.WaitAsync(1200, ct).ConfigureAwait(false);
-                                await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
-                                spaceSw.Restart();
-                                await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
-                            }
-                            var openSw = Stopwatch.StartNew();
-                            while (!reopened && openSw.ElapsedMilliseconds < 1200)
-                            {
-                                ct.ThrowIfCancellationRequested();
-                                try
-                                {
-                                    using var oa = ScreenCapture.Capture(screenCrop);
-                                    await PreciseDelay.WaitAsync(110, ct).ConfigureAwait(false);
-                                    using var ob = ScreenCapture.Capture(screenCrop);
-                                    reopened = RuneArrowDetector.AnalyzeFrame(ob, oa, beforeCrop, precropped: true) is not null;
-                                }
-                                catch { await PreciseDelay.WaitAsync(100, ct).ConfigureAwait(false); }
-                            }
-                        }
-                        if (!reopened)
-                        {
-                            SaveRuneShots(beforeCrop);
-                            Status("fail", "재발동이 계속 무시됩니다(룬 쿨다운/상호작용 실패) — 이번 회차를 종료합니다.");
-                            return;
-                        }
-                    }
+                    // 스페이스를 누르면 퍼즐은 무조건 열린 것으로 전제(사용자 지정 2026-08-04) —
+                    // '안 보이면 스페이스 재시도'는 열린 퍼즐에 오답 입력될 위험이 있어 제거.
+                    // 인식이 완전해지면 재시도 로직을 다시 조정한다.
 
                     // 남은 관찰 예산 = 취소 타이머까지의 여유(확인에 쓴 시간 차감)
                     int budget = Math.Max(900, PuzzleBudgetMs - (int)spaceSw.ElapsedMilliseconds);
