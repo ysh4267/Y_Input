@@ -784,8 +784,7 @@ public sealed class PositionWatcher : IDisposable
     //    한 번씩 있을 뿐 → 각도를 연속 추적해 각속도 이상(스텝 급감·역행)이 생기는 방향을
     //    여러 바퀴에 걸쳐 모아 최빈 방위로 확정한다.
     private const int PuzzleBudgetMs = 2800;    // 정지형 기본 예산 — 보통 0.5초 안에 4/4 확정된다
-    private const int RotatingBudgetMs = 12000; // 회전 감지 시 연장 — 반동을 2회 이상 관찰해야 하고,
-                                                // 퍼즐은 무입력 11초+에도 떠 있었다(07:56 실측 — '3초 취소' 아님)
+    private const int RotatingBudgetMs = 4000;  // 회전 감지 시 연장 — 반동 2회 관찰에 충분(사용자 지정 4초)
     private const int PuzzleSampleGapMs = 70;   // 프레임 간격(캡처+분석 포함 실효 ~110-150ms)
     private const int LockRun = 3;              // 정지 확정 최소 연속 프레임
     private const int LockSpanMs = 250;         // 정지 확정 최소 지속시간
@@ -815,6 +814,23 @@ public sealed class PositionWatcher : IDisposable
         var angleT = new List<double>[4]; var angleV = new List<double>[4];
         var recoilVotes = new int[4, 4]; // [화살표, 방위 R U L D]
         for (int j = 0; j < 4; j++) { angleT[j] = new List<double>(); angleV[j] = new List<double>(); }
+
+        // 미확정 화살표들의 로컬 분석 한 회 — 각도 표본 추가 + 반동 감지 + 위치 EMA 보정
+        void LocalPass(Bitmap frame, long now)
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                if (locked[j] is not null) continue;
+                var rect = new Rectangle((int)(pos![j].X - posBox / 2.0), (int)(pos[j].Y - posBox / 2.0), posBox, posBox);
+                var la = RuneArrowDetector.AnalyzeArrowAt(frame, beforeCrop, rect);
+                if (la is not { } a) continue;
+                if (a.Area >= 60)
+                    pos[j] = new PointF((float)(pos[j].X * 0.7 + a.Center.X * 0.3),
+                                        (float)(pos[j].Y * 0.7 + a.Center.Y * 0.3));
+                angleT[j].Add(now); angleV[j].Add(a.AngleDeg);
+                TryDetectRecoil(j, angleT[j], angleV[j], recoilVotes, ref lockedCount, locked);
+            }
+        }
 
         try
         {
@@ -863,29 +879,14 @@ public sealed class PositionWatcher : IDisposable
 
                         // 로컬 추적 — 위치가 고정된 뒤: 회전 화살표의 각도 시계열 + 반동 감지.
                         // 로컬 블롭 중심으로 위치를 서서히 보정(회전 핵 어긋남 수렴).
-                        if (pos is not null)
-                        {
-                            for (int j = 0; j < 4; j++)
-                            {
-                                if (locked[j] is not null) continue;
-                                var rect = new Rectangle((int)(pos[j].X - posBox / 2.0), (int)(pos[j].Y - posBox / 2.0), posBox, posBox);
-                                var la = RuneArrowDetector.AnalyzeArrowAt(f, beforeCrop, rect);
-                                if (la is not { } a) continue;
-                                if (a.Area >= 60)
-                                    pos[j] = new PointF((float)(pos[j].X * 0.7 + a.Center.X * 0.3),
-                                                        (float)(pos[j].Y * 0.7 + a.Center.Y * 0.3));
-                                angleT[j].Add(now); angleV[j].Add(a.AngleDeg);
-                                TryDetectRecoil(j, angleT[j], angleV[j], recoilVotes, ref lockedCount, locked);
-                            }
-                        }
+                        if (pos is not null) LocalPass(f, now);
 
                         if (!spinNoted && sw.ElapsedMilliseconds > 800 && lockedCount < 4)
                         {
                             spinNoted = true;
-                            // 회전 변형 — 반동을 여러 바퀴 관찰해야 한다. 퍼즐은 무입력으로도
-                            // 오래 떠 있으므로(11초+ 실측) 예산을 늘려 계속 관찰한다.
+                            // 회전 변형 — 반동을 여러 바퀴 관찰해야 하므로 예산을 늘린다
                             budgetMs = Math.Max(budgetMs, RotatingBudgetMs);
-                            Note("화살표 회전 감지 — 반동(격발) 방향을 관찰합니다(최대 12초)");
+                            Note("화살표 회전 감지 — 반동(격발) 방향을 관찰합니다(최대 4초)");
                         }
                     }
                     finally
@@ -898,6 +899,19 @@ public sealed class PositionWatcher : IDisposable
                             var old = win[0]; win.RemoveAt(0);
                             if (!_runeShots.Contains(old)) old.Dispose();
                         }
+                    }
+                }
+                // 고속 회전(1바퀴 <1초, 사용자 확인) 대응 — 위치 고정 후에는 무거운 줄 인식 사이에
+                // 가벼운 로컬 샘플을 한 번 더 끼워 각도 샘플링을 ~2배 조밀하게 만든다(반동 포착률↑)
+                if (pos is not null && lockedCount < 4 && sw.ElapsedMilliseconds < budgetMs)
+                {
+                    await PreciseDelay.WaitAsync(35, ct).ConfigureAwait(false);
+                    Bitmap? f2 = null;
+                    try { f2 = ScreenCapture.Capture(screenCrop); } catch { /* 일시적 캡처 실패 */ }
+                    if (f2 is not null)
+                    {
+                        try { LocalPass(f2, sw.ElapsedMilliseconds); RecordStrip(f2); }
+                        finally { f2.Dispose(); }
                     }
                 }
                 if (lockedCount < 4) await PreciseDelay.WaitAsync(PuzzleSampleGapMs, ct).ConfigureAwait(false);
