@@ -858,7 +858,8 @@ internal static class RuneArrowDetector
             int lockedCount = 0;
             var votes = new int[4, 4];
             var angleT = new List<double>[4]; var angleV = new List<double>[4];
-            for (int j = 0; j < 4; j++) { angleT[j] = new List<double>(); angleV[j] = new List<double>(); }
+            var lastRotAt = new int[4];
+            for (int j = 0; j < 4; j++) { angleT[j] = new List<double>(); angleV[j] = new List<double>(); lastRotAt[j] = -999; }
             for (int fi = 0; fi < strips.Count; fi++)
             {
                 double t = fi * 50.0; // 명목 50ms 간격
@@ -872,13 +873,13 @@ internal static class RuneArrowDetector
                     if (a.Area >= 60)
                         pos[j] = new PointF((float)(pos[j].X * 0.7 + a.Center.X * 0.3), (float)(pos[j].Y * 0.7 + a.Center.Y * 0.3));
                     int before1 = lockedCount;
-                    bool rotating = a.MovingPx >= 40;
-                    if (rotating)
-                    {
-                        angleT[j].Add(t); angleV[j].Add(a.AngleDeg);
+                    angleT[j].Add(t); angleV[j].Add(a.AngleDeg);
+                    int n1 = angleV[j].Count;
+                    if (PositionWatcher.IsRotating(angleT[j], angleV[j])) lastRotAt[j] = n1;
+                    bool rotActive = n1 - lastRotAt[j] <= 3;
+                    if (rotActive)
                         PositionWatcher.TryDetectRecoil(j, angleT[j], angleV[j], votes, ref lockedCount, locked);
-                    }
-                    parts.Add($"{(rotating ? "회" : "정")}{(a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })}{a.AngleDeg:000}°a{a.Area}m{a.MovingPx}{(lockedCount > before1 ? "★락" : "")}");
+                    parts.Add($"{(rotActive ? "회" : "정")}{(a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })}{a.AngleDeg:000}°a{a.Area}m{a.MovingPx}{(lockedCount > before1 ? "★락" : "")}");
                 }
                 sb.AppendLine($"f{fi:00} {t,5:0}ms  {string.Join("  ", parts)}");
             }

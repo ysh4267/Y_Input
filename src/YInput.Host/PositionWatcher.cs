@@ -893,12 +893,14 @@ public sealed class PositionWatcher : IDisposable
         for (int j = 0; j < 4; j++) { angleT[j] = new List<double>(); angleV[j] = new List<double>(); }
 
         bool fastMode = false, rotatingSeen = false;
-        Bitmap? prevFast = null; // 고속 모드의 직전 틱 프레임 — '움직임' 마스크 기준
+        Bitmap? prevFast = null; // 고속 모드의 직전 틱 프레임(진단 MovingPx용)
+        var lastRotAt = new int[4]; for (int j = 0; j < 4; j++) lastRotAt[j] = -999; // 화살표별 마지막 '회전 중' 표본 번호
 
-        // 미확정 화살표들의 로컬 분석 한 회. prev = 직전 프레임(움직임 판별 기준).
-        //  · 움직이는 글리프(회전) → 각도 표본 추가 + 반동 감지 + 초반 회전 판정
-        //  · 정지 글리프 → 고속 모드에서는 로컬 시그니처 런으로 정지 확정을 잇는다
-        //    (무거운 경로가 멈추므로; 소스가 달라 무거운 경로 런과는 리셋으로 갈라진다)
+        // 미확정 화살표들의 로컬 분석 한 회. 회전/정지 라우팅은 <b>글리프 각도 시계열</b>로만 판단 —
+        // 박스 안 '움직임 픽셀 수'는 배경 애니메이션(불꽃·이펙트)에 오염돼 정지 화살표를 회전으로
+        // 오분류했다(10:39 실행: 고속 모드에서 정지 화살표가 시그니처 락 경로를 영영 못 탐).
+        //  · 회전 중(최근 3스텝 단조 ≥15°/100ms, 반동 딸깍 순간을 위해 3표본 히스테리시스) → 반동 감지
+        //  · 정지 → 고속 모드에서는 로컬 시그니처 런으로 확정을 잇는다(무거운 경로가 멈추므로)
         void LocalPass(Bitmap frame, Bitmap? prev, long now)
         {
             for (int j = 0; j < 4; j++)
@@ -911,26 +913,13 @@ public sealed class PositionWatcher : IDisposable
                     pos[j] = new PointF((float)(pos[j].X * 0.7 + a.Center.X * 0.3),
                                         (float)(pos[j].Y * 0.7 + a.Center.Y * 0.3));
 
-                if (a.MovingPx >= 40)
+                angleT[j].Add(now); angleV[j].Add(a.AngleDeg);
+                int n = angleV[j].Count;
+                if (IsRotating(angleT[j], angleV[j])) lastRotAt[j] = n;
+                if (n - lastRotAt[j] <= 3) // 회전 중(반동 딸깍으로 순간 멈춘 표본 포함)
                 {
-                    angleT[j].Add(now); angleV[j].Add(a.AngleDeg);
                     TryDetectRecoil(j, angleT[j], angleV[j], recoilVotes, ref lockedCount, locked);
-                    if (!fastMode && !rotatingSeen && angleV[j].Count >= 4)
-                    {
-                        // 초반 회전 판정 — 최근 3스텝이 전부 같은 방향으로 ≥15°/100ms면 회전 중
-                        bool rot = true; int sgn = 0;
-                        var tv = angleT[j]; var av = angleV[j];
-                        for (int k = av.Count - 3; k < av.Count; k++)
-                        {
-                            double d = (av[k] - av[k - 1]) % 360;
-                            if (d > 180) d -= 360; else if (d <= -180) d += 360;
-                            double rate = d * 100 / Math.Max(40, tv[k] - tv[k - 1]);
-                            if (Math.Abs(rate) < 15) { rot = false; break; }
-                            int s = Math.Sign(rate);
-                            if (sgn == 0) sgn = s; else if (s != sgn) { rot = false; break; }
-                        }
-                        if (rot) rotatingSeen = true;
-                    }
+                    rotatingSeen = true;
                 }
                 else if (fastMode)
                 {
@@ -1088,6 +1077,24 @@ public sealed class PositionWatcher : IDisposable
         for (int j = 0; j < 4; j++) result.Add(new RuneArrow(centers[j], locked[j]!.Value));
         Note($"퍼즐 확정 — 4/4{(spinNoted ? " (회전 포함)" : "")}");
         return result;
+    }
+
+    /// <summary>각도 시계열이 '회전 중'인가 — 최근 3스텝이 전부 같은 방향으로 ≥15°/100ms.
+    /// 정지 글리프의 각도 지터는 스텝이 작거나 부호가 요동해 걸리지 않는다.</summary>
+    internal static bool IsRotating(List<double> ts, List<double> deg)
+    {
+        if (deg.Count < 4) return false;
+        int sgn = 0;
+        for (int k = deg.Count - 3; k < deg.Count; k++)
+        {
+            double d = (deg[k] - deg[k - 1]) % 360;
+            if (d > 180) d -= 360; else if (d <= -180) d += 360;
+            double rate = d * 100 / Math.Max(40, ts[k] - ts[k - 1]);
+            if (Math.Abs(rate) < 15) return false;
+            int s = Math.Sign(rate);
+            if (sgn == 0) sgn = s; else if (s != sgn) return false;
+        }
+        return true;
     }
 
     /// <summary>회전 화살표의 반동 감지 — 각도 시계열에서 시간당 회전량(중앙값 각속도) 대비
