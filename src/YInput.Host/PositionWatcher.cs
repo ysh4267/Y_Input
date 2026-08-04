@@ -895,6 +895,9 @@ public sealed class PositionWatcher : IDisposable
         bool fastMode = false, rotatingSeen = false;
         Bitmap? prevFast = null; // 고속 모드의 직전 틱 프레임(진단 MovingPx용)
         var lastRotAt = new int[4]; for (int j = 0; j < 4; j++) lastRotAt[j] = -999; // 화살표별 마지막 '회전 중' 표본 번호
+        // 로컬 정지 확정용 런 상태 — 무거운 줄 경로의 런과 소스가 달라(교집합 마스크 vs 로컬 글리프)
+        // 같은 배열을 쓰면 서로 리셋만 반복한다. 독립 이중화: 둘 중 먼저 안정되는 쪽이 확정.
+        var lRunDir = new char[4]; var lRunLen = new int[4]; var lRunStart = new long[4]; var lRunSig = new bool[4][];
 
         // 미확정 화살표들의 로컬 분석 한 회. 회전/정지 라우팅은 <b>글리프 각도 시계열</b>로만 판단 —
         // 박스 안 '움직임 픽셀 수'는 배경 애니메이션(불꽃·이펙트)에 오염돼 정지 화살표를 회전으로
@@ -921,15 +924,16 @@ public sealed class PositionWatcher : IDisposable
                     TryDetectRecoil(j, angleT[j], angleV[j], recoilVotes, ref lockedCount, locked);
                     rotatingSeen = true;
                 }
-                else if (fastMode)
+                else
                 {
-                    // 고속 모드의 정지 확정 — 로컬 시그니처 런
-                    if (runSig[j] is not null && runDir[j] == a.Dir && RuneArrowDetector.SigSimilar(runSig[j], a.Sig))
+                    // 정지 확정 — 로컬 시그니처 런. 무거운 줄 경로와 상시 병행(독립 런 상태) —
+                    // 줄 인식이 흔들리는 맵에서 정지 화살표가 굶는 것 방지(10:39 4정지 실패).
+                    if (lRunSig[j] is not null && lRunDir[j] == a.Dir && RuneArrowDetector.SigSimilar(lRunSig[j], a.Sig))
                     {
-                        runLen[j]++;
-                        if (runLen[j] >= LockRun && now - runStart[j] >= LockSpanMs) { locked[j] = runDir[j]; lockedCount++; }
+                        lRunLen[j]++;
+                        if (lRunLen[j] >= LockRun && now - lRunStart[j] >= LockSpanMs) { locked[j] = lRunDir[j]; lockedCount++; }
                     }
-                    else { runSig[j] = a.Sig; runDir[j] = a.Dir; runLen[j] = 1; runStart[j] = now; }
+                    else { lRunSig[j] = a.Sig; lRunDir[j] = a.Dir; lRunLen[j] = 1; lRunStart[j] = now; }
                 }
             }
         }
