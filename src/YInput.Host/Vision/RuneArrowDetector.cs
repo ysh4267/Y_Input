@@ -133,9 +133,21 @@ internal static class RuneArrowDetector
         AccumulateDiff(bannerRef, frameB, strip, w, h, DiffMin, fresh);
         var moving = new bool[w * h];
         AccumulateDiff(frameA, frameB, strip, w, h, AnimDiffMin, moving);
+        // 어두워진 행 게이트 — 배너 텍스트는 어두운 반투명 띠 '위'에 그려져 해당 행의 평균 밝기가
+        // 발동 전보다 떨어진다(실측 27~38). 몹 넉백으로 카메라가 밀리면 금색 장식 등이 '새로 나타난
+        // 정지 픽셀'로 찍혀 열림 오판을 일으키는데(10:51 실행), 그런 행은 어두워지지 않아 걸러진다.
+        var (_, lumBefore, lumNow, _, _) = RowStats(bannerRef, frameB, strip, DiffMin);
         int count = 0;
-        for (int i = 0; i < vivid.Length; i++)
-            if (vivid[i] && fresh[i] && !moving[i]) count++;
+        for (int y = 0; y < h; y++)
+        {
+            if (lumBefore[y] - lumNow[y] < 6) continue;
+            int o = y * w;
+            for (int x = 0; x < w; x++)
+            {
+                int i = o + x;
+                if (vivid[i] && fresh[i] && !moving[i]) count++;
+            }
+        }
         return count;
     }
 

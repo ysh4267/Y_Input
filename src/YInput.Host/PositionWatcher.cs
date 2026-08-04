@@ -572,83 +572,94 @@ public sealed class PositionWatcher : IDisposable
                 dot = IdentifyMovedLeft(dots0, dots1) ?? MinimapDetector.Pick(dots1).Center;
             }
 
-            // ── 2단계: 수평 먼저 정렬 → 수직 점프 1회 → 다시 수평 재확인 반복(점프로 X가 흐트러질 수 있음) ──
+            // ── 2단계: 룬까지 이동(수평 정렬 → 수직 점프 반복) — 발동 직전 위치 복귀에도 재사용 ──
             long lastUpJumpAt = -1; // 마지막 윗점프(V) 시각 — 발동 전 최소 간격 보장용
-            while (sw.ElapsedMilliseconds < RuneMaxMs)
+            // 반환: 0=도착, 1=창 전면 아님, 2=점 놓침, 3=시간 초과. 도착 시 윗점프 최소 간격까지 보장.
+            async Task<int> MoveToRuneAsync(long maxMs)
             {
-                ct.ThrowIfCancellationRequested();
-                if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 룬 사용을 중단합니다."); return; }
-                if (Math.Abs(dot.X - runeAt.X) <= OccludeNearX && Math.Abs(dot.Y - runeAt.Y) <= OccludeNearY)
-                    break; // 도착 — 시작 시 측정한 룬 위치 기준(아이콘이 내 점에 가려져도 무관)
-                var rune = runeAt;
-
-                if (Math.Abs(dot.X - rune.X) > RuneTolX)
+                var swm = Stopwatch.StartNew();
+                while (swm.ElapsedMilliseconds < maxMs)
                 {
-                    var walk = await WalkToXAsync(s, mini, dot, rune.X, RuneTolX, sw, RuneMaxMs, "rune", "룬으로 이동 중", ct).ConfigureAwait(false);
-                    if (walk.Result == Walk.NotForeground) { Status("skip", "게임 창이 전면에서 벗어나 룬 사용을 중단합니다."); return; }
-                    if (walk.Result == Walk.LostDot) { Status("fail", "이동 중 미니맵 점을 놓쳤습니다."); return; }
-                    dot = walk.Dot;
-                    if (walk.Result == Walk.Timeout) break;
-                    continue; // 수평 정렬됨 — 다음 회차에서 수직 재평가
-                }
+                    ct.ThrowIfCancellationRequested();
+                    if (!WindowLocator.IsForeground(s.Process)) return 1;
+                    if (Math.Abs(dot.X - runeAt.X) <= OccludeNearX && Math.Abs(dot.Y - runeAt.Y) <= OccludeNearY)
+                        break; // 도착 — 시작 시 측정한 룬 위치 기준(아이콘이 내 점에 가려져도 무관)
+                    var rune = runeAt;
 
-                double dyOff = dot.Y - rune.Y; // +: 캐릭터가 룬보다 아래(위로 가야 함)
-                if (Math.Abs(dyOff) <= RuneTolY) break; // 도착
-
-                if (dyOff > 0)
-                {
-                    Status("rune", $"윗점프(V)로 위층 이동 (높이차 {dyOff:+0.0;-0.0}px)");
-                    await TapAsync(ScV, 120, ct, e0: false).ConfigureAwait(false);
-                    lastUpJumpAt = sw.ElapsedMilliseconds;
-                }
-                else
-                {
-                    Status("rune", $"아래점프(↓+Alt)로 아래층 이동 (높이차 {dyOff:+0.0;-0.0}px)");
-                    _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyDownE0 });
-                    try
+                    if (Math.Abs(dot.X - rune.X) > RuneTolX)
                     {
-                        await PreciseDelay.WaitAsync(60, ct).ConfigureAwait(false);
-                        await TapAsync(ScLAlt, 90, ct, e0: false).ConfigureAwait(false);
-                        await PreciseDelay.WaitAsync(60, ct).ConfigureAwait(false);
+                        var walk = await WalkToXAsync(s, mini, dot, rune.X, RuneTolX, swm, maxMs, "rune", "룬으로 이동 중", ct).ConfigureAwait(false);
+                        if (walk.Result == Walk.NotForeground) return 1;
+                        if (walk.Result == Walk.LostDot) return 2;
+                        dot = walk.Dot;
+                        if (walk.Result == Walk.Timeout) break;
+                        continue; // 수평 정렬됨 — 다음 회차에서 수직 재평가
                     }
-                    finally { try { _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyUpE0 }); } catch { } }
-                }
-                // 착지·정지 폴링 — 윗점프(V)는 착지 순간 반동(튕김)이 있어 고정 대기로는 이르다.
-                // 미니맵 점이 연속 3표본 정지할 때까지 본 뒤에 다음 판단으로 넘어간다.
-                var landed = dyOff > 0
-                    ? await WaitLandedAsync(s, mini, dot, UpJumpRiseMs, UpJumpSettleMaxMs, ct).ConfigureAwait(false)
-                    : await WaitLandedAsync(s, mini, dot, DownJumpRiseMs, DownJumpSettleMaxMs, ct).ConfigureAwait(false);
-                if (landed is null) { Status("fail", "이동 중 미니맵 점을 놓쳤습니다."); return; }
-                dot = landed.Value;
 
-                // 윗점프 후에는 거리 판단도 V로부터 최소 1.5초 뒤에(사용자 지정) — 점프 궤적 중
-                // 룬과 순간 가까워졌다 다시 멀어질 수 있어, 시간이 찬 뒤 위치를 재측정해 판단한다.
-                if (dyOff > 0)
+                    double dyOff = dot.Y - rune.Y; // +: 캐릭터가 룬보다 아래(위로 가야 함)
+                    if (Math.Abs(dyOff) <= RuneTolY) break; // 도착
+
+                    if (dyOff > 0)
+                    {
+                        Status("rune", $"윗점프(V)로 위층 이동 (높이차 {dyOff:+0.0;-0.0}px)");
+                        await TapAsync(ScV, 120, ct, e0: false).ConfigureAwait(false);
+                        lastUpJumpAt = sw.ElapsedMilliseconds;
+                    }
+                    else
+                    {
+                        Status("rune", $"아래점프(↓+Alt)로 아래층 이동 (높이차 {dyOff:+0.0;-0.0}px)");
+                        _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyDownE0 });
+                        try
+                        {
+                            await PreciseDelay.WaitAsync(60, ct).ConfigureAwait(false);
+                            await TapAsync(ScLAlt, 90, ct, e0: false).ConfigureAwait(false);
+                            await PreciseDelay.WaitAsync(60, ct).ConfigureAwait(false);
+                        }
+                        finally { try { _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyUpE0 }); } catch { } }
+                    }
+                    // 착지·정지 폴링 — 윗점프(V)는 착지 순간 반동(튕김)이 있어 고정 대기로는 이르다.
+                    // 미니맵 점이 연속 3표본 정지할 때까지 본 뒤에 다음 판단으로 넘어간다.
+                    var landed = dyOff > 0
+                        ? await WaitLandedAsync(s, mini, dot, UpJumpRiseMs, UpJumpSettleMaxMs, ct).ConfigureAwait(false)
+                        : await WaitLandedAsync(s, mini, dot, DownJumpRiseMs, DownJumpSettleMaxMs, ct).ConfigureAwait(false);
+                    if (landed is null) return 2;
+                    dot = landed.Value;
+
+                    // 윗점프 후에는 거리 판단도 V로부터 최소 1.5초 뒤에(사용자 지정) — 점프 궤적 중
+                    // 룬과 순간 가까워졌다 다시 멀어질 수 있어, 시간이 찬 뒤 위치를 재측정해 판단한다.
+                    if (dyOff > 0)
+                    {
+                        long sinceV = sw.ElapsedMilliseconds - lastUpJumpAt;
+                        if (sinceV < PostUpJumpMs)
+                            await PreciseDelay.WaitAsync((int)(PostUpJumpMs - sinceV), ct).ConfigureAwait(false);
+                        var settled = MeasureDot(s, mini, dot);
+                        if (settled is null) return 2;
+                        dot = settled.Value;
+                    }
+                }
+
+                // 최종 도착 확인 — 시작 시 측정한 룬 위치 기준(재측정 없음)
+                if (Math.Abs(dot.X - runeAt.X) > OccludeNearX || Math.Abs(dot.Y - runeAt.Y) > OccludeNearY)
+                    return 3;
+
+                // 윗점프 직후 곧장 발동하지 않는다(사용자 지정) — 착지 반동까지 완전히 끝난 뒤
+                // 스페이스를 눌러야 상호작용이 씹히지 않는다. 마지막 V로부터 최소 간격을 보장.
+                if (lastUpJumpAt >= 0)
                 {
-                    long sinceV = sw.ElapsedMilliseconds - lastUpJumpAt;
-                    if (sinceV < PostUpJumpMs)
-                        await PreciseDelay.WaitAsync((int)(PostUpJumpMs - sinceV), ct).ConfigureAwait(false);
-                    var settled = MeasureDot(s, mini, dot);
-                    if (settled is null) { Status("fail", "이동 중 미니맵 점을 놓쳤습니다."); return; }
-                    dot = settled.Value;
+                    long sinceUpJump = sw.ElapsedMilliseconds - lastUpJumpAt;
+                    if (sinceUpJump < PostUpJumpMs)
+                        await PreciseDelay.WaitAsync((int)(PostUpJumpMs - sinceUpJump), ct).ConfigureAwait(false);
                 }
+                return 0;
             }
 
-            // 최종 도착 확인 — 시작 시 측정한 룬 위치 기준(재측정 없음)
-            // (WaitLandedAsync가 각 점프 후 완전 착지를 보장하므로 여기서는 위치만 본다)
-            if (Math.Abs(dot.X - runeAt.X) > OccludeNearX || Math.Abs(dot.Y - runeAt.Y) > OccludeNearY)
+            switch (await MoveToRuneAsync(RuneMaxMs).ConfigureAwait(false))
             {
-                Status("fail", $"룬 도달 시간 초과(잔여 dx {dot.X - runeAt.X:+0.0;-0.0}px · dy {dot.Y - runeAt.Y:+0.0;-0.0}px).");
-                return;
-            }
-
-            // 윗점프 직후 곧장 발동하지 않는다(사용자 지정) — 착지 반동까지 완전히 끝난 뒤
-            // 스페이스를 눌러야 상호작용이 씹히지 않는다. 마지막 V로부터 최소 간격을 보장.
-            if (lastUpJumpAt >= 0)
-            {
-                long sinceUpJump = sw.ElapsedMilliseconds - lastUpJumpAt;
-                if (sinceUpJump < PostUpJumpMs)
-                    await PreciseDelay.WaitAsync((int)(PostUpJumpMs - sinceUpJump), ct).ConfigureAwait(false);
+                case 1: Status("skip", "게임 창이 전면에서 벗어나 룬 사용을 중단합니다."); return;
+                case 2: Status("fail", "이동 중 미니맵 점을 놓쳤습니다."); return;
+                case 3:
+                    Status("fail", $"룬 도달 시간 초과(잔여 dx {dot.X - runeAt.X:+0.0;-0.0}px · dy {dot.Y - runeAt.Y:+0.0;-0.0}px).");
+                    return;
             }
 
             // ── 3단계: 발동 + 방향키 퍼즐 ──
@@ -709,11 +720,33 @@ public sealed class PositionWatcher : IDisposable
                             return;
                         }
                         await PreciseDelay.WaitAsync(300, ct).ConfigureAwait(false);
+                    }
 
-                        // 재발동 전 기준 프레임 재캡처 — 시도 사이에 몹 넉백·카메라 이동으로 화면이
-                        // 밀리면 처음의 before가 낡아 '발동 전 차분'이 배경 정크로 가득 찬다(10:14 실행:
-                        // 기둥 엣지가 통째로 차분에 찍혀 화살표가 정크와 병합돼 후보 탈락). 지금은
-                        // 퍼즐이 닫혀 있음이 확인된 직후라 깨끗한 기준이 된다.
+                    // 발동 직전 위치 재확인 — 이동·대기·재시도 사이 몹에게 밀려났으면 스페이스가
+                    // 빗나가 퍼즐이 아예 안 열린다(10:51 실행: 밀려난 채 발동 → 빈 화면 인식만 낭비).
+                    bool rewalked = false;
+                    var dchk = MeasureDot(s, mini, dot);
+                    if (dchk is { } dv)
+                    {
+                        dot = dv;
+                        if (Math.Abs(dot.X - runeAt.X) > OccludeNearX || Math.Abs(dot.Y - runeAt.Y) > OccludeNearY)
+                        {
+                            Status("rune", $"룬에서 밀려남(dx {dot.X - runeAt.X:+0.0;-0.0} · dy {dot.Y - runeAt.Y:+0.0;-0.0}px) — 다시 이동합니다");
+                            switch (await MoveToRuneAsync(12000).ConfigureAwait(false))
+                            {
+                                case 1: Status("skip", "게임 창이 전면에서 벗어나 룬 발동을 중단합니다."); return;
+                                case 2: Status("fail", "이동 중 미니맵 점을 놓쳤습니다."); return;
+                                case 3: Status("fail", "룬 위치로 복귀하지 못했습니다."); return;
+                            }
+                            rewalked = true;
+                        }
+                    }
+
+                    // 기준 프레임 재캡처 — 재발동·복귀 후에는 몹 넉백·카메라 이동으로 처음의 before가
+                    // 낡아 '발동 전 차분'이 배경 정크로 가득 찬다(10:14 실행: 기둥 엣지 정크로 후보
+                    // 탈락 / 10:51 실행: 금색 장식이 '새 픽셀'로 찍혀 열림 오판). 퍼즐이 닫힌 상태다.
+                    if (attempt > 0 || rewalked)
+                    {
                         var freshBefore = CaptureGameFrame(s.Process, out _);
                         if (freshBefore is not null && beforeFrame is not null
                             && freshBefore.Width == beforeFrame.Width && freshBefore.Height == beforeFrame.Height)
@@ -758,6 +791,23 @@ public sealed class PositionWatcher : IDisposable
                         await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
                         spaceSw.Restart();
                         await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
+
+                        // 재시도 스페이스 후에도 1초 내 안 보이면 즉시 종료(사용자 지정) — 위치 복귀까지
+                        // 마친 상태에서 두 번 눌러도 안 열리면 상호작용 키/스크립트 자체의 문제라
+                        // 여기서 더 머물며 재시도해봐야 소용없다.
+                        bool opened2 = false;
+                        while (!opened2 && spaceSw.ElapsedMilliseconds < 1000)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            try { opened2 = await CheckVisibleAsync().ConfigureAwait(false); }
+                            catch { await PreciseDelay.WaitAsync(100, ct).ConfigureAwait(false); }
+                        }
+                        if (!opened2)
+                        {
+                            SaveRuneShots(beforeCrop);
+                            Status("fail", "스페이스 2회에도 퍼즐이 열리지 않습니다 — 룬 상호작용 실패(위치/키 설정 확인 필요). 이번 회차를 종료합니다.");
+                            return;
+                        }
                     }
 
                     // 남은 관찰 예산 = 취소 타이머까지의 여유(확인에 쓴 시간 차감)
