@@ -968,7 +968,7 @@ internal static class RuneArrowDetector
     }
 
     /// <summary>스트립 녹화(밴드 크롭, ~50ms 간격) 재현 — 위치를 잡고 스트립마다 화살표별
-    /// 로컬 방향·각도를 찍으며, 실전 반동 감지(PositionWatcher.TryDetectRecoil)를 그대로 돌려
+    /// 로컬 방향·각도를 찍으며, 실전 반동 감지(RuneAngleTracker.TryDetectRecoil)를 그대로 돌려
     /// 어느 표본에서 락이 걸렸을지 재현한다. 출력: 첫 스트립 경로 + ".analysis.txt".</summary>
     private static void AnalyzeStripsToFile(string[] pngPaths)
     {
@@ -1132,15 +1132,15 @@ internal static class RuneArrowDetector
                             Math.Clamp(cy, posAnchor[j].Y - 22, posAnchor[j].Y + 22));
                     }
                     int before1 = lockedCount;
-                    angleT[j].Add(t); angleV[j].Add(PositionWatcher.FixAngleFlip(angleV[j], a.AngleDeg));
-                    if (PositionWatcher.DerailedAngles(angleT[j], angleV[j])) // 실전 LocalPass 미러: 플립 고착 리셋
+                    angleT[j].Add(t); angleV[j].Add(RuneAngleTracker.FixAngleFlip(angleV[j], a.AngleDeg));
+                    if (RuneAngleTracker.DerailedAngles(angleT[j], angleV[j])) // 실전 LocalPass 미러: 플립 고착 리셋
                     { angleT[j].Clear(); angleV[j].Clear(); sb.AppendLine($"      [화살표{j + 1} 플립 고착 → 시계열 리셋]"); }
                     sigHist[j].Add(a.Sig); if (sigHist[j].Count > 4) sigHist[j].RemoveAt(0);
                     int n1 = angleV[j].Count;
-                    if (PositionWatcher.IsRotating(angleT[j], angleV[j])) lastRotAt[j] = n1;
+                    if (RuneAngleTracker.IsRotating(angleT[j], angleV[j])) lastRotAt[j] = n1;
                     bool rotActive = n1 - lastRotAt[j] <= 3 && !SigStable(sigHist[j]);
                     if (rotActive)
-                        PositionWatcher.TryDetectRecoil(j, angleT[j], angleV[j], votes, ref lockedCount, locked,
+                        RuneAngleTracker.TryDetectRecoil(j, angleT[j], angleV[j], votes, ref lockedCount, locked,
                             m => sb.AppendLine($"      {m}")); // 투표 이벤트(직전각→착지각·피벗·방위)를 해당 스트립 아래 기록
                     else
                     {
