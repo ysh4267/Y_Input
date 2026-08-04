@@ -835,9 +835,9 @@ public sealed class PositionWatcher : IDisposable
 
                 // 입력 후 퍼즐(배너)이 사라졌는지 확인 — 화살표 재탐지는 룬 해제 이펙트를 오인할 수 있어
                 // 배너 잔존 여부로 판정한다(23:48 실행: 성공인데 이펙트를 화살표로 재탐지해 실패 경고).
-                // 성공 직후엔 룬 해방 이펙트·문구가 배너 띠 구간에 '새로 나타난 선명한 픽셀'로 찍혀
-                // 존재 판정이 잠시 참이 될 수 있다(09:44 실행: 정답인데 경고) — 이펙트가 가라앉을
-                // 시간을 두고 최대 3회 재확인한 뒤에만 실패로 판단한다.
+                // 성공 직후엔 '룬 해방' 보상 배너(진짜 어두운 띠+텍스트)가 떠서 배너 신호만으로는
+                // 퍼즐 잔존과 구분이 안 된다(11:10 실행: 정답인데 경고) — '배너 + 화살표 줄' 둘 다
+                // 남아 있어야 오답 잔존으로 판단하고, 이펙트가 가라앉을 시간을 두고 최대 3회 재확인.
                 await PreciseDelay.WaitAsync(900, ct).ConfigureAwait(false);
                 bool stillOpen = false;
                 for (int chk = 0; chk < 3; chk++)
@@ -847,7 +847,8 @@ public sealed class PositionWatcher : IDisposable
                         using var va = ScreenCapture.Capture(screenCrop);
                         await PreciseDelay.WaitAsync(180, ct).ConfigureAwait(false);
                         using var vb = ScreenCapture.Capture(screenCrop);
-                        stillOpen = RuneArrowDetector.PuzzlePresent(va, vb, beforeCrop, precropped: true);
+                        stillOpen = RuneArrowDetector.PuzzlePresent(va, vb, beforeCrop, precropped: true)
+                                    && RuneArrowDetector.AnalyzeFrame(vb, va, beforeCrop, precropped: true) is not null;
                     }
                     catch { stillOpen = false; /* 캡처 실패 — 검증 생략 */ }
                     if (!stillOpen) break;
