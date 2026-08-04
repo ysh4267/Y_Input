@@ -743,100 +743,58 @@ public sealed class PositionWatcher : IDisposable
             try
             {
                 if (screenCrop.Width < 100) { Status("fail", "게임 창을 찾지 못해 룬 발동을 중단합니다."); return; }
-                // 퍼즐은 스페이스 후 ~100ms 안에 열리고, '입력이 3초간 없으면' 자동 취소된다.
-                // 주의: 퍼즐이 열린 동안 스페이스를 또 누르면 '오답 입력'으로 처리돼 실패한다 —
-                // 발동당 스페이스는 딱 한 번, 재발동은 취소가 확실히 지난 뒤에만.
-                List<RuneArrow>? arrows = null;
-                for (int attempt = 0; attempt < 3 && arrows is null; attempt++) // 회전형은 멈춤을 놓칠 수 있어 관찰 창 3회
+                // 발동은 스페이스 딱 한 번, 재발동·재시도 없음(사용자 지정 2026-08-04 18:13) —
+                // 열린 퍼즐에 스페이스는 '오답 입력'이라 어떤 재발동도 퍼즐을 날릴 위험이 있다
+                // (18:05 실행: 닫힘 오판 → 재발동 스페이스가 오답으로 들어가 1차 퍼즐 소실).
+                // 스페이스 후에는 무조건 열렸다고 전제하고 인식 1회 — 실패하면 오류로 띄우고 끝.
+                // 인식 실패는 재시도로 덮지 않고 증거(rune-*.png·rune-solve.txt)로 남겨 고친다.
+
+                // 발동 직전 위치 재확인 — 이동·대기 사이 몹에게 밀려났으면 스페이스가 빗나가
+                // 퍼즐이 아예 안 열린다(10:51 실행: 밀려난 채 발동 → 빈 화면 인식만 낭비).
+                if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 룬 발동을 중단합니다."); return; }
+                bool rewalked = false;
+                var dchk = MeasureDot(s, mini, dot);
+                if (dchk is { } dv)
                 {
-                    // 발동·캡처 중에도 게임이 전면이어야 한다 — 다른 창이 덮이면 스페이스가 그 창으로
-                    // 들어가고 캡처에도 그 창이 찍힌다(20:37 실행: IDE가 덮여 인식 실패).
-                    if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 룬 발동을 중단합니다."); return; }
-                    if (attempt > 0)
+                    dot = dv;
+                    if (Math.Abs(dot.X - runeAt.X) > RuneTolX || Math.Abs(dot.Y - runeAt.Y) > CorrectTolY)
                     {
-                        // 열린 퍼즐에 스페이스를 누르면 '오답 입력'이 되어 실패한다(21:57 실행) —
-                        // 화면에서 배너가 실제로 사라진 것을 확인한 뒤에만 재발동한다(고정 시간 가정 금지).
-                        Status("rune", "퍼즐 인식 실패 — 퍼즐이 닫히기를 기다렸다 다시 발동합니다");
-                        bool open = true;
-                        var closeSw = Stopwatch.StartNew();
-                        while (open && closeSw.ElapsedMilliseconds < 8000)
+                        Status("rune", $"룬에서 밀려남(dx {dot.X - runeAt.X:+0.0;-0.0} · dy {dot.Y - runeAt.Y:+0.0;-0.0}px) — 다시 이동합니다");
+                        switch (await MoveToRuneAsync(12000).ConfigureAwait(false))
                         {
-                            try
-                            {
-                                using var fa = ScreenCapture.Capture(screenCrop);
-                                await PreciseDelay.WaitAsync(180, ct).ConfigureAwait(false);
-                                using var fb = ScreenCapture.Capture(screenCrop);
-                                open = RuneArrowDetector.PuzzlePresent(fa, fb, beforeCrop, precropped: true);
-                            }
-                            catch { /* 일시적 캡처 실패 — 다음 폴링 */ }
-                            if (open) await PreciseDelay.WaitAsync(250, ct).ConfigureAwait(false);
+                            case 1: Status("skip", "게임 창이 전면에서 벗어나 룬 발동을 중단합니다."); return;
+                            case 2: Status("fail", "이동 중 미니맵 점을 놓쳤습니다."); return;
+                            case 3: Status("fail", "룬 위치로 복귀하지 못했습니다."); return;
                         }
-                        if (open)
-                        {
-                            // 직전 시도 실패 시점에 프레임·스트립은 이미 저장됨 — 여기서는
-                            // 타임아웃 시점의 실제 화면만 남긴다('아직 열려 있음'이 진짜인지
-                            // PuzzlePresent 오판인지 다음 진단에서 구분하기 위함)
-                            try { using var cf = ScreenCapture.Capture(screenCrop); FileLog.SavePng("rune-close", ScreenCapture.ToPng(cf)); } catch { }
-                            Status("fail", "퍼즐이 닫히지 않아 재발동을 포기합니다(당시 화면 logs\\rune-close.png).");
-                            return;
-                        }
-                        await PreciseDelay.WaitAsync(300, ct).ConfigureAwait(false);
+                        rewalked = true;
                     }
-
-                    // 발동 직전 위치 재확인 — 이동·대기·재시도 사이 몹에게 밀려났으면 스페이스가
-                    // 빗나가 퍼즐이 아예 안 열린다(10:51 실행: 밀려난 채 발동 → 빈 화면 인식만 낭비).
-                    bool rewalked = false;
-                    var dchk = MeasureDot(s, mini, dot);
-                    if (dchk is { } dv)
-                    {
-                        dot = dv;
-                        if (Math.Abs(dot.X - runeAt.X) > RuneTolX || Math.Abs(dot.Y - runeAt.Y) > CorrectTolY)
-                        {
-                            Status("rune", $"룬에서 밀려남(dx {dot.X - runeAt.X:+0.0;-0.0} · dy {dot.Y - runeAt.Y:+0.0;-0.0}px) — 다시 이동합니다");
-                            switch (await MoveToRuneAsync(12000).ConfigureAwait(false))
-                            {
-                                case 1: Status("skip", "게임 창이 전면에서 벗어나 룬 발동을 중단합니다."); return;
-                                case 2: Status("fail", "이동 중 미니맵 점을 놓쳤습니다."); return;
-                                case 3: Status("fail", "룬 위치로 복귀하지 못했습니다."); return;
-                            }
-                            rewalked = true;
-                        }
-                    }
-
-                    // 기준 프레임 재캡처 — 재발동·복귀 후에는 몹 넉백·카메라 이동으로 처음의 before가
-                    // 낡아 '발동 전 차분'이 배경 정크로 가득 찬다(10:14 실행: 기둥 엣지 정크로 후보
-                    // 탈락 / 10:51 실행: 금색 장식이 '새 픽셀'로 찍혀 열림 오판). 퍼즐이 닫힌 상태다.
-                    if (attempt > 0 || rewalked)
-                    {
-                        var freshBefore = CaptureGameFrame(s.Process, out _);
-                        if (freshBefore is not null && beforeFrame is not null
-                            && freshBefore.Width == beforeFrame.Width && freshBefore.Height == beforeFrame.Height)
-                        {
-                            beforeFrame.Dispose(); beforeFrame = freshBefore;
-                            beforeCrop?.Dispose();
-                            beforeCrop = freshBefore.Clone(puzzleReg, freshBefore.PixelFormat);
-                        }
-                        else freshBefore?.Dispose();
-                    }
-                    await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
-                    var spaceSw = Stopwatch.StartNew(); // 취소 타이머 기준점(마지막 입력 = 이 스페이스)
-                    await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
-
-                    // 스페이스를 누르면 퍼즐은 무조건 열린 것으로 전제(사용자 지정 2026-08-04) —
-                    // '안 보이면 스페이스 재시도'는 열린 퍼즐에 오답 입력될 위험이 있어 제거.
-                    // 인식이 완전해지면 재시도 로직을 다시 조정한다.
-
-                    // 남은 관찰 예산 = 취소 타이머까지의 여유(확인에 쓴 시간 차감)
-                    int budget = Math.Max(900, PuzzleBudgetMs - (int)spaceSw.ElapsedMilliseconds);
-                    ClearRuneShots(); // 시도별 증거 분리 — 재발동은 퍼즐을 새로 굴리므로 이전 시도 프레임이 섞이면 안 된다
-                    arrows = await SolvePuzzleAsync(screenCrop, beforeCrop, budget, ct).ConfigureAwait(false);
-                    // 실패 즉시 저장 — 다음 시도 진입 전에 남겨야 전면 이탈·취소 등 어떤 경로로 끝나도
-                    // 마지막 시도의 증거(프레임·스트립)가 디스크에 있다(11:47 실행: 전면 이탈 종료로 미저장).
-                    if (arrows is null) SaveRuneShots(beforeCrop, includeStrips: true);
                 }
+
+                // 기준 프레임 재캡처 — 복귀 후에는 몹 넉백·카메라 이동으로 처음의 before가 낡아
+                // '발동 전 차분'이 배경 정크로 가득 찬다(10:14·10:51 실행). 퍼즐이 닫힌 상태다.
+                if (rewalked)
+                {
+                    var freshBefore = CaptureGameFrame(s.Process, out _);
+                    if (freshBefore is not null && beforeFrame is not null
+                        && freshBefore.Width == beforeFrame.Width && freshBefore.Height == beforeFrame.Height)
+                    {
+                        beforeFrame.Dispose(); beforeFrame = freshBefore;
+                        beforeCrop?.Dispose();
+                        beforeCrop = freshBefore.Clone(puzzleReg, freshBefore.PixelFormat);
+                    }
+                    else freshBefore?.Dispose();
+                }
+                await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
+                var spaceSw = Stopwatch.StartNew();
+                await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
+
+                int budget = Math.Max(900, PuzzleBudgetMs - (int)spaceSw.ElapsedMilliseconds);
+                ClearRuneShots();
+                var arrows = await SolvePuzzleAsync(screenCrop, beforeCrop, budget, ct).ConfigureAwait(false);
                 if (arrows is null)
                 {
-                    Status("fail", "룬 퍼즐 화살표를 인식하지 못했습니다 — 직접 입력해 주세요(logs\\rune-puzzle.png 확인).");
+                    SaveRuneShots(beforeCrop, includeStrips: true); // 실패 증거 — 재시도 대신 이걸로 인식을 고친다
+                    Status("fail", "룬 퍼즐 인식 실패 — 직접 입력해 주세요(logs\\rune-puzzle.png·rune-solve.txt 확인). 이번 회차를 종료합니다.");
                     return;
                 }
 
