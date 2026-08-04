@@ -88,11 +88,12 @@ public sealed class PositionWatcher : IDisposable
     private const double RuneTolY = 6.0;   // '점프해도 층 불변' 예외 시에만 쓰는 Y 상한 —
                                            // RuneIconYOffset 추정이 어긋난 경우의 무한 점프 방지용
     private const int RuneMaxMs = 30000;   // 수직 이동 포함 총 제한 — 위치 보정보다 길게
-    private const int DownJumpRiseMs = 450;    // 아래점프 직후 낙하 진입 대기 — 이륙 전 '정지' 오판 방지
-    private const int UpJumpRiseMs = 800;      // 윗점프(V) 상승+정점 통과 대기 — 정점의 순간 정지를 착지로 오판 방지
-    private const int UpJumpSettleMaxMs = 2500;   // 윗점프 착지 폴링 상한 — 착지 순간 반동(튕김)이 있어 여유
-    private const int DownJumpSettleMaxMs = 1800; // 아래점프 착지 폴링 상한
-    private const int PostUpJumpMs = 1500;     // 윗점프(V) → 거리 판단·스페이스 발동 최소 간격(사용자 지정) —
+    // 점프 후 대기 일괄 절반 축소(사용자 지정 2026-08-04 "너무 기다린다") — 값은 이전의 1/2.
+    private const int DownJumpRiseMs = 225;    // 아래점프 직후 낙하 진입 대기 — 이륙 전 '정지' 오판 방지
+    private const int UpJumpRiseMs = 400;      // 윗점프(V) 상승+정점 통과 대기 — 정점의 순간 정지를 착지로 오판 방지
+    private const int UpJumpSettleMaxMs = 1250;   // 윗점프 착지 폴링 상한 — 착지 순간 반동(튕김)이 있어 여유
+    private const int DownJumpSettleMaxMs = 900;  // 아래점프 착지 폴링 상한
+    private const int PostUpJumpMs = 750;      // 윗점프(V) → 거리 판단·스페이스 발동 최소 간격 —
                                                // 점프 궤적 중 룬과 순간 가까워졌다 멀어질 수 있고, 착지
                                                // 반동까지 끝난 '정착 후' 위치로만 판단·발동해야 한다
 

@@ -113,6 +113,12 @@ internal static class MinimapDetector
     // 여기서 갈린다(08-04 퀸스로드: 룬 없는데 썸네일 파편 7px가 통과해 헛걸음한 사례).
     private const int RuneMinMeanR = 180;
     private const int RuneMinMeanRG = 75;
+    // 코어 색 정밀 게이트(사용자 지정 2026-08-04: 오차 0.1% 수준 = 정확 일치) — 룬 다이아 코어는
+    // 정확히 RGB(221,102,255)로 렌더된다. 실측: burning-rune-1/2·카르시온 나무줄기3 캡처 모두
+    // 이 값 픽셀이 정확히 25개(다이아 코어)로 동일, 안티앨리어싱 변형 없음. 아이콘 위에 덧씌워지거나
+    // 색이 변할 일이 없으므로, 코어의 1/3(8px) 이상 정확 일치해야 룬으로 인정 — 이펙트·마커 완전 배제.
+    private const int RuneCoreR = 221, RuneCoreG = 102, RuneCoreB = 255;
+    private const int RuneCoreMinPx = 8;
 
     /// <summary>미니맵 영역에서 룬(보라 다이아) 아이콘 중심을 찾는다(minimapRect 상대, 서브픽셀).
     /// 후보가 여럿이면 가장 큰 블롭. 없으면 null. (룬 사용 시작 시 1회만 측정하는 용도)</summary>
@@ -126,7 +132,7 @@ internal static class MinimapDetector
 
     /// <summary>룬 탐지 후보 블롭 하나 — 게이트 판정 결과(Pass/탈락 사유)와 평균 색 포함(진단용).</summary>
     internal readonly record struct RuneBlob(PointF Center, int Count, int W, int H, double Fill,
-                                             int MeanR, int MeanG, int MeanB, bool Pass, string Note);
+                                             int MeanR, int MeanG, int MeanB, int Core, bool Pass, string Note);
 
     /// <summary>보라 마스크 → 블롭 분해 → 게이트 판정까지 프로덕션 경로 그대로 수행하고 후보 전부를
     /// 돌려준다. FindRuneIcon(실전)과 --rune-minimap-analyze(진단)가 같은 코드를 쓰기 위한 공용부.</summary>
@@ -167,7 +173,7 @@ internal static class MinimapDetector
         for (int i = 0; i < mask.Length; i++)
         {
             if (!mask[i] || seen[i]) continue;
-            long sumX = 0, sumY = 0, sumR = 0, sumG = 0, sumB = 0; int count = 0;
+            long sumX = 0, sumY = 0, sumR = 0, sumG = 0, sumB = 0; int count = 0, core = 0;
             int minX = w, maxX = -1, minY = h, maxY = -1;
             stack.Push(i); seen[i] = true;
             while (stack.Count > 0)
@@ -176,6 +182,7 @@ internal static class MinimapDetector
                 int px = p % w, py = p / w;
                 sumX += px; sumY += py; count++;
                 sumR += rs[p]; sumG += gs[p]; sumB += bs[p];
+                if (rs[p] == RuneCoreR && gs[p] == RuneCoreG && bs[p] == RuneCoreB) core++; // 코어 색 정확 일치
                 if (px < minX) minX = px; if (px > maxX) maxX = px;
                 if (py < minY) minY = py; if (py > maxY) maxY = py;
                 if (px > 0 && mask[p - 1] && !seen[p - 1]) { seen[p - 1] = true; stack.Push(p - 1); }
@@ -196,9 +203,10 @@ internal static class MinimapDetector
             else if (count >= 15 && fill > 0.68) { pass = false; note = "채움비"; }
             else if (Math.Max(bw, bh) > Math.Min(bw, bh) * 2.2) { pass = false; note = "길쭉"; } // 장식·라벨 배제
             else if (sumR / count < RuneMinMeanR || (sumR - sumG) / count < RuneMinMeanRG) { pass = false; note = "색"; } // 마젠타 아님
+            else if (core < RuneCoreMinPx) { pass = false; note = "코어색"; } // 정확 RGB(221,102,255) 픽셀 부족
             else pass = true;
             blobs.Add(new RuneBlob(c, count, bw, bh, fill,
-                (int)(sumR / count), (int)(sumG / count), (int)(sumB / count), pass, note));
+                (int)(sumR / count), (int)(sumG / count), (int)(sumB / count), core, pass, note));
         }
         return blobs;
     }
@@ -218,7 +226,7 @@ internal static class MinimapDetector
                 var sb = new System.Text.StringBuilder();
                 sb.AppendLine($"{Path.GetFileName(path)} {bmp.Width}x{bmp.Height} — 보라 마스크 {mask.Count(x => x)}px, 블롭 {blobs.Count}개");
                 foreach (var b in blobs.OrderByDescending(x => x.Count))
-                    sb.AppendLine($"  ({b.Center.X,6:F1},{b.Center.Y,6:F1}) a{b.Count,-4} {b.W}x{b.H} 채움{b.Fill:F2} RGB({b.MeanR},{b.MeanG},{b.MeanB}) {(b.Pass ? "★통과" : "탈락:" + b.Note)}");
+                    sb.AppendLine($"  ({b.Center.X,6:F1},{b.Center.Y,6:F1}) a{b.Count,-4} {b.W}x{b.H} 채움{b.Fill:F2} RGB({b.MeanR},{b.MeanG},{b.MeanB}) 코어{b.Core} {(b.Pass ? "★통과" : "탈락:" + b.Note)}");
                 var pick = FindRuneIcon(bmp, rect);
                 sb.AppendLine(pick is { } p ? $"→ 룬 판정: ({p.X:F1},{p.Y:F1})" : "→ 룬 없음");
                 File.WriteAllText(path + ".rune.txt", sb.ToString());
