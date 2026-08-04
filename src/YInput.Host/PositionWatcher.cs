@@ -613,9 +613,9 @@ public sealed class PositionWatcher : IDisposable
                         {
                             await PreciseDelay.WaitAsync(60, ct).ConfigureAwait(false);
                             await TapAsync(ScLAlt, 90, ct, e0: false).ConfigureAwait(false);
-                            // ↓를 2초가량 더 유지(사용자 지정 2026-08-04) — 낙하 중 줄·사다리를
+                            // ↓를 1초가량 더 유지(사용자 지정 2026-08-04) — 낙하 중 줄·사다리를
                             // 잡아버리면 이동이 막히는데, ↓를 계속 누르고 있으면 타고 내려가 회복된다
-                            await PreciseDelay.WaitAsync(2000, ct).ConfigureAwait(false);
+                            await PreciseDelay.WaitAsync(1000, ct).ConfigureAwait(false);
                         }
                         finally { try { _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyUpE0 }); } catch { } }
                     }
@@ -934,6 +934,22 @@ public sealed class PositionWatcher : IDisposable
         var sigHist = new List<bool[]>[4]; for (int j = 0; j < 4; j++) sigHist[j] = new List<bool[]>();
         bool SigStable(List<bool[]> hist) => hist.Count >= 3
             && RuneArrowDetector.SigSimilar(hist[^1], hist[^2]) && RuneArrowDetector.SigSimilar(hist[^2], hist[^3]);
+        // 축 안정 — 최근 3표본의 주축 각도(mod 180, 머리 반전 무시)가 ±25° 안에 모여야 정지 잠금.
+        // 관측점이 화살표 사이·잡영역에 있으면 시그니처가 우연히 3연속 비슷해도 각도는 난수다
+        // (16:11 실행: 60px 잡줄로 슬롯이 한 칸 어긋나 옆 ↑화살표 걸침 읽기 → 4번 U 오답 락 —
+        //  당시 각도 시계열 84→260→1→108→243→30… 난수인데도 잠겼다).
+        static bool AxisStable(List<double> v)
+        {
+            if (v.Count < 3) return false;
+            static double Axis(double d) { d %= 180; if (d < 0) d += 180; return d; }
+            double a0 = Axis(v[^3]);
+            for (int k = 2; k >= 1; k--)
+            {
+                double diff = Math.Abs(Axis(v[^k]) - a0);
+                if (Math.Min(diff, 180 - diff) > 25) return false;
+            }
+            return true;
+        }
 
         // 미확정 화살표들의 로컬 분석 한 회. 회전/정지 라우팅은 <b>글리프 각도 시계열</b>로만 판단 —
         // 박스 안 '움직임 픽셀 수'는 배경 애니메이션(불꽃·이펙트)에 오염돼 정지 화살표를 회전으로
@@ -976,7 +992,8 @@ public sealed class PositionWatcher : IDisposable
                     if (lRunSig[j] is not null && lRunDir[j] == a.Dir && RuneArrowDetector.SigSimilar(lRunSig[j], a.Sig))
                     {
                         lRunLen[j]++;
-                        if (lRunLen[j] >= LockRun && now - lRunStart[j] >= LockSpanMs) { locked[j] = lRunDir[j]; lockedCount++; }
+                        if (lRunLen[j] >= LockRun && now - lRunStart[j] >= LockSpanMs && AxisStable(angleV[j]))
+                        { locked[j] = lRunDir[j]; lockedCount++; }
                     }
                     else { lRunSig[j] = a.Sig; lRunDir[j] = a.Dir; lRunLen[j] = 1; lRunStart[j] = now; }
                 }

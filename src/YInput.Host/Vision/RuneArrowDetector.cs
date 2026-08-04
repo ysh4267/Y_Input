@@ -434,7 +434,7 @@ internal static class RuneArrowDetector
             b.Area is >= MinArrowArea and <= MaxArrowArea &&
             b.W is >= MinArrowBox and <= MaxArrowBox && b.H is >= MinArrowBox and <= MaxArrowBox &&
             b.Cy >= rowY0 && b.Cy <= rowY1).OrderBy(b => b.Cx).ToList();
-        double gLo = frame.Width * 0.055, gHi = frame.Width * 0.135;
+        double gLo = frame.Width * 0.068, gHi = frame.Width * 0.135; // 하한 0.068W — PickRow와 동일(60px 잡줄 차단)
         List<Blob>? best = null; double bestScore = double.MinValue;
         for (int a = 0; a < cands.Count - 2; a++)
             for (int b2 = a + 1; b2 < cands.Count - 1; b2++)
@@ -564,10 +564,12 @@ internal static class RuneArrowDetector
                         if (yMax - yMin > RowBandPx) continue;
                         bool gapsOk = true;
                         double gMin = double.MaxValue, gMax = 0;
-                        // 간격은 창폭 비례 절대 범위(1076px 창 실측 85~125 → 0.055~0.135W) + 균일성(비 ≤1.5).
-                        // 개별 50~280 검사만으로는 잡줄이 통과했다(2026-08-04 14:04 실행: x173 잡블롭 줄
-                        // 간격 226/88/191 → 3/4 실패·오답 입력, 리플레이에선 186~247 '균일' 잡줄까지 통과).
-                        double gLo = frameW * 0.055, gHi = frameW * 0.135;
+                        // 간격은 창폭 비례 절대 범위 + 균일성(비 ≤1.6). 실측 간격: 1076px 창에서
+                        // 78~125px(0.0725~0.116W) — 하한 0.068W는 실측 최소(78) 바로 아래까지만 연다.
+                        // 0.055W(59px)로 열었더니 ~60px 등간격 잡블롭 줄이 중앙·균일비까지 우연히
+                        // 만족하며 통과, 관측 슬롯이 한 칸씩 어긋나 옆 화살표를 잠갔다(16:11 실행:
+                        // ←↑↑↑ 입력, 4번 오답 — 실제 줄 438/528/624/737 vs 채택 줄 ~450/510/570/630).
+                        double gLo = frameW * 0.068, gHi = frameW * 0.135;
                         for (int i = 1; i < 4; i++)
                         {
                             double gap = combo[i].Cx - combo[i - 1].Cx;
