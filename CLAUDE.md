@@ -66,6 +66,7 @@ YInput.exe --rune-minimap-analyze rune-minimap.png    # → .rune.txt 후보·�
 | `rune-frames-UUUR-carcion-20260804` | 정지형·몹 점거 | ④ ↑↑↑→ · 위치 358/470/537/646 ±5 |
 | `rune-frames-DULR-carcion2-20260804` | 정지형·불균일 간격(비 2.78) | ④ ↓↑←→ · 위치 389/486/622/671 ±5 |
 | `rune-frames-DRDD-purple4-20260804` | 침식+병합 공존·에지 잡블롭 | ②③ 에지 보정 789→711 · 줄 439/531/628/711 ±5 |
+| `rune-frames-RRDD-effectmerge-20260804` | 이펙트 병합 잡줄·오답 입력 | ② 줄 475/598/682/749 ±5 (라이브: 잠금보호·중복관측·충돌보류) |
 | `rune-minimap\` | 아이콘 3장 | README 참조 |
 
 리플레이 산출물(`*.analysis.txt`, `*.png.mask-*.png`)은 gitignore됨 — 커밋하지 말 것.

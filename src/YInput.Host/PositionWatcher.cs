@@ -892,6 +892,8 @@ public sealed class PositionWatcher : IDisposable
     private const int LockSpanMs = 250;         // 정지 확정 최소 지속시간
     private const int RecoilHits = 2;           // 반동 확정 최소 관측 횟수(같은 방위)
     private const int FastTickMs = 50;          // 회전 판정 후 고속 관찰 주기(사용자 지정 — 1바퀴 <1초라 촘촘히)
+    private const int MinSlotSepPx = 24;        // 슬롯 관측점 최소 이격 — 미만이면 같은 화살표 중복 관측(실측:
+                                                // 20:38 오답 입력 때 2·3번이 15px, 진짜 이웃 화살표는 ≥48px)
     private const int StripKeep = 90;           // 실패 진단용 밴드 스트립 녹화 링 크기(고속 50ms 기준 ~4.5초)
 
     /// <summary>퍼즐 화살표 4개 확정. 매 프레임: ① 검증된 줄 인식(교집합 단계)으로 정지 화살표
@@ -925,6 +927,13 @@ public sealed class PositionWatcher : IDisposable
         // 로컬 정지 확정용 런 상태 — 무거운 줄 경로의 런과 소스가 달라(교집합 마스크 vs 로컬 글리프)
         // 같은 배열을 쓰면 서로 리셋만 반복한다. 독립 이중화: 둘 중 먼저 안정되는 쪽이 확정.
         var lRunDir = new char[4]; var lRunLen = new int[4]; var lRunStart = new long[4]; var lRunSig = new bool[4][];
+        // 무거운 줄 경로의 슬롯별 최근 판독 — 로컬 정지 잠금과 충돌하면 잠금을 보류한다(사용자
+        // 검수 2026-08-04). 20:38 실전: 관측점이 정확히 → 화살표 위였는데 로컬 sat140 추출이
+        // 글리프 일부만 잡아(a273/a420) 주축 244°로 일관 왜곡 → 축 안정까지 통과해 D 오답 잠금.
+        // 무거운 경로는 같은 블롭을 매 프레임 R로 정확히 분류하고 있었다 — 옳은 경로가 지는
+        // 경쟁을 막는다. 줄이 안 잡히는 맵(10:39 로컬 단독)은 판독이 낡아(600ms↑) 영향 없음.
+        var heavyDir = new char[4]; var heavyDirAt = new long[4]; var heavyX = new float[4];
+        for (int j = 0; j < 4; j++) heavyDirAt[j] = -9999;
         // 시그니처 최근 이력 — 반짝임(스파클) 이펙트가 각도를 흔들어 정지 화살표가 회전으로
         // 오인되는 것 방지(2026-08-04 위아래위위 룬: 정지 ↑가 가짜 반동 D 2표로 오답 확정).
         // 3연속 동일 모양 = 정지. 회전 글리프는 매 프레임 모양이 변하고, 반동 멈칫은 2~3프레임이라
@@ -990,7 +999,11 @@ public sealed class PositionWatcher : IDisposable
                     if (lRunSig[j] is not null && lRunDir[j] == a.Dir && RuneArrowDetector.SigSimilar(lRunSig[j], a.Sig))
                     {
                         lRunLen[j]++;
-                        if (lRunLen[j] >= LockRun && now - lRunStart[j] >= LockSpanMs && AxisStable(angleV[j]))
+                        if (lRunLen[j] >= LockRun && now - lRunStart[j] >= LockSpanMs && AxisStable(angleV[j])
+                            // 경로 충돌 보류 — 무거운 줄 경로의 신선한(≤600ms)·같은 글리프(±24px)
+                            // 판독과 방향이 다르면 이 프레임엔 잠그지 않는다. 일치하거나 무거운
+                            // 경로가 먼저 잠그면 확정. 위치가 다르면 다른 걸 본 것이라 비교 무의미.
+                            && !(now - heavyDirAt[j] <= 600 && Math.Abs(heavyX[j] - pos[j].X) <= 24 && heavyDir[j] != lRunDir[j]))
                         { locked[j] = lRunDir[j]; lockedCount++; }
                     }
                     else { lRunSig[j] = a.Sig; lRunDir[j] = a.Dir; lRunLen[j] = 1; lRunStart[j] = now; }
@@ -1013,7 +1026,12 @@ public sealed class PositionWatcher : IDisposable
                 adoptedRowArea = area;
                 return;
             }
-            if (sw.ElapsedMilliseconds >= 2500 || area < adoptedRowArea * 1.4) return;
+            // 잠금 보호 — 이미 잠긴 슬롯이 생겼으면 관측 위치를 옮기지 않는다(사용자 검수 2026-08-04).
+            // 20:38 실전: 0.72초에 진짜 줄(476/594/682/752)을 잡았는데 0.18초 뒤 이펙트 병합
+            // 비대 블롭(a1624)+이펙트 조각(a579) 잡줄이 면적 1.8배로 재선출을 통과해 줄을 뺏었고,
+            // 2·3번 관측점이 같은 화살표로 미끄러져 오답(↓→→↓)을 입력했다. 잠금은 '그 자리가
+            // 진짜 글리프'라는 가장 강한 증거다 — 잡 관측점은 난수 각도라 축 안정을 통과하지 못한다.
+            if (lockedCount > 0 || sw.ElapsedMilliseconds >= 2500 || area < adoptedRowArea * 1.4) return;
             bool Moved(int j) => Math.Abs(row[j].Center.X - posAnchor![j].X) > 28
                               || Math.Abs(row[j].Center.Y - posAnchor[j].Y) > 28;
             if (!Enumerable.Range(0, 4).Any(Moved)) { adoptedRowArea = Math.Max(adoptedRowArea, area); return; }
@@ -1093,6 +1111,7 @@ public sealed class PositionWatcher : IDisposable
                             for (int j = 0; j < 4; j++)
                             {
                                 centers[j] = row[j].Center;
+                                heavyDir[j] = row[j].Dir; heavyDirAt[j] = now; heavyX[j] = row[j].Center.X; // 로컬 잠금 충돌 보류 기준
                                 if (locked[j] is not null) continue;
                                 // 정지 확정: '런 시작' 모양·방향이 계속 같아야 함
                                 if (runSig[j] is not null && runDir[j] == row[j].Dir
@@ -1205,6 +1224,19 @@ public sealed class PositionWatcher : IDisposable
             Note($"퍼즐 확정 실패 — {lockedCount}/4뿐(반동 미관측), 재발동 대기");
             return null;
         }
+
+        // 중복 관측 안전장치(사용자 검수 2026-08-04) — 두 슬롯이 같은 화살표를 읽으면 4/4여도
+        // 오답이다(20:38 실전: 잡줄 재선출로 2·3번 관측점이 15px 간격 → 같은 →를 두 번 입력,
+        // 4번째 화살표는 미관측). 오답 입력은 룬 소실+쿨다운이라 인식 실패 종료가 항상 낫다.
+        if (pos is not null)
+            for (int i = 0; i < 4; i++)
+                for (int j = i + 1; j < 4; j++)
+                    if (Math.Abs(pos[i].X - pos[j].X) < MinSlotSepPx && Math.Abs(pos[i].Y - pos[j].Y) < MinSlotSepPx)
+                    {
+                        DumpSolveTrace($"중복 관측 슬롯{i + 1}·{j + 1}");
+                        Note($"퍼즐 확정 무효 — 슬롯 {i + 1}·{j + 1} 관측점 겹침({pos[i].X:F0},{pos[i].Y:F0} vs {pos[j].X:F0},{pos[j].Y:F0}), 오답 입력 방지 종료");
+                        return null;
+                    }
 
         var result = new List<RuneArrow>(4);
         for (int j = 0; j < 4; j++) result.Add(new RuneArrow(centers[j], locked[j]!.Value));
