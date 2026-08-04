@@ -1096,110 +1096,36 @@ internal static class RuneArrowDetector
             if (pos is null) { sb.AppendLine("위치 획득 실패 — 어떤 스트립에서도 줄을 못 찾음"); return; }
             var posAnchor = (PointF[])pos.Clone(); // EMA 클램프 기준
 
-            const int box = 64;
-            var locked = new char?[4];
-            int lockedCount = 0;
-            var votes = new int[4, 4];
-            var angleT = new List<double>[4]; var angleV = new List<double>[4];
-            var lastRotAt = new int[4];
-            for (int j = 0; j < 4; j++) { angleT[j] = new List<double>(); angleV[j] = new List<double>(); lastRotAt[j] = -999; }
-            // 실전 LocalPass 미러: 시그니처 안정 가드(반짝임 정지 화살표의 가짜 반동 차단) + 정지 시그니처 락
-            var sigHist = new List<bool[]>[4]; for (int j = 0; j < 4; j++) sigHist[j] = new List<bool[]>();
-            bool SigStable(List<bool[]> hist) => hist.Count >= 3
-                && SigSimilar(hist[^1], hist[^2]) && SigSimilar(hist[^2], hist[^3]);
-            var lRunDir = new char[4]; var lRunLen = new int[4]; var lRunStart = new double[4]; var lRunSig = new bool[4][];
-            bool relocated = false; // 실전 TryRelocateStarvedSlot 미러 상태
+            // 실전과 같은 솔버를 스트립 시퀀스로 구동(2026-08-04 모듈화) — 이전의 LocalPass
+            // 손복제 미러(~90줄)를 제거. 반동표·플립 리셋은 diag, 재선출·재배치 노트는 note로
+            // 같은 위치에 찍힌다. 시각은 명목 50ms 간격 고정값(링 버퍼라 실전 t보다 ~0.4초 이르다
+            // — TryRelocate 2200ms 게이트 등은 그 좌표계로 동작, 미러 시절과 동일).
+            var solver = new RunePuzzleSolver(activeRef, initialBudgetMs: int.MaxValue, precropped: true,
+                note: n => sb.AppendLine($"      [{n}]"),
+                diag: m => sb.AppendLine($"      {m}"));
+            solver.AdoptPositions(pos);
             for (int fi = 0; fi < strips.Count; fi++)
             {
-                double t = fi * 50.0; // 명목 50ms 간격
+                double t = fi * (double)RunePuzzleSolver.FastTickMs; // 명목 50ms 간격
+                DiagLog = fi is 30 or 40 ? m => sb.AppendLine($"      [f{fi}] {m}") : null;
+                DiagMaskDir = fi == 30 ? Path.GetDirectoryName(pngPaths[0]) : null;
+                var rd = solver.StepLocal(strips[fi].Bmp, fi > 0 ? strips[fi - 1].Bmp : null, (long)t);
+                DiagLog = null; DiagMaskDir = null;
                 var parts = new List<string>();
                 for (int j = 0; j < 4; j++)
                 {
-                    if (locked[j] is { } d0) { parts.Add($"[확정{d0}]"); continue; }
-                    var rect = new Rectangle((int)(pos[j].X - box / 2.0), (int)(pos[j].Y - box / 2.0), box, box);
-                    DiagLog = fi is 30 or 40 ? m => sb.AppendLine($"      [f{fi} 화살표{j + 1}] {m}") : null;
-                    DiagMaskDir = fi == 30 && j == 1 ? Path.GetDirectoryName(pngPaths[0]) : null;
-                    var la = AnalyzeArrowAt(strips[fi].Bmp, activeRef, fi > 0 ? strips[fi - 1].Bmp : null, rect);
-                    DiagLog = null; DiagMaskDir = null;
-                    if (la is not { } a) { parts.Add("×"); continue; }
-                    if (a.Area >= 60)
-                    {
-                        // 실전 LocalPass 미러: EMA 자기보정을 앵커 ±22px로 클램프(이웃 화살표 미끄러짐 방지)
-                        float cx = (float)(pos[j].X * 0.7 + a.Center.X * 0.3);
-                        float cy = (float)(pos[j].Y * 0.7 + a.Center.Y * 0.3);
-                        pos[j] = new PointF(
-                            Math.Clamp(cx, posAnchor[j].X - 22, posAnchor[j].X + 22),
-                            Math.Clamp(cy, posAnchor[j].Y - 22, posAnchor[j].Y + 22));
-                    }
-                    int before1 = lockedCount;
-                    angleT[j].Add(t); angleV[j].Add(RuneAngleTracker.FixAngleFlip(angleV[j], a.AngleDeg));
-                    if (RuneAngleTracker.DerailedAngles(angleT[j], angleV[j])) // 실전 LocalPass 미러: 플립 고착 리셋
-                    { angleT[j].Clear(); angleV[j].Clear(); sb.AppendLine($"      [화살표{j + 1} 플립 고착 → 시계열 리셋]"); }
-                    sigHist[j].Add(a.Sig); if (sigHist[j].Count > 4) sigHist[j].RemoveAt(0);
-                    int n1 = angleV[j].Count;
-                    if (RuneAngleTracker.IsRotating(angleT[j], angleV[j])) lastRotAt[j] = n1;
-                    bool rotActive = n1 - lastRotAt[j] <= 3 && !SigStable(sigHist[j]);
-                    if (rotActive)
-                        RuneAngleTracker.TryDetectRecoil(j, angleT[j], angleV[j], votes, ref lockedCount, locked,
-                            m => sb.AppendLine($"      {m}")); // 투표 이벤트(직전각→착지각·피벗·방위)를 해당 스트립 아래 기록
-                    else
-                    {
-                        // 정지 시그니처 런(실전 LocalPass 미러: 3연속 + 250ms)
-                        if (lRunSig[j] is not null && lRunDir[j] == a.Dir && SigSimilar(lRunSig[j], a.Sig))
-                        {
-                            lRunLen[j]++;
-                            if (lRunLen[j] >= 3 && t - lRunStart[j] >= 250) { locked[j] = lRunDir[j]; lockedCount++; }
-                        }
-                        else { lRunSig[j] = a.Sig; lRunDir[j] = a.Dir; lRunLen[j] = 1; lRunStart[j] = t; }
-                    }
-                    parts.Add($"{(rotActive ? "회" : "정")}{(a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })}{a.AngleDeg:000}°a{a.Area}m{a.MovingPx}{(lockedCount > before1 ? "★락" : "")}");
+                    if (rd[j].WasLocked) { parts.Add($"[확정{rd[j].LockedDir}]"); continue; }
+                    if (!rd[j].Analyzed) { parts.Add("×"); continue; }
+                    parts.Add($"{(rd[j].RotActive ? "회" : "정")}{(rd[j].Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })}{rd[j].AngleDeg:000}°a{rd[j].Area}m{rd[j].MovingPx}{(rd[j].NewlyLocked ? "★락" : "")}");
                 }
                 sb.AppendLine($"f{fi:00} {t,5:0}ms  {string.Join("  ", parts)}");
-
-                // 실전 TryRelocateStarvedSlot 미러 — 3잠금+1잡 슬롯 재배치가 이 데이터에서
-                // 언제·어디로 발동하는지 오프라인 검증(스트립은 링 버퍼라 t가 실전보다 ~0.4초 이르다).
-                if (!relocated && lockedCount == 3 && t >= 2200)
-                {
-                    int starved = -1;
-                    for (int j = 0; j < 4; j++) if (locked[j] is null) starved = j;
-                    bool veto = false;
-                    for (int c = 0; c < 4; c++) if (votes[starved, c] > 0) veto = true;
-                    if (!veto && !(angleV[starved].Count > 0 && angleV[starved].Count - lastRotAt[starved] <= 3))
-                    {
-                        var lx = Enumerable.Range(0, 4).Where(j => j != starved).Select(j => pos[j].X).OrderBy(x => x).ToArray();
-                        double rg1 = lx[1] - lx[0], rg2 = lx[2] - lx[1];
-                        if (Math.Max(rg1, rg2) <= Math.Min(rg1, rg2) * 1.35 && (rg1 + rg2) / 2 is >= 40 and <= 170)
-                        {
-                            float rm = (float)((rg1 + rg2) / 2);
-                            float rpy = Enumerable.Range(0, 4).Where(j => j != starved).Average(j => pos[j].Y);
-                            (PointF P, int Area) Probe(float px)
-                            {
-                                if (px < box / 2f || px > strips[fi].Bmp.Width - box / 2f) return (default, 0);
-                                var rr = new Rectangle((int)(px - box / 2.0), (int)(rpy - box / 2.0), box, box);
-                                var pa = AnalyzeArrowAt(strips[fi].Bmp, activeRef, null, rr);
-                                return (new PointF(px, rpy), pa?.Area ?? 0);
-                            }
-                            var rLeft = Probe(lx[0] - rm); var rRight = Probe(lx[2] + rm);
-                            var rPick = rLeft.Area >= rRight.Area ? rLeft : rRight;
-                            if (rPick.Area >= 40)
-                            {
-                                sb.AppendLine($"      [슬롯 재배치 미러] 미확정 ({pos[starved].X:0},{pos[starved].Y:0}) → 외삽 ({rPick.P.X:0},{rPick.P.Y:0}) (좌a{rLeft.Area} 우a{rRight.Area})");
-                                pos[starved] = rPick.P; posAnchor[starved] = rPick.P;
-                                angleT[starved].Clear(); angleV[starved].Clear(); sigHist[starved].Clear();
-                                lRunSig[starved] = null!; lRunLen[starved] = 0;
-                                for (int c = 0; c < 4; c++) votes[starved, c] = 0;
-                                lastRotAt[starved] = -999;
-                                relocated = true;
-                            }
-                        }
-                    }
-                }
+                solver.TryRelocate(strips[fi].Bmp, (long)t); // 3잠금+1잡 슬롯 재배치(실전 동일 로직)
             }
             sb.AppendLine("반동 투표 [R U L D]:");
             for (int j = 0; j < 4; j++)
-                sb.AppendLine($"  화살표{j + 1}: {votes[j, 0]} {votes[j, 1]} {votes[j, 2]} {votes[j, 3]}  확정 {(locked[j] is { } dd ? dd.ToString() : "-")}  pos=({pos[j].X:0},{pos[j].Y:0})");
-            var xOrder = Enumerable.Range(0, 4).OrderBy(j => pos[j].X).ToList();
-            sb.AppendLine("최종 입력(X순): " + string.Join(" ", xOrder.Select(j => locked[j] is { } d2
+                sb.AppendLine($"  화살표{j + 1}: {solver.GetVote(j, 0)} {solver.GetVote(j, 1)} {solver.GetVote(j, 2)} {solver.GetVote(j, 3)}  확정 {(solver.GetLocked(j) is { } dd ? dd.ToString() : "-")}  pos=({solver.GetPos(j).X:0},{solver.GetPos(j).Y:0})");
+            var xOrder = Enumerable.Range(0, 4).OrderBy(j => solver.GetPos(j).X).ToList();
+            sb.AppendLine("최종 입력(X순): " + string.Join(" ", xOrder.Select(j => solver.GetLocked(j) is { } d2
                 ? (d2 switch { 'L' => "←", 'R' => "→", 'U' => "↑", _ => "↓" }) : "?")));
         }
         catch (Exception ex) { sb.AppendLine("오류: " + ex); }

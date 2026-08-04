@@ -181,7 +181,7 @@ internal sealed class RunePuzzleSolver
     /// <summary>고속 모드의 주기적 줄 재선출 체크 — 무거운 줄 인식+채택만(스케줄링은 호출자).
     /// 정지 퍼즐이 잡줄 관측점의 난수 각도로 '가짜 회전' 판정돼 고속 모드에 갇히면 무거운
     /// 경로가 영영 안 돌아 재선출 기회가 없던 문제(17:52 카르시온 3/4 실패)의 복구 창구.</summary>
-    internal void StepHeavyRow(Bitmap frame, IReadOnlyList<Bitmap> recent, long tMs)
+    internal void StepHeavyRow(Bitmap frame, IReadOnlyList<Bitmap> recent, Func<long> clock)
     {
         var row = RuneArrowDetector.AnalyzeFrame(frame, recent, _beforeRef, _precropped);
         if (row is not null) TryAdoptRow(row, clock);
