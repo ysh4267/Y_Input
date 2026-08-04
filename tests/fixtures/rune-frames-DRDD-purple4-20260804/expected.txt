@@ -1,0 +1,5 @@
+# 정답 ↓→↓↓ · 침식 보라 4번 — 에지 보정(789→711)이 핵심 불변식 (README 참조)
+run: --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
+out: rune-frame-0.png.analysis.txt
+re: \[에지 보정\] 슬롯4 .*\(711,\d+\)a\d+로 교체
+rowxs: ② 발동 전 차분 = 439 531 628 711 ~5

@@ -1,0 +1,5 @@
+# 1번 화살표 병합 소실 맵 — ④ 실패가 정상, ⑦ 부분줄이 핵심 불변식 (README 참조)
+run: --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
+out: rune-frame-0.png.analysis.txt
+xs: ⑦ 부분 줄 보완 = 455 548 633 735 ~5
+re: ⑦ 위치 없음

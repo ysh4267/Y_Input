@@ -1,0 +1,8 @@
+# 정답 ↓↓←→ (3·4 회전) — 머리 플립 고착 리셋이 반드시 발동해야 함. README 참조
+run: --rune-analyze rune-before.png rune-strip-*.png pos=430,258;531,260;621,259;715,260
+out: rune-before.png.analysis.txt
+re: 플립 고착 → 시계열 리셋
+re: 화살표1: .*확정 D
+re: 화살표2: .*확정 D
+re: 화살표3: .*확정 L
+re: 화살표4: .*확정 R

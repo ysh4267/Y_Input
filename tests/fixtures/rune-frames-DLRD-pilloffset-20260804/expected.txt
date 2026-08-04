@@ -1,0 +1,4 @@
+# 정답 ↓←→↓ · 필 중심 이탈 67px — ②③ 진짜 줄 채택 (④ 실패 허용, README 참조)
+run: --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
+out: rune-frame-0.png.analysis.txt
+rowxs: ② 발동 전 차분 = 492 608 697 771 ~5

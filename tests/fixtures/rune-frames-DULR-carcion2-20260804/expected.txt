@@ -1,0 +1,5 @@
+# 정답 ↓↑←→ · 불균일 간격(97/136/49, 비 2.78) 진짜 줄 (README 참조)
+run: --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
+out: rune-frame-0.png.analysis.txt
+dirs: ④ 프레임 분석 = ↓ ↑ ← →
+xs: ⑦ 위치 = 389 486 622 671 ~5

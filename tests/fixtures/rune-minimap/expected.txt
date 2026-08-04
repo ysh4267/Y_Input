@@ -1,0 +1,11 @@
+# 미니맵 룬 아이콘 — 진짜 2장 통과 + 오탐 1장 기각 (README 참조)
+run: --rune-minimap-analyze burning-rune-1.png
+out: burning-rune-1.png.rune.txt
+re: 룬 판정: \(98\.0,46\.0\)
+run: --rune-minimap-analyze burning-rune-2.png
+out: burning-rune-2.png.rune.txt
+re: 룬 판정: \(69\.0,61\.0\)
+run: --rune-minimap-analyze queensroad-no-rune.png
+out: queensroad-no-rune.png.rune.txt
+re: 룬 없음
+forbid: ★통과

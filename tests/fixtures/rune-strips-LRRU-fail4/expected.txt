@@ -1,0 +1,8 @@
+# 정답 ←→→↑ (3·4 회전) — README 참조
+run: --rune-analyze rune-before.png rune-strip-*.png
+out: rune-before.png.analysis.txt
+re: 화살표1: .*확정 L
+re: 화살표2: .*확정 R
+re: 화살표3: .*확정 R
+re: 화살표4: .*확정 U
+re: 최종 입력\(X순\): ← → → ↑

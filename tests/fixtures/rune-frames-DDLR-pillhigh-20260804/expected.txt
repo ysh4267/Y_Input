@@ -1,0 +1,5 @@
+# 정답 ↓↓←→ · 필 상단 이탈(밴드 8.9%) (README 참조)
+run: --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
+out: rune-frame-0.png.analysis.txt
+dirs: ④ 프레임 분석 = ↓ ↓ ← →
+xs: ⑦ 위치 = 411 498 559 650 ~5

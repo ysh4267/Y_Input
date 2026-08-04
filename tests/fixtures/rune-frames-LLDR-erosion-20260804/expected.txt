@@ -1,0 +1,5 @@
+# 정답 ←←↓→ · 1번 침식 소실 — 파편 a30 존재 + 밀린 줄 전제 문서화 (라이브 재배치가 구제, README 참조)
+run: --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
+out: rune-frame-0.png.analysis.txt
+re: \(419,\d+\) a30
+xs: ⑦ 위치 = 481 582 663 765 ~5

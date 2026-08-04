@@ -1,0 +1,8 @@
+# 정답 ↓↓→↓ (1·4 회전) — 1 미확정 허용, 오방위 확정은 금지. 위치는 스트립00 즉시 획득
+run: --rune-analyze rune-before.png rune-strip-*.png
+out: rune-before.png.analysis.txt
+re: 화살표2: .*확정 D
+re: 화살표3: .*확정 R
+re: 화살표4: .*확정 D
+forbid: 화살표1: .*확정 [RUL]
+xs: 위치( = 400 492 582 679 ~3
