@@ -613,7 +613,9 @@ public sealed class PositionWatcher : IDisposable
                         {
                             await PreciseDelay.WaitAsync(60, ct).ConfigureAwait(false);
                             await TapAsync(ScLAlt, 90, ct, e0: false).ConfigureAwait(false);
-                            await PreciseDelay.WaitAsync(60, ct).ConfigureAwait(false);
+                            // ↓를 2초가량 더 유지(사용자 지정 2026-08-04) — 낙하 중 줄·사다리를
+                            // 잡아버리면 이동이 막히는데, ↓를 계속 누르고 있으면 타고 내려가 회복된다
+                            await PreciseDelay.WaitAsync(2000, ct).ConfigureAwait(false);
                         }
                         finally { try { _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyUpE0 }); } catch { } }
                     }
@@ -761,54 +763,9 @@ public sealed class PositionWatcher : IDisposable
                     var spaceSw = Stopwatch.StartNew(); // 취소 타이머 기준점(마지막 입력 = 이 스페이스)
                     await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
 
-                    // 스페이스가 씹혀 퍼즐이 안 뜨는 경우 — 1초 안에 배너/화살표가 안 보이면 1회 재시도.
-                    // 배너가 보이는 동안의 스페이스는 '오답 입력'이라, 반드시 안 떴을 때만 누른다.
-                    // 배너(어두워짐 포함)와 화살표 줄 두 신호로 확인하고, 재시도 직전 한 번 더 최종 확인.
-                    bool PuzzleVisible(Bitmap fa, Bitmap fb) =>
-                        RuneArrowDetector.PuzzlePresent(fa, fb, beforeCrop, precropped: true)
-                        || RuneArrowDetector.AnalyzeFrame(fb, fa, beforeCrop, precropped: true) is not null;
-                    async Task<bool> CheckVisibleAsync()
-                    {
-                        using var oa = ScreenCapture.Capture(screenCrop);
-                        await PreciseDelay.WaitAsync(110, ct).ConfigureAwait(false);
-                        using var ob = ScreenCapture.Capture(screenCrop);
-                        return PuzzleVisible(oa, ob);
-                    }
-                    bool opened = false;
-                    while (!opened && spaceSw.ElapsedMilliseconds < 1000)
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        try { opened = await CheckVisibleAsync().ConfigureAwait(false); }
-                        catch { await PreciseDelay.WaitAsync(100, ct).ConfigureAwait(false); }
-                    }
-                    if (!opened)
-                    {
-                        try { opened = await CheckVisibleAsync().ConfigureAwait(false); } catch { } // 최종 확인
-                    }
-                    if (!opened)
-                    {
-                        Note("퍼즐이 1초 내 안 보임(재확인 포함) — 스페이스 재시도");
-                        await TapAsync(ScSpace, 100, ct, e0: false).ConfigureAwait(false);
-                        spaceSw.Restart();
-                        await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
-
-                        // 재시도 스페이스 후에도 1초 내 안 보이면 즉시 종료(사용자 지정) — 위치 복귀까지
-                        // 마친 상태에서 두 번 눌러도 안 열리면 상호작용 키/스크립트 자체의 문제라
-                        // 여기서 더 머물며 재시도해봐야 소용없다.
-                        bool opened2 = false;
-                        while (!opened2 && spaceSw.ElapsedMilliseconds < 1000)
-                        {
-                            ct.ThrowIfCancellationRequested();
-                            try { opened2 = await CheckVisibleAsync().ConfigureAwait(false); }
-                            catch { await PreciseDelay.WaitAsync(100, ct).ConfigureAwait(false); }
-                        }
-                        if (!opened2)
-                        {
-                            SaveRuneShots(beforeCrop);
-                            Status("fail", "스페이스 2회에도 퍼즐이 열리지 않습니다 — 룬 상호작용 실패(위치/키 설정 확인 필요). 이번 회차를 종료합니다.");
-                            return;
-                        }
-                    }
+                    // 스페이스를 누르면 퍼즐은 무조건 열린 것으로 전제(사용자 지정 2026-08-04) —
+                    // '안 보이면 스페이스 재시도'는 열린 퍼즐에 오답 입력될 위험이 있어 제거.
+                    // 인식이 완전해지면 재시도 로직을 다시 조정한다.
 
                     // 남은 관찰 예산 = 취소 타이머까지의 여유(확인에 쓴 시간 차감)
                     int budget = Math.Max(900, PuzzleBudgetMs - (int)spaceSw.ElapsedMilliseconds);
@@ -824,7 +781,11 @@ public sealed class PositionWatcher : IDisposable
                     return;
                 }
 
-                // 취소 타이머(3초) 안에 입력이 시작돼야 한다 — 인식 즉시 입력부터, 로그·저장은 뒤로
+                // 취소 타이머(3초) 안에 입력이 시작돼야 한다 — 인식 즉시 입력부터, 로그·저장은 뒤로.
+                // 입력 직전 화면 1장을 따로 캡처(사용자 지시 2026-08-04: 확정 방향과 입력 순간의
+                // 실제 글리프 대조용) — 인코딩이 느려 캡처만 먼저, 저장은 입력 후.
+                Bitmap? inputShot = null;
+                try { inputShot = ScreenCapture.Capture(screenCrop); } catch { /* 캡처 실패 — 입력 우선 */ }
                 foreach (var a in arrows)
                 {
                     ct.ThrowIfCancellationRequested();
@@ -834,7 +795,14 @@ public sealed class PositionWatcher : IDisposable
                 }
                 var seq = string.Join(" ", arrows.Select(a => a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' }));
                 Status("rune", $"퍼즐 인식: {seq} — 입력했습니다");
-                SaveRuneShots(beforeCrop); // 판정에 쓴 버스트 저장(오답 재현용)
+                if (inputShot is not null)
+                {
+                    try { FileLog.SavePng("rune-input", ScreenCapture.ToPng(inputShot)); } catch { }
+                    finally { inputShot.Dispose(); }
+                }
+                // 스페이스 발동 후에는 결과 무관하게 전부 저장(사용자 지시 2026-08-04) — 스트립 포함.
+                // 14:32 실행: 오확정 입력이었는데 성공 경로라 스트립·트레이스가 없어 원인 추적 불가였다.
+                SaveRuneShots(beforeCrop, includeStrips: true);
 
                 // 입력 후 퍼즐(배너)이 사라졌는지 확인 — 화살표 재탐지는 룬 해제 이펙트를 오인할 수 있어
                 // 배너 잔존 여부로 판정한다(23:48 실행: 성공인데 이펙트를 화살표로 재탐지해 실패 경고).
@@ -861,6 +829,13 @@ public sealed class PositionWatcher : IDisposable
                     Status("fail", "퍼즐 입력 후에도 퍼즐이 남아 있습니다 — 인식이 틀렸을 수 있어요(logs\\rune-puzzle.png 확인).");
                 else
                     Status("done", $"룬 사용 완료 (퍼즐 {seq})");
+            }
+            catch (OperationCanceledException)
+            {
+                // 취소(매크로 중단)로 검증·저장 전에 끊겨도 증거는 남긴다(14:32 실행: 입력 후 무로그 종료).
+                // 반드시 ClearRuneShots(아래 finally)보다 먼저 저장해야 한다.
+                try { Status("rune", "룬 처리 취소(매크로 중단) — 증거 저장 후 종료"); SaveRuneShots(beforeCrop, includeStrips: true); } catch { }
+                throw;
             }
             finally { beforeFrame?.Dispose(); beforeCrop?.Dispose(); ClearRuneShots(); }
         }
@@ -940,7 +915,7 @@ public sealed class PositionWatcher : IDisposable
         // 실제 중심에서 ±30px까지 어긋날 수 있어 로컬 박스를 넉넉히 잡고, 이후 로컬 블롭
         // 중심으로 서서히 자기 보정한다(EMA).
         PointF[]? pos = null; const int posBox = 64;
-        PointF[]? prevRowCenters = null;
+        PointF[]? posAnchor = null; // pos 확정 시점의 원본 — EMA 미끄러짐 클램프 기준
         // 회전 추적 — 화살표별 (시각 ms, 각도°) 시계열과 반동 방위 투표
         var angleT = new List<double>[4]; var angleV = new List<double>[4];
         var recoilVotes = new int[4, 4]; // [화살표, 방위 R U L D]
@@ -952,6 +927,13 @@ public sealed class PositionWatcher : IDisposable
         // 로컬 정지 확정용 런 상태 — 무거운 줄 경로의 런과 소스가 달라(교집합 마스크 vs 로컬 글리프)
         // 같은 배열을 쓰면 서로 리셋만 반복한다. 독립 이중화: 둘 중 먼저 안정되는 쪽이 확정.
         var lRunDir = new char[4]; var lRunLen = new int[4]; var lRunStart = new long[4]; var lRunSig = new bool[4][];
+        // 시그니처 최근 이력 — 반짝임(스파클) 이펙트가 각도를 흔들어 정지 화살표가 회전으로
+        // 오인되는 것 방지(2026-08-04 위아래위위 룬: 정지 ↑가 가짜 반동 D 2표로 오답 확정).
+        // 3연속 동일 모양 = 정지. 회전 글리프는 매 프레임 모양이 변하고, 반동 멈칫은 2~3프레임이라
+        // '직전 3개 전부 유사'에 도달하기 전에 투표가 끝난다.
+        var sigHist = new List<bool[]>[4]; for (int j = 0; j < 4; j++) sigHist[j] = new List<bool[]>();
+        bool SigStable(List<bool[]> hist) => hist.Count >= 3
+            && RuneArrowDetector.SigSimilar(hist[^1], hist[^2]) && RuneArrowDetector.SigSimilar(hist[^2], hist[^3]);
 
         // 미확정 화살표들의 로컬 분석 한 회. 회전/정지 라우팅은 <b>글리프 각도 시계열</b>로만 판단 —
         // 박스 안 '움직임 픽셀 수'는 배경 애니메이션(불꽃·이펙트)에 오염돼 정지 화살표를 회전으로
@@ -967,13 +949,22 @@ public sealed class PositionWatcher : IDisposable
                 var la = RuneArrowDetector.AnalyzeArrowAt(frame, beforeCrop, prev, rect);
                 if (la is not { } a) continue;
                 if (a.Area >= 60)
-                    pos[j] = new PointF((float)(pos[j].X * 0.7 + a.Center.X * 0.3),
-                                        (float)(pos[j].Y * 0.7 + a.Center.Y * 0.3));
+                {
+                    // EMA 자기보정은 앵커(줄 인식 위치) ±22px로 클램프 — 자기 글리프가 픽에서
+                    // 빠지는 프레임이 이어지면 박스가 이웃 화살표로 미끄러져 남의 방향을 잠근다
+                    // (2026-08-04 위아래위위 룬: ↓화살표 관찰점이 옆 ↑화살표로 흘러 U 오답 락).
+                    float cx = (float)(pos[j].X * 0.7 + a.Center.X * 0.3);
+                    float cy = (float)(pos[j].Y * 0.7 + a.Center.Y * 0.3);
+                    pos[j] = new PointF(
+                        Math.Clamp(cx, posAnchor![j].X - 22, posAnchor[j].X + 22),
+                        Math.Clamp(cy, posAnchor[j].Y - 22, posAnchor[j].Y + 22));
+                }
 
-                angleT[j].Add(now); angleV[j].Add(a.AngleDeg);
+                angleT[j].Add(now); angleV[j].Add(FixAngleFlip(angleV[j], a.AngleDeg));
+                sigHist[j].Add(a.Sig); if (sigHist[j].Count > 4) sigHist[j].RemoveAt(0);
                 int n = angleV[j].Count;
                 if (IsRotating(angleT[j], angleV[j])) lastRotAt[j] = n;
-                if (n - lastRotAt[j] <= 3) // 회전 중(반동 딸깍으로 순간 멈춘 표본 포함)
+                if (n - lastRotAt[j] <= 3 && !SigStable(sigHist[j])) // 회전 중(반동 딸깍 포함) — 모양까지 변할 때만
                 {
                     TryDetectRecoil(j, angleT[j], angleV[j], recoilVotes, ref lockedCount, locked);
                     rotatingSeen = true;
@@ -1055,20 +1046,24 @@ public sealed class PositionWatcher : IDisposable
                             }
                         }
 
-                        // 위치 컨센서스 — 줄 인식이 연속 두 번 ±18px로 일치하면 고정
-                        // (회전 화살표의 교집합 핵은 창이 밀리며 수 px씩 흔들려 12px로는 못 잡는다)
+                        // 위치 — 강화된 줄 게이트(간격 균일·중앙 대칭·y 구간)를 통과한 첫 줄을 즉시 채택.
+                        // 스페이스+100ms부터 화살표가 떠 있다고 전제하고 곧장 관찰을 시작한다(사용자
+                        // 지정 2026-08-04). 이전의 '2연속 컨센서스 + 1.2초 폴백'은 첫 각도 표본이
+                        // ~1.2초에야 시작되는 지연 원인이었다 — 잡줄 방어는 이제 게이트가 담당.
                         if (pos is null && row is not null)
+                        { pos = row.Select(x => x.Center).ToArray(); posAnchor = (PointF[])pos.Clone(); }
+                        // 부분 줄 보완 — 화살표 하나가 배경과 병합 소실되면 4개 줄이 영영 안 잡힌다
+                        // (14:46 보라맵). 0.9초까지 줄이 없으면 3개+외삽으로 위치만 확보하고,
+                        // 방향·잠금은 로컬 관찰에 맡긴다.
+                        if (pos is null && row is null && sw.ElapsedMilliseconds > 900)
                         {
-                            if (prevRowCenters is not null && Enumerable.Range(0, 4).All(j =>
-                                    Math.Abs(row[j].Center.X - prevRowCenters[j].X) <= 18 &&
-                                    Math.Abs(row[j].Center.Y - prevRowCenters[j].Y) <= 18))
-                                pos = row.Select(x => x.Center).ToArray();
-                            prevRowCenters = row.Select(x => x.Center).ToArray();
+                            var pp = RuneArrowDetector.TryPartialRow(f, beforeCrop, precropped: true);
+                            if (pp is { Length: 4 })
+                            {
+                                pos = pp; posAnchor = (PointF[])pp.Clone();
+                                Note($"부분 줄 보완 — 3개+외삽으로 위치 확보: {string.Join(" ", pp.Select(p => $"({p.X:0},{p.Y:0})"))}");
+                            }
                         }
-                        // 폴백 — 회전 핵이 흔들려 컨센서스가 계속 미끄러지면 1.2초 시점의 마지막
-                        // 줄 중심을 그대로 채택(로컬 EMA 보정이 이후 실제 중심으로 수렴시킨다)
-                        if (pos is null && prevRowCenters is not null && sw.ElapsedMilliseconds > 1200)
-                            pos = (PointF[])prevRowCenters.Clone();
 
                         // 로컬 추적 — 위치가 고정된 뒤: 회전 화살표의 각도 시계열 + 반동 감지.
                         // 로컬 블롭 중심으로 위치를 서서히 보정(회전 핵 어긋남 수렴).
@@ -1129,7 +1124,7 @@ public sealed class PositionWatcher : IDisposable
             try
             {
                 var sb = new System.Text.StringBuilder();
-                sb.AppendLine($"{DateTime.Now:HH:mm:ss.fff} 퍼즐 확정 실패({why}) t={sw.ElapsedMilliseconds}ms lock={lockedCount}/4 회전관측={rotatingSeen} 고속={fastMode} pos={(pos is null ? "미확보" : "고정")}");
+                sb.AppendLine($"{DateTime.Now:HH:mm:ss.fff} 퍼즐 판정({why}) t={sw.ElapsedMilliseconds}ms lock={lockedCount}/4 회전관측={rotatingSeen} 고속={fastMode} pos={(pos is null ? "미확보" : "고정")}");
                 for (int j = 0; j < 4; j++)
                 {
                     sb.Append($"[{j}] lock={locked[j]?.ToString() ?? "?"} 투표 R:{recoilVotes[j, 0]} U:{recoilVotes[j, 1]} L:{recoilVotes[j, 2]} D:{recoilVotes[j, 3]}");
@@ -1157,8 +1152,22 @@ public sealed class PositionWatcher : IDisposable
 
         var result = new List<RuneArrow>(4);
         for (int j = 0; j < 4; j++) result.Add(new RuneArrow(centers[j], locked[j]!.Value));
+        DumpSolveTrace("확정 4/4"); // 성공 판정도 트레이스를 남긴다 — 오확정 사후 분석용(사용자 지시 2026-08-04)
         Note($"퍼즐 확정 — 4/4{(spinNoted ? " (회전 포함)" : "")}");
         return result;
+    }
+
+    /// <summary>주축 각도의 180° 머리 판별 반전 교정 — 회전 글리프의 블롭이 조각나면 머리
+    /// 다수결이 프레임마다 뒤집혀 각도가 ±180° 튄다. 직전 각도+직전 스텝의 예측치에 더 가까운
+    /// 쪽(원값 vs +180°)을 채택한다(2026-08-04 14:13 룬: ↓회전 화살표의 반동 착지 270°가
+    /// 90°로 반전 기록 → 가짜 U 2표 오확정). 정지 글리프는 예측=직전값이라 영향 없음.</summary>
+    internal static double FixAngleFlip(List<double> series, double ang)
+    {
+        int m = series.Count;
+        if (m < 2) return ang;
+        double Wrap(double d) { d %= 360; if (d > 180) d -= 360; else if (d <= -180) d += 360; return d; }
+        double pred = series[m - 1] + Wrap(series[m - 1] - series[m - 2]);
+        return Math.Abs(Wrap(ang - pred)) > Math.Abs(Wrap(ang + 180 - pred)) ? (ang + 180) % 360 : ang;
     }
 
     /// <summary>각도 시계열이 '회전 중'인가 — 최근 3스텝이 전부 같은 방향으로 ≥15°/100ms.
@@ -1217,7 +1226,18 @@ public sealed class PositionWatcher : IDisposable
         // 45° 스냅 경계를 넘어 인접 방위로 투표가 갈라질 수 있다(11:47 실행: 회전 2개 반동
         // 미관측 2/4 실패의 유력 원인 · fail4 재현에서도 2:1 턱걸이 락).
         double at = deg[^1];
-        int cardinal = (int)Math.Round(((at % 360 + 360) % 360) / 90.0) % 4; // 0=R 1=U 2=L 3=D
+        double norm = (at % 360 + 360) % 360;
+        int cardinal = (int)Math.Round(norm / 90.0) % 4; // 0=R 1=U 2=L 3=D
+        // 착지각 정방위 게이트 — 진짜 스냅백은 정답 방위 −5~+12°에 착지한다(10:14 실측).
+        // 캡처 지터로 생긴 가짜 이상(착지 154°·219° 등 방위에서 26~39° 이탈)이 진짜 표만큼
+        // 쌓여 오답 확정을 만들었다(2026-08-04 14:04 룬 리플레이: ↓화살표가 L 2표로 오확정).
+        double offCardinal = Math.Abs(norm - cardinal * 90);
+        if (offCardinal > 180) offCardinal = 360 - offCardinal;
+        if (offCardinal > 25)
+        {
+            diag?.Invoke($"반동표[{j + 1}] {deg[^2]:F0}°→{deg[^1]:F0}° 기각(방위 이탈 {offCardinal:F0}°)");
+            return;
+        }
         votes[j, cardinal]++;
         diag?.Invoke($"반동표[{j + 1}] {deg[^2]:F0}°→{deg[^1]:F0}° → {cardinal switch { 0 => 'R', 1 => 'U', 2 => 'L', _ => 'D' }}");
 

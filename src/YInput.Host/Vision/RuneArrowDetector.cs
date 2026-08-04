@@ -278,7 +278,7 @@ internal static class RuneArrowDetector
         var result = new List<ArrowSample>(4);
         foreach (var b in row)
         {
-            var (dir, _, _, _, _) = ClassifyScores(b, w);
+            var (dir, _, _, _, _) = ClassifyScores(b, w, frame, region);
             result.Add(new ArrowSample(new PointF((float)(region.X + b.Cx), (float)(region.Y + b.Cy)), dir, Signature(b, w)));
         }
         return result;
@@ -316,12 +316,51 @@ internal static class RuneArrowDetector
         Blob? pick = null;
         var fresh = new bool[w * h];
         AccumulateDiff(bannerRef, frame, rect, w, h, DiffMin, fresh);
-        foreach (int sat in (int[])[VividSatUltra, VividSatStrict, VividSat])
+        // 2차 시도(thin=true) = 글로우 다리 절단 — 화살표가 인접 장식(선인장·게이지 바)과 안티앨리어싱
+        // 다리로 연결되면 박스 전체가 한 블롭(면적 상한 초과)이 되어 픽 실패한다(2026-08-04 실측:
+        // 회전 화살표1이 전 채도에서 a2145~3068 단일 덩어리 → 3초 내내 각도 표본 0개 → 반동 관측 불가).
+        foreach (bool thin in (bool[])[false, true])
         {
-            var mask = VividMask(frame, rect, w, h, sat, requireWarm: false);
-            for (int i = 0; i < mask.Length; i++) mask[i] &= fresh[i];
-            pick = Pick(mask);
+            foreach (int sat in (int[])[VividSatUltra, VividSatStrict, VividSat])
+            {
+                var mask = VividMask(frame, rect, w, h, sat, requireWarm: false);
+                for (int i = 0; i < mask.Length; i++) mask[i] &= fresh[i];
+                if (thin) ThinFilter(mask, w, h);
+                pick = Pick(mask);
+                if (DiagLog is not null)
+                {
+                    var all = MergeNear(FindBlobs(mask, w, h)).OrderByDescending(x => x.Area).Take(4);
+                    DiagLog($"[로컬 sat{sat}{(thin ? "+thin" : "")}] {(pick is null ? "실패" : $"pick a{pick.Area} {pick.W}x{pick.H}")} 블롭: "
+                            + string.Join(" ", all.Select(x => $"a{x.Area}({x.W}x{x.H})")));
+                    if (DiagMaskDir is not null)
+                        SaveMaskPng((bool[])mask.Clone(), w, h, Path.Combine(DiagMaskDir, $"local-mask-sat{sat}{(thin ? "-thin" : "")}.png"));
+                }
+                if (pick is not null) break;
+            }
             if (pick is not null) break;
+        }
+        // 최후 폴백: 움직임 차분 — 화살표가 인접 장식과 같은 채도 덩어리로 붙어 전 단계가 실패하면
+        // (2026-08-04: 회전 화살표1이 선인장·게이지와 한 덩어리 a2145+ → 3초간 각도 표본 0),
+        // 직전 프레임 차분으로 '움직이는 것'만 남긴다. 정지 장식은 지워지고 회전 글리프만 남는다.
+        // 두 자세의 합집합이라 각도는 다소 흐리지만, 반동 감지는 스텝 이상만 보므로 감내 가능
+        // (아래 '움직임 마스크 각도 금지' 주석은 정지 판별 얘기 — 여기는 회전 전용 최후 수단).
+        if (pick is null && prevFrame is not null)
+        {
+            var mv = new bool[w * h];
+            AccumulateDiff(prevFrame, frame, rect, w, h, AnimDiffMin, mv);
+            foreach (int sat in (int[])[VividSatUltra, VividSatStrict])
+            {
+                var mask = VividMask(frame, rect, w, h, sat, requireWarm: false);
+                for (int i = 0; i < mask.Length; i++) mask[i] &= mv[i] && fresh[i];
+                pick = Pick(mask);
+                if (DiagLog is not null)
+                {
+                    var all = MergeNear(FindBlobs(mask, w, h)).OrderByDescending(x => x.Area).Take(4);
+                    DiagLog($"[로컬 sat{sat}+움직임] {(pick is null ? "실패" : $"pick a{pick.Area} {pick.W}x{pick.H}")} 블롭: "
+                            + string.Join(" ", all.Select(x => $"a{x.Area}({x.W}x{x.H})")));
+                }
+                if (pick is not null) break;
+            }
         }
         if (pick is null) return null;
         var b = pick;
@@ -335,7 +374,7 @@ internal static class RuneArrowDetector
             for (int i = 0; i < vv.Length; i++) if (vv[i] && mv[i]) movingPx++;
         }
 
-        var (dir, _, _, _, _) = ClassifyScores(b, w);
+        var (dir, _, _, _, _) = ClassifyScores(b, w, frame, rect);
         var sig = Signature(b, w);
 
         // 주축 각도 — 화면 y는 아래가 양수이므로 수학 좌표로 뒤집어 계산(0=→, 90=↑)
@@ -366,14 +405,84 @@ internal static class RuneArrowDetector
         var result = new List<RuneArrow>(4);
         foreach (var b in row)
         {
-            var (dir, _, _, _, _) = ClassifyScores(b, w);
+            var (dir, _, _, _, _) = ClassifyScores(b, w, frame, region);
             result.Add(new RuneArrow(new PointF((float)(region.X + b.Cx), (float)(region.Y + b.Cy)), dir));
         }
         return result;
     }
 
+    /// <summary>부분 줄 보완 — 화살표 하나가 배경(몬스터 발광 등)과 병합되어 후보에서 사라지면
+    /// 4개 줄이 영영 안 잡힌다(2026-08-04 14:46 보라맵: ↓화살표가 병합 소실 → 3회 시도 전부
+    /// 줄 실패). 게이트를 통과하는 3개 조합을 찾아 빠진 슬롯을 간격 외삽으로 채워 '위치만'
+    /// 반환한다 — 방향·잠금은 이후 로컬 관찰(AnalyzeArrowAt 폴백 체인)이 해결한다.
+    /// 한쪽 간격이 다른 쪽의 ~2배면 내부 슬롯 누락, 아니면 좌·우 끝 중 로컬 블롭이 있는 쪽.</summary>
+    internal static PointF[]? TryPartialRow(Bitmap frame, Bitmap? beforeRef, bool precropped)
+    {
+        if (!TryRegion(frame, precropped, out var region)) return null;
+        int w = region.Width, h = region.Height;
+        var mask = VividMask(frame, region, w, h, requireWarm: false);
+        if (beforeRef is not null && beforeRef.Width == frame.Width && beforeRef.Height == frame.Height)
+        {
+            var fresh = new bool[w * h];
+            AccumulateDiff(beforeRef, frame, region, w, h, DiffMin, fresh);
+            for (int i = 0; i < mask.Length; i++) mask[i] &= fresh[i];
+        }
+        ThinFilter(mask, w, h);
+        var (bandY0, bandY1, _) = BannerBand(w, h, (int)(h / (RegionY1 - RegionY0)));
+        double rowY0 = bandY0 + 0.45 * (bandY1 - bandY0), rowY1 = bandY0 + 0.80 * (bandY1 - bandY0);
+        var cands = MergeNear(FindBlobs(mask, w, h)).Where(b =>
+            b.Area is >= MinArrowArea and <= MaxArrowArea &&
+            b.W is >= MinArrowBox and <= MaxArrowBox && b.H is >= MinArrowBox and <= MaxArrowBox &&
+            b.Cy >= rowY0 && b.Cy <= rowY1).OrderBy(b => b.Cx).ToList();
+        double gLo = frame.Width * 0.055, gHi = frame.Width * 0.135;
+        List<Blob>? best = null; double bestScore = double.MinValue;
+        for (int a = 0; a < cands.Count - 2; a++)
+            for (int b2 = a + 1; b2 < cands.Count - 1; b2++)
+                for (int c = b2 + 1; c < cands.Count; c++)
+                {
+                    var t3 = new[] { cands[a], cands[b2], cands[c] };
+                    if (t3.Max(x => x.Cy) - t3.Min(x => x.Cy) > RowBandPx) continue;
+                    double g1 = t3[1].Cx - t3[0].Cx, g2 = t3[2].Cx - t3[1].Cx;
+                    // 각 간격은 1슬롯(범위 내) 또는 2슬롯(내부 누락, 범위의 2배) 허용
+                    bool ok1 = g1 >= gLo && g1 <= gHi, ok2 = g2 >= gLo && g2 <= gHi;
+                    bool dbl1 = g1 >= gLo * 2 && g1 <= gHi * 2, dbl2 = g2 >= gLo * 2 && g2 <= gHi * 2;
+                    if (!((ok1 && ok2) || (ok1 && dbl2) || (dbl1 && ok2))) continue;
+                    int aMin = t3.Min(x => x.Area), aMax = t3.Max(x => x.Area);
+                    if (aMax > aMin * 5) continue;
+                    double score = t3.Sum(x => (double)x.Area);
+                    if (score > bestScore) { bestScore = score; best = t3.ToList(); }
+                }
+        if (best is null) return null;
+        double bg1 = best[1].Cx - best[0].Cx, bg2 = best[2].Cx - best[1].Cx;
+        double yAvg = best.Average(x => x.Cy);
+        var xs = new List<double> { best[0].Cx, best[1].Cx, best[2].Cx };
+        if (bg1 > gHi) xs.Insert(1, best[0].Cx + bg1 / 2);          // 내부 누락(왼쪽 간격이 2슬롯)
+        else if (bg2 > gHi) xs.Insert(2, best[1].Cx + bg2 / 2);     // 내부 누락(오른쪽 간격이 2슬롯)
+        else
+        {
+            // 끝 슬롯 누락 — 좌/우 외삽 중 로컬 글리프가 실제로 잡히는 쪽을 채택
+            double gapAvg = (bg1 + bg2) / 2;
+            double leftX = best[0].Cx - gapAvg, rightX = best[2].Cx + gapAvg;
+            bool leftOk = leftX - 20 >= 0, rightOk = rightX + 20 < w;
+            bool leftHit = false, rightHit = false;
+            if (leftOk)
+                leftHit = AnalyzeArrowAt(frame, beforeRef, null,
+                    new Rectangle(region.X + (int)leftX - 32, region.Y + (int)yAvg - 32, 64, 64)) is not null;
+            if (rightOk)
+                rightHit = AnalyzeArrowAt(frame, beforeRef, null,
+                    new Rectangle(region.X + (int)rightX - 32, region.Y + (int)yAvg - 32, 64, 64)) is not null;
+            if (leftHit || (leftOk && !rightHit)) xs.Insert(0, leftX);
+            else if (rightOk) xs.Add(rightX);
+            else return null;
+        }
+        return xs.Select(x => new PointF((float)(region.X + x), (float)(region.Y + yAvg))).ToArray();
+    }
+
     /// <summary>진단 CLI에서만 설정 — DetectRow가 밴드·후보·선택 결과를 이 콜백으로 알린다.</summary>
     internal static Action<string>? DiagLog;
+
+    /// <summary>진단 CLI에서만 설정 — AnalyzeArrowAt이 로컬 마스크 PNG를 이 폴더에 덤프한다.</summary>
+    internal static string? DiagMaskDir;
 
     /// <summary>마스크에서 '화살표 줄' 블롭 4개 선택(왼쪽부터). fullArea = 밴드·중심 제약 없이
     /// 전 영역 탐색(진단 전용 — 밴드 기하가 틀리는 창 크기를 확인할 때). 실패 시 null.</summary>
@@ -382,15 +491,20 @@ internal static class RuneArrowDetector
         if (thinFilter) ThinFilter(mask, w, h);
         var (bandY0, bandY1, bannerCx) = fullArea ? (0, h - 1, -1.0) : BannerBand(w, h, fullFrameH);
 
+        // 화살표 줄은 밴드 세로 45~80% 구간에 고정(실측: 두 맵·세 룬 모두 62% 부근, 스트립 55~70%).
+        // 밴드 상단 가장자리 잡블롭 줄(y 0~18% — 배너 하단 반짝이)이 등간격으로 뭉치면
+        // ① 경로가 그 줄을 먼저 반환해 이긴다(2026-08-04 14:13 룬: y197~214 잡줄 → 2번 누락).
+        double rowY0 = bandY0 + 0.45 * (bandY1 - bandY0), rowY1 = bandY0 + 0.80 * (bandY1 - bandY0);
         var cands = MergeNear(FindBlobs(mask, w, h)).Where(b =>
             b.Area is >= MinArrowArea and <= MaxArrowArea &&
             b.W is >= MinArrowBox and <= MaxArrowBox && b.H is >= MinArrowBox and <= MaxArrowBox &&
-            b.Cy >= bandY0 && b.Cy <= bandY1).ToList();
+            b.Cy >= rowY0 && b.Cy <= rowY1).ToList();
         var row = PickRow(cands, bannerCx, frame.Width);
         if (DiagLog is not null)
         {
             DiagLog($"밴드 y{region.Y + bandY0}..{region.Y + bandY1} 중심X {(bannerCx >= 0 ? (region.X + bannerCx).ToString("0") : "-")} 후보 {cands.Count}"
-                + (row is null ? " → 줄 없음" : " → " + string.Join(" ", row.Select(b => $"({region.X + b.Cx:0},{region.Y + b.Cy:0})a{b.Area}"))));
+                + (row is null ? " → 줄 없음" : " → " + string.Join(" ", row.Select(b =>
+                    $"({region.X + b.Cx:0},{region.Y + b.Cy:0})a{b.Area}{ClassifyScores(b, w, frame, region).Dir}"))));
             foreach (var b in cands.OrderBy(b => b.Cx))
             {
                 var (dir, up, _, left, _) = ClassifyScores(b, w);
@@ -449,12 +563,21 @@ internal static class RuneArrowDetector
                         double yMin = combo.Min(x => x.Cy), yMax = combo.Max(x => x.Cy);
                         if (yMax - yMin > RowBandPx) continue;
                         bool gapsOk = true;
+                        double gMin = double.MaxValue, gMax = 0;
+                        // 간격은 창폭 비례 절대 범위(1076px 창 실측 85~125 → 0.055~0.135W) + 균일성(비 ≤1.5).
+                        // 개별 50~280 검사만으로는 잡줄이 통과했다(2026-08-04 14:04 실행: x173 잡블롭 줄
+                        // 간격 226/88/191 → 3/4 실패·오답 입력, 리플레이에선 186~247 '균일' 잡줄까지 통과).
+                        double gLo = frameW * 0.055, gHi = frameW * 0.135;
                         for (int i = 1; i < 4; i++)
                         {
                             double gap = combo[i].Cx - combo[i - 1].Cx;
-                            if (gap < MinGapPx || gap > MaxGapPx) { gapsOk = false; break; }
+                            if (gap < gLo || gap > gHi) { gapsOk = false; break; }
+                            gMin = Math.Min(gMin, gap); gMax = Math.Max(gMax, gap);
                         }
-                        if (!gapsOk) continue;
+                        // 균일비 1.6 — 고전 정지형 룬은 간격이 78~115로 불균일하다(2026-08-04 14:46
+                        // 보라맵: 115/78/109 비 1.47이 1.5 게이트에 턱걸이). 잡줄 방어는 나머지
+                        // 게이트(절대 범위·중앙·y구간·크기 균일)가 겹으로 담당.
+                        if (!gapsOk || gMax > gMin * 1.6) continue;
                         int aMin = combo.Min(x => x.Area), aMax = combo.Max(x => x.Area);
                         if (aMax > aMin * 5) continue; // 크기가 제각각인 묶음은 화살표 줄이 아니다
                         double avgX = combo.Average(x => x.Cx);
@@ -462,7 +585,10 @@ internal static class RuneArrowDetector
                         if (bannerCx >= 0)
                         {
                             double off = Math.Abs(avgX - bannerCx);
-                            if (off > frameW * 0.12) continue; // 배너 축에서 벗어난 줄(우측 팝업창 등) 배제
+                            // 화살표 줄은 필 중앙에 정확히 대칭(실측 이탈 ≤5px). 한 칸 밀린 줄(화살표
+                            // 하나가 에지온으로 빠지고 잡블롭이 반대쪽에 끼는 조합)은 중심이 간격만큼
+                            // (~90px) 이탈한다 — 0.12W(129px)로는 통과했다(2026-08-04 14:04 룬).
+                            if (off > frameW * 0.05) continue;
                             centerPenalty = off * 2;
                         }
                         double wRatio = combo.Max(x => x.W) / (double)combo.Min(x => x.W);
@@ -478,7 +604,7 @@ internal static class RuneArrowDetector
     /// <b>화살표 색은 완전 랜덤이라(사용자 확인) 화살표 탐색 경로는 전부 requireWarm=false</b> —
     /// 파란 배경 클러터는 '발동 전과 다름'(diffBefore)·밴드·줄 조합 제약이 걸러낸다.
     /// requireWarm=true는 색이 고정인 배너 안내 텍스트 신호(PuzzlePresent)에만 쓴다.</summary>
-    private static bool[] VividMask(Bitmap frame, Rectangle region, int w, int h, int satMin = VividSat, bool requireWarm = true)
+    private static bool[] VividMask(Bitmap frame, Rectangle region, int w, int h, int satMin = VividSat, bool requireWarm = true, int maxMin = VividMax)
     {
         var mask = new bool[w * h];
         var data = frame.LockBits(region, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
@@ -494,8 +620,13 @@ internal static class RuneArrowDetector
                     {
                         byte b = row[x * 4], g = row[x * 4 + 1], r = row[x * 4 + 2];
                         int max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
-                        mask[o + x] = max >= VividMax && max - min >= satMin
-                                      && (!requireWarm || r >= b + 30 || g >= b + 30);
+                        // 웜톤(노랑·빨강) 외에 보라·자홍(r가 g보다 우세)도 화살표 색 — 정지 상태의
+                        // 보라 화살표가 여기서 걸러져 4개 줄 구성이 실패했다(2026-08-04 위아래위위 룬).
+                        // 하늘·파랑 배경은 g가 높아 r>=g+30을 통과하지 못한다. 파랑 우세인 머리끝은
+                        // 여기선 여전히 잘리지만(초고채도 일괄 통과는 반짝이·UI 파랑까지 흡수해 블롭
+                        // 크기 초과 탈락 유발 — 실측 확인) 줄 선택 후 GrowGlyph가 복원한다.
+                        mask[o + x] = max >= maxMin && max - min >= satMin
+                                      && (!requireWarm || r >= b + 30 || g >= b + 30 || r >= g + 30);
                     }
                 }
             }
@@ -589,7 +720,9 @@ internal static class RuneArrowDetector
 
     /// <summary>진단 CLI(--rune-analyze) — 저장된 퍼즐 스크린샷으로 인식 과정을 재현해
     /// 첫 파일 경로 + ".analysis.txt"로 남긴다. 파일 1개 = 채도 마스크만(크롭 검증),
-    /// 여러 개(rune-frame-N 연속 캡처) = 실전과 같은 애니메이션 차분 합집합.</summary>
+    /// 여러 개(rune-frame-N 연속 캡처) = 실전과 같은 애니메이션 차분 합집합.
+    /// 스트립 모드에서 "pos=x,y;x,y;x,y;x,y" 인자를 주면 위치 획득을 건너뛰고 그 좌표를
+    /// 관찰한다(프레임 절대 y는 밴드 기준으로 자동 변환) — 반동 감지 단독 검증용.</summary>
     public static void AnalyzeToFile(params string[] pngPaths)
     {
         // 스트립(rune-strip-NN) 입력이면 회전 반동 파형 재현 모드로 — 각 스트립의 화살표별
@@ -709,6 +842,8 @@ internal static class RuneArrowDetector
                         sb.AppendLine($"  ③ 채도 단독:      {Dirs(FindArrows(frame, null, beforeRef, pre))}");
                         var af = AnalyzeFrame(frame, frames.GetRange(0, frames.Count - 1), beforeRef, pre);
                         sb.AppendLine($"  ④ 프레임 분석(교집합→정지 게이트, 실전 경로): {(af is null ? "실패" : string.Join(" ", af.Select(x => x.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })))}");
+                        var pr = TryPartialRow(frame, beforeRef, pre);
+                        sb.AppendLine($"  ⑦ 부분 줄 보완(3개+외삽): {(pr is null ? "실패" : string.Join(" ", pr.Select(p => $"({p.X:0},{p.Y:0})")))}");
                         // ⑤ 실험: 채도 교집합 — 모든 프레임에서 '계속 채도 높음'(정적 UI) && 발동 전과 다름.
                         //    흔들리는 불꽃은 프레임마다 위치가 바뀌어 교집합에서 탈락한다.
                         if (frames.Count >= 2)
@@ -771,10 +906,18 @@ internal static class RuneArrowDetector
         var sb = new System.Text.StringBuilder();
         Bitmap? before = null, beforeStrip = null;
         var strips = new List<(string Name, Bitmap Bmp)>();
+        PointF[]? fixedPos = null; // "pos=x,y;…" 인자 — 위치 획득 생략, 반동 감지 단독 검증
         try
         {
             foreach (var p in pngPaths)
             {
+                if (p.StartsWith("pos=", StringComparison.OrdinalIgnoreCase))
+                {
+                    fixedPos = p[4..].Split(';', StringSplitOptions.RemoveEmptyEntries)
+                        .Select(t => t.Split(','))
+                        .Select(a => new PointF(float.Parse(a[0]), float.Parse(a[1]))).ToArray();
+                    continue;
+                }
                 if (Path.GetFileName(p).Contains("rune-before", StringComparison.OrdinalIgnoreCase)) before = new Bitmap(p);
                 else strips.Add((Path.GetFileName(p), new Bitmap(p)));
             }
@@ -794,6 +937,13 @@ internal static class RuneArrowDetector
             // 홍수를 일으켜 회전 화살표를 삼키므로 쓰지 않는다.
             PointF[]? pos = null;
             Bitmap activeRef = beforeStrip;
+            if (fixedPos is { Length: 4 })
+            {
+                // 프레임 절대 y(밴드 높이 이상)는 밴드 기준으로 변환
+                pos = fixedPos.Select(p => new PointF(p.X - bandRect.X,
+                    p.Y >= h ? p.Y - bandRect.Y : p.Y)).ToArray();
+                sb.AppendLine("위치(pos= 지정): " + string.Join(" ", pos.Select(p => $"({p.X:0},{p.Y:0})")));
+            }
             foreach (var (refName, refBmp) in new (string, Bitmap)[] { ("before", beforeStrip), ("strip0", strips[0].Bmp) })
             {
                 for (int si = 0; si < strips.Count && pos is null; si++)
@@ -801,7 +951,9 @@ internal static class RuneArrowDetector
                     var (name, s) = strips[si];
                     if (ReferenceEquals(s, refBmp)) continue;
                     // 고채도(80) ∧ 기준 차분, 두께 필터 없음 — 회전형 외곽선 글리프를 살리면서
-                    // 배경 장식(수정 등)은 차분이, 필 테두리 링은 박스 크기 제한이 걸러준다
+                    // 배경 장식(수정 등)은 차분이, 필 테두리 링은 박스 크기 제한이 걸러준다.
+                    // 채도를 45로 낮추면 필 내부의 어두워진 하늘(sat≈70)까지 통과해 밴드 전체가
+                    // 홍수가 된다(2026-08-04 마스크 덤프 확인) — 45 금지.
                     var mask = VividMask(s, region, w, h, VividSatStrict, requireWarm: false);
                     var fresh = new bool[w * h];
                     AccumulateDiff(refBmp, s, region, w, h, DiffMin, fresh);
@@ -811,6 +963,15 @@ internal static class RuneArrowDetector
                     List<Blob>? row;
                     try { row = DetectRow(s, refBmp, mask, region, w, h, thinFilter: false, h, fullArea: true); }
                     finally { DiagLog = null; }
+                    // 화살표 줄은 밴드 세로 중앙 부근 + 필 가로 중앙 대칭(실측 이탈 ≤5px, 0.05W) —
+                    // 가장자리 잡블롭 줄·한 칸 밀린 줄(2026-08-04: x22~191 줄, x287 밀림 줄)은 기각
+                    if (row is not null && (Math.Abs(row.Average(b => b.Cy) - h / 2.0) > h * 0.2
+                                            || Math.Abs(row.Average(b => b.Cx) - w / 2.0) > w * 0.05))
+                    {
+                        sb.AppendLine($"  [{refName}/{name}] 줄 기각(중앙 이탈): "
+                                      + string.Join(" ", row.Select(b => $"({b.Cx:0},{b.Cy:0})")));
+                        row = null;
+                    }
                     if (row is not null)
                     {
                         pos = row.Select(b => new PointF((float)b.Cx, (float)b.Cy)).ToArray();
@@ -864,6 +1025,7 @@ internal static class RuneArrowDetector
                 }
             }
             if (pos is null) { sb.AppendLine("위치 획득 실패 — 어떤 스트립에서도 줄을 못 찾음"); return; }
+            var posAnchor = (PointF[])pos.Clone(); // EMA 클램프 기준
 
             const int box = 64;
             var locked = new char?[4];
@@ -872,6 +1034,11 @@ internal static class RuneArrowDetector
             var angleT = new List<double>[4]; var angleV = new List<double>[4];
             var lastRotAt = new int[4];
             for (int j = 0; j < 4; j++) { angleT[j] = new List<double>(); angleV[j] = new List<double>(); lastRotAt[j] = -999; }
+            // 실전 LocalPass 미러: 시그니처 안정 가드(반짝임 정지 화살표의 가짜 반동 차단) + 정지 시그니처 락
+            var sigHist = new List<bool[]>[4]; for (int j = 0; j < 4; j++) sigHist[j] = new List<bool[]>();
+            bool SigStable(List<bool[]> hist) => hist.Count >= 3
+                && SigSimilar(hist[^1], hist[^2]) && SigSimilar(hist[^2], hist[^3]);
+            var lRunDir = new char[4]; var lRunLen = new int[4]; var lRunStart = new double[4]; var lRunSig = new bool[4][];
             for (int fi = 0; fi < strips.Count; fi++)
             {
                 double t = fi * 50.0; // 명목 50ms 간격
@@ -880,18 +1047,39 @@ internal static class RuneArrowDetector
                 {
                     if (locked[j] is { } d0) { parts.Add($"[확정{d0}]"); continue; }
                     var rect = new Rectangle((int)(pos[j].X - box / 2.0), (int)(pos[j].Y - box / 2.0), box, box);
+                    DiagLog = fi is 30 or 40 ? m => sb.AppendLine($"      [f{fi} 화살표{j + 1}] {m}") : null;
+                    DiagMaskDir = fi == 30 && j == 1 ? Path.GetDirectoryName(pngPaths[0]) : null;
                     var la = AnalyzeArrowAt(strips[fi].Bmp, activeRef, fi > 0 ? strips[fi - 1].Bmp : null, rect);
+                    DiagLog = null; DiagMaskDir = null;
                     if (la is not { } a) { parts.Add("×"); continue; }
                     if (a.Area >= 60)
-                        pos[j] = new PointF((float)(pos[j].X * 0.7 + a.Center.X * 0.3), (float)(pos[j].Y * 0.7 + a.Center.Y * 0.3));
+                    {
+                        // 실전 LocalPass 미러: EMA 자기보정을 앵커 ±22px로 클램프(이웃 화살표 미끄러짐 방지)
+                        float cx = (float)(pos[j].X * 0.7 + a.Center.X * 0.3);
+                        float cy = (float)(pos[j].Y * 0.7 + a.Center.Y * 0.3);
+                        pos[j] = new PointF(
+                            Math.Clamp(cx, posAnchor[j].X - 22, posAnchor[j].X + 22),
+                            Math.Clamp(cy, posAnchor[j].Y - 22, posAnchor[j].Y + 22));
+                    }
                     int before1 = lockedCount;
-                    angleT[j].Add(t); angleV[j].Add(a.AngleDeg);
+                    angleT[j].Add(t); angleV[j].Add(PositionWatcher.FixAngleFlip(angleV[j], a.AngleDeg));
+                    sigHist[j].Add(a.Sig); if (sigHist[j].Count > 4) sigHist[j].RemoveAt(0);
                     int n1 = angleV[j].Count;
                     if (PositionWatcher.IsRotating(angleT[j], angleV[j])) lastRotAt[j] = n1;
-                    bool rotActive = n1 - lastRotAt[j] <= 3;
+                    bool rotActive = n1 - lastRotAt[j] <= 3 && !SigStable(sigHist[j]);
                     if (rotActive)
                         PositionWatcher.TryDetectRecoil(j, angleT[j], angleV[j], votes, ref lockedCount, locked,
                             m => sb.AppendLine($"      {m}")); // 투표 이벤트(직전각→착지각·피벗·방위)를 해당 스트립 아래 기록
+                    else
+                    {
+                        // 정지 시그니처 런(실전 LocalPass 미러: 3연속 + 250ms)
+                        if (lRunSig[j] is not null && lRunDir[j] == a.Dir && SigSimilar(lRunSig[j], a.Sig))
+                        {
+                            lRunLen[j]++;
+                            if (lRunLen[j] >= 3 && t - lRunStart[j] >= 250) { locked[j] = lRunDir[j]; lockedCount++; }
+                        }
+                        else { lRunSig[j] = a.Sig; lRunDir[j] = a.Dir; lRunLen[j] = 1; lRunStart[j] = t; }
+                    }
                     parts.Add($"{(rotActive ? "회" : "정")}{(a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })}{a.AngleDeg:000}°a{a.Area}m{a.MovingPx}{(lockedCount > before1 ? "★락" : "")}");
                 }
                 sb.AppendLine($"f{fi:00} {t,5:0}ms  {string.Join("  ", parts)}");
@@ -941,7 +1129,7 @@ internal static class RuneArrowDetector
     /// 꼬리 끝은 축(shaft)·베이스라 넓다. 비대칭이 큰 축이 화살표 축이고 폭이 좁은 끝이 방향.
     /// (이전의 '가운데 볼록' 지표는 축 달린 화살표에서 꼬리 축이 가운데 행만 길게 튀어나와
     /// 4방향 모두 정반대로 뒤집혔다 — 22:44 오답 프레임으로 확인.)</summary>
-    private static (char Dir, double Up, double Down, double Left, double Right) ClassifyScores(Blob b, int w)
+    private static (char Dir, double Up, double Down, double Left, double Right) ClassifyScores(Blob b, int w, Bitmap? frame = null, Rectangle region = default)
     {
         int bw = b.MaxX - b.MinX + 1, bh = b.MaxY - b.MinY + 1;
         var minY = new int[bw]; var maxY = new int[bw];
@@ -978,6 +1166,46 @@ internal static class RuneArrowDetector
         char dir = Math.Abs(lScore) >= Math.Abs(uScore)
             ? (lScore >= 0 ? 'L' : 'R')
             : (uScore >= 0 ? 'U' : 'D');
+
+        // 그라데이션 보정 — 분홍 꼬리→파랑 머리 그라데이션 화살표는 파랑 우세 머리끝이 웜톤
+        // 마스크에서 잘려 '넓은 끝=꼬리' 판정이 정반대로 뒤집힌다(2026-08-04 위아래위위 룬:
+        // 보라 ↓·↑를 U·D로 반전 판독). 양끝 (b−r) 색차가 크고(≥80) 넓은 끝이 최대 폭에
+        // 근접(삼각 밑변 절단 흔적)할 때만, 파랑 우세 끝을 머리로 채택한다. 완형 화살표는
+        // 끝 폭 < 최대 폭이라 발동하지 않는다.
+        if (frame is not null)
+        {
+            bool vertical = dir is 'U' or 'D';
+            double EndBr(bool nearMin)
+            {
+                double sum = 0; int n = 0;
+                int lo = vertical ? b.MinY : b.MinX, hi = vertical ? b.MaxY : b.MaxX;
+                foreach (var p in b.Pixels)
+                {
+                    int px = p % w, py = p / w;
+                    int t = vertical ? py : px;
+                    if (nearMin ? t > lo + EndSlice - 1 : t < hi - EndSlice + 1) continue;
+                    var c = frame.GetPixel(region.X + px, region.Y + py);
+                    sum += c.B - c.R; n++;
+                }
+                return n == 0 ? 0 : sum / n;
+            }
+            double minEndBr = EndBr(true), maxEndBr = EndBr(false);
+            if (Math.Abs(minEndBr - maxEndBr) >= 80)
+            {
+                char gDir = vertical ? (minEndBr > maxEndBr ? 'U' : 'D') : (minEndBr > maxEndBr ? 'L' : 'R');
+                if (gDir != dir)
+                {
+                    double wideEnd = vertical ? Math.Max(topEnd, bottomEnd) : Math.Max(leftEnd, rightEnd);
+                    double maxSpan = 0;
+                    if (vertical) { for (int i = 0; i < bh; i++) if (minX[i] != int.MaxValue) maxSpan = Math.Max(maxSpan, maxX[i] - minX[i] + 1); }
+                    else { for (int i = 0; i < bw; i++) if (minY[i] != int.MaxValue) maxSpan = Math.Max(maxSpan, maxY[i] - minY[i] + 1); }
+                    // 절단면은 안티앨리어싱으로 듬성해져 평균 폭이 실제보다 낮게 재진다
+                    // (2026-08-04 실측: 진성 절단면이 0.63·0.97, 완형 회전 글리프는 0.50) → 0.6
+                    DiagLog?.Invoke($"    [그라데이션 보정] ({b.Cx:0},{b.Cy:0}) {dir}→{gDir}? br {minEndBr:0}/{maxEndBr:0} 넓은끝 {wideEnd:0.0} 최대폭 {maxSpan:0} → {(wideEnd >= 0.6 * maxSpan ? "적용" : "기각")}");
+                    if (wideEnd >= 0.6 * maxSpan) dir = gDir;
+                }
+            }
+        }
         return (dir, uScore, -uScore, lScore, -lScore);
     }
 
