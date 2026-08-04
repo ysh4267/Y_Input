@@ -6,8 +6,9 @@ namespace YInput.Host.Vision;
 /// <summary>퍼즐 화살표 하나 — 화면 좌표(중심)와 방향('L','R','U','D').</summary>
 internal readonly record struct RuneArrow(PointF Center, char Dir);
 
-/// <summary>한 프레임에서 분석한 화살표 하나 — 방향 + 모양 시그니처(회전 정지 판별용).</summary>
-internal readonly record struct ArrowSample(PointF Center, char Dir, bool[] Sig);
+/// <summary>한 프레임에서 분석한 화살표 하나 — 방향 + 모양 시그니처(회전 정지 판별용) + 블롭 면적
+/// (줄 재선출 비교용 — 잡줄은 파편이라 면적 합이 진짜 줄의 1/3 수준).</summary>
+internal readonly record struct ArrowSample(PointF Center, char Dir, bool[] Sig, int Area = 0);
 
 /// <summary>
 /// 룬 발동(스페이스) 후 화면 상단 배너 아래에 뜨는 방향키 퍼즐(화살표 4개)을 인식한다.
@@ -49,8 +50,11 @@ internal static class RuneArrowDetector
     private const int MinGapPx = 50, MaxGapPx = 280; // 화살표 이웃 간격 상식 범위(실측 85~125px) —
                                                      // 데미지 숫자·배너 글자 조각(13~35px) 배제
     // 줄 선택 게이트 공용 상수(PickRow·TryPartialRow) — 실측 근거는 사용처 주석 참조.
-    private const double GapFracLo = 0.058, GapFracHi = 0.135; // 이웃 간격 창폭 비례(실측 67~125px = 0.062~0.116W)
-    private const double GapRatioMax = 1.75;                   // 간격 균일비 상한(실측 최대 1.69 — 카르시온 113/67/110)
+    private const double GapFracLo = 0.040, GapFracHi = 0.145; // 이웃 간격 창폭 비례 상식 범위(실측 49~136px = 0.046~0.126W)
+    private const double GapRatioHardMax = 3.5;                // 간격 균일비 순수 상식 상한(실측 최대 2.78 — 카르시온 97/136/49)
+    private const double GapRatioSoftW = 0.35;                 // 소프트 균일비 페널티 가중(면적 합 대비) —
+                                                               // DDRD 잡줄(비 1.94, 면적 우세)은 지고
+                                                               // 카르시온 진짜 줄(비 2.78, 면적 4배)은 이기는 창(0.3~0.4)
     private const double RowFracLo = 0.20, RowFracHi = 0.85;   // 후보 y 밴드 구간(실측 29~62% — 상단 잡줄 0~18%만 차단)
 
     /// <summary>퍼즐 UI 탐색 영역(창 상대) — 캡처를 이 영역만 화면 복사로 뜨면 전체 창 캡처보다
@@ -283,7 +287,7 @@ internal static class RuneArrowDetector
         foreach (var b in row)
         {
             var (dir, _, _, _, _) = ClassifyScores(b, w, frame, region);
-            result.Add(new ArrowSample(new PointF((float)(region.X + b.Cx), (float)(region.Y + b.Cy)), dir, Signature(b, w)));
+            result.Add(new ArrowSample(new PointF((float)(region.X + b.Cx), (float)(region.Y + b.Cy)), dir, Signature(b, w), b.Area));
         }
         return result;
     }
@@ -553,16 +557,6 @@ internal static class RuneArrowDetector
     /// 못 쓴다 — 진짜 ←도 침식되면 |0.06|까지 떨어진다(00:45 sat80). 없으면 null.</summary>
     private static List<Blob>? PickRow(List<Blob> cands, double bannerCx, int frameW)
     {
-        // 2단계 균일비 — 실측: 대부분의 줄은 균일비 ≤1.6(DDRD 92/90/97=1.08 등)이지만
-        // 카르시온 나무줄기3(17:36)은 진짜 줄이 113/67/110=1.69다. 상한을 1.75로 그냥 열면
-        // DDRD에서 비 1.67 잡줄(400/532/611/711, 면적 우세)이 진짜 줄을 밀어냈다 —
-        // 균일한 줄이 하나라도 있으면 그쪽 세계에서만 고르고, 없을 때만 1.75까지 허용한다.
-        return PickRowWithRatio(cands, bannerCx, frameW, 1.6)
-            ?? PickRowWithRatio(cands, bannerCx, frameW, GapRatioMax);
-    }
-
-    private static List<Blob>? PickRowWithRatio(List<Blob> cands, double bannerCx, int frameW, double ratioMax)
-    {
         if (cands.Count < 4) return null;
         // 상위 20개 — 불타는 맵은 노이즈 블롭이 커서 14개 컷으로는 작은 화살표가 밀려났다
         var top = cands.OrderByDescending(b => b.Area).Take(20).OrderBy(b => b.Cx).ToList();
@@ -578,9 +572,11 @@ internal static class RuneArrowDetector
                         if (yMax - yMin > RowBandPx) continue;
                         bool gapsOk = true;
                         double gMin = double.MaxValue, gMax = 0;
-                        // 간격은 창폭 비례 절대 범위 + 균일성. 실측 간격(1076px 창): 67~125px
-                        // (0.062~0.116W) — 하한 0.058W(62px)는 실측 최소(67) 바로 아래까지만 연다.
-                        // 16:11의 ~60px 등간격 잡블롭 줄(슬롯 한 칸 어긋남 오답)은 하한 미달로 차단.
+                        // 간격은 '상식 범위'만 하드 게이트 — 이 룬 UI의 글리프 간격은 균일하지 않다.
+                        // 실측(1076px 창): 카르시온 17:52 실전 97/136/49(비 2.78!) — ←·→가 49px로
+                        // 붙어 렌더됐다. 좁은 범위·균일비 하드컷은 진짜 줄을 두 번 죽였다(17:36·17:52).
+                        // 잡줄 방어는 점수 경쟁(면적 — 진짜 화살표 a300~460 vs 파편 a50~150)과
+                        // 아래 소프트 균일비 페널티가 담당한다.
                         double gLo = frameW * GapFracLo, gHi = frameW * GapFracHi;
                         for (int i = 1; i < 4; i++)
                         {
@@ -588,7 +584,7 @@ internal static class RuneArrowDetector
                             if (gap < gLo || gap > gHi) { gapsOk = false; break; }
                             gMin = Math.Min(gMin, gap); gMax = Math.Max(gMax, gap);
                         }
-                        if (!gapsOk || gMax > gMin * ratioMax) continue;
+                        if (!gapsOk || gMax > gMin * GapRatioHardMax) continue;
                         int aMin = combo.Min(x => x.Area), aMax = combo.Max(x => x.Area);
                         if (aMax > aMin * 5) continue; // 크기가 제각각인 묶음은 화살표 줄이 아니다
                         double avgX = combo.Average(x => x.Cx);
@@ -605,7 +601,13 @@ internal static class RuneArrowDetector
                         double wRatio = combo.Max(x => x.W) / (double)combo.Min(x => x.W);
                         double hRatio = combo.Max(x => x.H) / (double)combo.Min(x => x.H);
                         double boxPenalty = 300 * (wRatio - 1 + hRatio - 1);
-                        double score = combo.Sum(x => (double)x.Area) - centerPenalty - boxPenalty;
+                        double areaSum = combo.Sum(x => (double)x.Area);
+                        // 소프트 균일비 페널티(면적 비례) — 균일한 줄을 선호하되 결격은 아니다.
+                        // DDRD: 잡줄(비 1.67, 면적 우세)이 진짜 줄(비 1.08)을 하드컷 완화 때 밀어냈던
+                        // 사례의 방어를 점수로 옮긴 것. 카르시온의 진짜 줄(비 2.78)은 면적 합이
+                        // 파편 줄의 3배 이상이라 페널티를 감수하고도 이긴다.
+                        double gapPenalty = areaSum * GapRatioSoftW * (gMax / gMin - 1);
+                        double score = areaSum - centerPenalty - boxPenalty - gapPenalty;
                         if (score > bestScore) { bestScore = score; best = combo.ToList(); }
                     }
         return best;

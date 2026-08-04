@@ -981,6 +981,7 @@ public sealed class PositionWatcher : IDisposable
         for (int j = 0; j < 4; j++) { angleT[j] = new List<double>(); angleV[j] = new List<double>(); }
 
         bool fastMode = false, rotatingSeen = false;
+        int fastTick = 0;        // 고속 모드 틱 카운터 — 주기적 줄 재선출 체크용
         Bitmap? prevFast = null; // 고속 모드의 직전 틱 프레임(진단 MovingPx용)
         var lastRotAt = new int[4]; for (int j = 0; j < 4; j++) lastRotAt[j] = -999; // 화살표별 마지막 '회전 중' 표본 번호
         // 로컬 정지 확정용 런 상태 — 무거운 줄 경로의 런과 소스가 달라(교집합 마스크 vs 로컬 글리프)
@@ -1059,6 +1060,41 @@ public sealed class PositionWatcher : IDisposable
             }
         }
 
+        // 줄 채택 + 재선출 — 게이트 통과 줄을 즉시 채택하되, 초반 2.5초 안에 '더 강한 줄'
+        // (면적 합 1.4배↑, 위치 28px↑ 상이)이 보이면 관측 위치를 교체한다. 이 룬 UI는 글리프
+        // 간격이 균일하지 않아(17:52 실측 97/136/49) 기하 게이트만으로 잡줄을 다 못 막는다 —
+        // 몹 파편 줄이 먼저 잡혀 관측점이 몹 몸통에 앉는 사고(17:36·17:52 카르시온)를 복구.
+        // 교체된 화살표는 각도·시그니처·투표·잠금을 전부 리셋(다른 지점의 기록은 무효).
+        double adoptedRowArea = 0;
+        void AdoptRow(List<ArrowSample> row)
+        {
+            double area = row.Sum(x => (double)x.Area);
+            if (pos is null)
+            {
+                pos = row.Select(x => x.Center).ToArray(); posAnchor = (PointF[])pos.Clone();
+                adoptedRowArea = area;
+                return;
+            }
+            if (sw.ElapsedMilliseconds >= 2500 || area < adoptedRowArea * 1.4) return;
+            bool Moved(int j) => Math.Abs(row[j].Center.X - posAnchor![j].X) > 28
+                              || Math.Abs(row[j].Center.Y - posAnchor[j].Y) > 28;
+            if (!Enumerable.Range(0, 4).Any(Moved)) { adoptedRowArea = Math.Max(adoptedRowArea, area); return; }
+            for (int j = 0; j < 4; j++)
+            {
+                bool moved = Moved(j);
+                pos![j] = row[j].Center; posAnchor![j] = row[j].Center;
+                if (!moved) continue;
+                if (locked[j] is not null) { locked[j] = null; lockedCount--; }
+                angleT[j].Clear(); angleV[j].Clear(); sigHist[j].Clear();
+                lRunSig[j] = null!; lRunLen[j] = 0;
+                runSig[j] = null!; runLen[j] = 0;
+                for (int c = 0; c < 4; c++) recoilVotes[j, c] = 0;
+                lastRotAt[j] = -999;
+            }
+            adoptedRowArea = area;
+            Note($"줄 재선출 — 더 강한 화살표 줄로 관측 위치 교체: {string.Join(" ", row.Select(p => $"({p.Center.X:0},{p.Center.Y:0})"))}");
+        }
+
         try
         {
             while (sw.ElapsedMilliseconds < budgetMs && lockedCount < 4)
@@ -1079,6 +1115,15 @@ public sealed class PositionWatcher : IDisposable
                             LocalPass(ff, prevFast, sw.ElapsedMilliseconds);
                             RecordStrip(ff);
                             if (_runeShots.Count < 4) _runeShots.Add(ff);
+                            // 잘못 채택된 줄의 복구 기회 — 8틱(~0.4초)마다 무거운 줄 인식을 끼워
+                            // 더 강한 줄이 보이면 재선출. 정지 퍼즐이 잡줄 관측점의 난수 각도로
+                            // '가짜 회전' 판정돼 고속 모드에 갇히면 무거운 경로가 영영 안 돌아
+                            // 재선출 기회가 없던 문제(17:52 카르시온 3/4 실패).
+                            if (++fastTick % 8 == 0 && sw.ElapsedMilliseconds < 2500)
+                            {
+                                var row2 = RuneArrowDetector.AnalyzeFrame(ff, win, beforeCrop, precropped: true);
+                                if (row2 is not null) AdoptRow(row2);
+                            }
                         }
                         finally
                         {
@@ -1122,12 +1167,9 @@ public sealed class PositionWatcher : IDisposable
                             }
                         }
 
-                        // 위치 — 강화된 줄 게이트(간격 균일·중앙 대칭·y 구간)를 통과한 첫 줄을 즉시 채택.
-                        // 스페이스+100ms부터 화살표가 떠 있다고 전제하고 곧장 관찰을 시작한다(사용자
-                        // 지정 2026-08-04). 이전의 '2연속 컨센서스 + 1.2초 폴백'은 첫 각도 표본이
-                        // ~1.2초에야 시작되는 지연 원인이었다 — 잡줄 방어는 이제 게이트가 담당.
-                        if (pos is null && row is not null)
-                        { pos = row.Select(x => x.Center).ToArray(); posAnchor = (PointF[])pos.Clone(); }
+                        // 위치 — 줄 게이트 통과한 첫 줄 즉시 채택(스페이스+100ms부터 화살표가 떠 있다는
+                        // 전제, 사용자 지정 2026-08-04) + 더 강한 줄이 보이면 재선출(AdoptRow 주석 참조).
+                        if (row is not null) AdoptRow(row);
                         // 부분 줄 보완 — 화살표 하나가 배경과 병합 소실되면 4개 줄이 영영 안 잡힌다
                         // (14:46 보라맵). 0.9초까지 줄이 없으면 3개+외삽으로 위치만 확보하고,
                         // 방향·잠금은 로컬 관찰에 맡긴다.
