@@ -70,6 +70,7 @@ YInput.exe --rune-minimap-analyze rune-minimap.png    # → .rune.txt 후보·�
 | `rune-strips-DDLR-fliplock-20260804` | 회전2·머리 플립 고착 | 1:D 2:D 3:L 4:R (pos= 고정, 리셋 발생) |
 | `rune-frames-DLRD-pilloffset-20260804` | 정지형·필 중심 이탈 67px | ②③ 줄 492/608/697/771 ±5 (④ 실패 허용) |
 | `rune-frames-DDLR-pillhigh-20260804` | 정지형·필 상단 이탈(밴드 8.9%) | ④ ↓↓←→ · 위치 411/498/559/650 ±5 |
+| `rune-frames-LLDR-erosion-20260804` | 정지형·침식 소실+밀린 줄 | ⓪ 파편 419/a30 · ⑦ 481/582/663/765 (라이브: 슬롯 재배치) |
 | `rune-minimap\` | 아이콘 3장 | README 참조 |
 
 리플레이 산출물(`*.analysis.txt`, `*.png.mask-*.png`)은 gitignore됨 — 커밋하지 말 것.

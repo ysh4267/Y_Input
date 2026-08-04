@@ -1014,6 +1014,49 @@ public sealed class PositionWatcher : IDisposable
             }
         }
 
+        // 3잠금 + 1잡 슬롯 재배치(사용자 검수 2026-08-04) — 22:34 실전: 1번 화살표가 폭포 빛줄기
+        // 위에서 30px 조각으로 침식돼 크기 게이트(≤5배)에 조합이 죽고, 우측 잡블롭이 낀 '한 칸
+        // 밀린 줄'(간격 균일이라 에지 보정 미발동)이 채택 → 관측점 3개는 진짜 화살표(정상 잠금),
+        // 1개는 잡영역(난수 미확정) → 3/4 실패. 잠긴 3개의 간격이 균일하면 남은 화살표는 그 줄의
+        // 왼쪽 또는 오른쪽 한 칸 외삽 위치에 있다 — 양쪽을 로컬 글리프로 탐침해 있는 쪽으로 관측점
+        // 을 옮기고 상태를 리셋해 재관찰한다. 실패해도 인식 실패 종료라 오답 위험은 없다.
+        bool relocated = false;
+        void TryRelocateStarvedSlot(Bitmap frame, long now)
+        {
+            if (relocated || lockedCount != 3 || pos is null || now < 2200) return;
+            int starved = -1;
+            for (int j = 0; j < 4; j++) if (locked[j] is null) starved = j;
+            // 반동 표가 쌓였거나 최근까지 회전 중이면 진짜 회전 화살표 관찰 중 — 옮기면 안 된다
+            for (int c = 0; c < 4; c++) if (recoilVotes[starved, c] > 0) return;
+            if (angleV[starved].Count > 0 && angleV[starved].Count - lastRotAt[starved] <= 3) return;
+            var lx = Enumerable.Range(0, 4).Where(j => j != starved).Select(j => pos[j].X).OrderBy(x => x).ToArray();
+            double g1 = lx[1] - lx[0], g2 = lx[2] - lx[1];
+            if (Math.Max(g1, g2) > Math.Min(g1, g2) * 1.35) return; // 잠긴 3개가 등간격일 때만
+            float m = (float)((g1 + g2) / 2);
+            if (m < 40 || m > 170) return; // 간격 상식 범위(실측 49~136px)
+            float py = Enumerable.Range(0, 4).Where(j => j != starved).Average(j => pos[j].Y);
+            (PointF P, int Area) Probe(float px)
+            {
+                if (px < posBox / 2f || px > frame.Width - posBox / 2f) return (default, 0);
+                var r = new Rectangle((int)(px - posBox / 2.0), (int)(py - posBox / 2.0), posBox, posBox);
+                var la = RuneArrowDetector.AnalyzeArrowAt(frame, beforeCrop, null, r);
+                return (new PointF(px, py), la?.Area ?? 0);
+            }
+            var left = Probe(lx[0] - m); var right = Probe(lx[2] + m);
+            var pick = left.Area >= right.Area ? left : right;
+            if (pick.Area < 40) return; // 침식 조각(실측 a30)도 로컬 추출로는 이보다 크게 잡힌다
+            Note($"슬롯 재배치 — 미확정 관측점({pos[starved].X:F0},{pos[starved].Y:F0})을 잠긴 줄 외삽 위치({pick.P.X:F0},{pick.P.Y:F0})로 이동해 재관찰");
+            pos[starved] = pick.P; posAnchor![starved] = pick.P;
+            angleT[starved].Clear(); angleV[starved].Clear(); sigHist[starved].Clear();
+            lRunSig[starved] = null!; lRunLen[starved] = 0;
+            runSig[starved] = null!; runLen[starved] = 0;
+            lastRotAt[starved] = -999; heavyDirAt[starved] = -9999;
+            relocated = true;
+            // 재관찰 시간 확보 — 정지 잠금은 3표본+250ms면 된다. 사용자 지정 4초에 구제 여유만
+            // 최소로 얹는다(최대 5초).
+            budgetMs = Math.Min(5000, Math.Max(budgetMs, (int)now + 1000));
+        }
+
         // 줄 채택 + 재선출 — 게이트 통과 줄을 즉시 채택하되, 초반 2.5초 안에 '더 강한 줄'
         // (면적 합 1.4배↑, 위치 28px↑ 상이)이 보이면 관측 위치를 교체한다. 이 룬 UI는 글리프
         // 간격이 균일하지 않아(17:52 실측 97/136/49) 기하 게이트만으로 잡줄을 다 못 막는다 —
@@ -1072,6 +1115,7 @@ public sealed class PositionWatcher : IDisposable
                         try
                         {
                             LocalPass(ff, prevFast, sw.ElapsedMilliseconds);
+                            TryRelocateStarvedSlot(ff, sw.ElapsedMilliseconds);
                             RecordStrip(ff);
                             if (_runeShots.Count < 4) _runeShots.Add(ff);
                             // 잘못 채택된 줄의 복구 기회 — 8틱(~0.4초)마다 무거운 줄 인식을 끼워
@@ -1146,6 +1190,7 @@ public sealed class PositionWatcher : IDisposable
                         // 로컬 추적 — 위치가 고정된 뒤: 회전 화살표의 각도 시계열 + 반동 감지.
                         // 로컬 블롭 중심으로 위치를 서서히 보정(회전 핵 어긋남 수렴).
                         if (pos is not null) LocalPass(f, win.Count > 0 ? win[^1] : null, now);
+                        if (pos is not null) TryRelocateStarvedSlot(f, now);
 
                         // 회전 판정(초반 1초 내 각도 진행 감지) → 고속 모드 전환 + 예산 연장
                         if (!fastMode && rotatingSeen && pos is not null)
@@ -1241,8 +1286,12 @@ public sealed class PositionWatcher : IDisposable
                         return null;
                     }
 
+        // 입력 순서는 관측점 X좌표 순 — 슬롯 재배치로 인덱스 순서와 좌우 순서가 어긋날 수 있다
+        // (평상시엔 줄 채택이 좌→우 정렬이라 정렬해도 동일).
+        var order = Enumerable.Range(0, 4).ToList();
+        if (pos is not null) order.Sort((i1, i2) => pos[i1].X.CompareTo(pos[i2].X));
         var result = new List<RuneArrow>(4);
-        for (int j = 0; j < 4; j++) result.Add(new RuneArrow(centers[j], locked[j]!.Value));
+        foreach (int j in order) result.Add(new RuneArrow(centers[j], locked[j]!.Value));
         DumpSolveTrace("확정 4/4"); // 성공 판정도 트레이스를 남긴다 — 오확정 사후 분석용(사용자 지시 2026-08-04)
         Note($"퍼즐 확정 — 4/4{(spinNoted ? " (회전 포함)" : "")}");
         return result;
