@@ -764,7 +764,7 @@ public sealed class PositionWatcher : IDisposable
                 var spaceSw = Stopwatch.StartNew();
                 await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
 
-                int budget = Math.Max(900, PuzzleBudgetMs - (int)spaceSw.ElapsedMilliseconds);
+                int budget = Math.Max(900, RunePuzzleSolver.PuzzleBudgetMs - (int)spaceSw.ElapsedMilliseconds);
                 ClearRuneShots();
                 var arrows = await SolvePuzzleAsync(screenCrop, beforeCrop, budget, ct).ConfigureAwait(false);
                 if (arrows is null)
@@ -880,214 +880,29 @@ public sealed class PositionWatcher : IDisposable
         catch { /* 진단 녹화 실패 무시 */ }
     }
 
-    // 퍼즐 확정 파라미터. 두 종류의 화살표(사용자 확인: 색·배경 완전 랜덤, 회전 개수 0~4 랜덤):
-    //  · 정지 화살표 — 모양·방향이 유지되는 시그니처 런으로 확정(검증된 경로)
-    //  · 회전 화살표 — 절대 멈추지 않는다. 정답 방향을 지날 때마다 '격발 반동'(순간 딸깍)이
-    //    한 번씩 있을 뿐 → 각도를 연속 추적해 각속도 이상(스텝 급감·역행)이 생기는 방향을
-    //    여러 바퀴에 걸쳐 모아 최빈 방위로 확정한다.
-    private const int PuzzleBudgetMs = 2800;    // 정지형 기본 예산 — 보통 0.5초 안에 4/4 확정된다
-    private const int RotatingBudgetMs = 4000;  // 회전 감지 시 연장 — 반동 2회 관찰에 충분(사용자 지정 4초)
-    private const int PuzzleSampleGapMs = 70;   // 프레임 간격(캡처+분석 포함 실효 ~110-150ms)
-    private const int LockRun = 3;              // 정지 확정 최소 연속 프레임
-    private const int LockSpanMs = 250;         // 정지 확정 최소 지속시간
-    private const int FastTickMs = 50;          // 회전 판정 후 고속 관찰 주기(사용자 지정 — 1바퀴 <1초라 촘촘히)
-    private const int MinSlotSepPx = 24;        // 슬롯 관측점 최소 이격 — 미만이면 같은 화살표 중복 관측(실측:
-                                                // 20:38 오답 입력 때 2·3번이 15px, 진짜 이웃 화살표는 ≥48px)
+    // 퍼즐 확정 파라미터·판정 로직은 RunePuzzleSolver로 이동(2026-08-04 모듈화) — 여기는
+    // 캡처·대기·취소·비트맵 수명(스케줄링)만 남는다.
     private const int StripKeep = 90;           // 실패 진단용 밴드 스트립 녹화 링 크기(고속 50ms 기준 ~4.5초)
 
-    /// <summary>퍼즐 화살표 4개 확정. 매 프레임: ① 검증된 줄 인식(교집합 단계)으로 정지 화살표
-    /// 시그니처 락, ② 줄이 안 잡히면 합집합 마스크로 위치만 획득, ③ 위치가 확보되면 화살표별
-    /// 로컬 분석 — 정지는 로컬 시그니처 락, 회전은 각도 시계열에서 반동(스텝 급감·역행) 방위 투표.
-    /// 4개 모두 확정되어야 입력한다(회전 중 표본 다수결은 오답 — 00:41 ↑↑↑← 실입력 사례).</summary>
+    /// <summary>퍼즐 화살표 4개 확정 — 판정은 <see cref="RunePuzzleSolver"/>(실전·오프라인 공용),
+    /// 이 메서드는 캡처·대기 산술·취소·비트맵 수명(스케줄링)만 담당한다. 고속 모드에서는 무거운
+    /// 줄 인식을 끄고 로컬 분석만 50ms 주기로 돈다(캡처 ~15ms + 로컬 4개 ~8ms라 주기 유지 가능;
+    /// 반동은 순간이라 촘촘함이 생명). 위치 고정 후에는 무거운 줄 인식 사이에 가벼운 로컬 샘플을
+    /// 한 번 더 끼워 각도 샘플링을 ~2배 조밀하게 만든다(반동 포착률↑ — 1바퀴 <1초 사용자 확인).</summary>
     private async Task<List<RuneArrow>?> SolvePuzzleAsync(Rectangle screenCrop, Bitmap? beforeCrop, int budgetMs, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
-        var locked = new char?[4];
-        var centers = new PointF[4];
-        var runDir = new char[4]; var runLen = new int[4]; var runStart = new long[4]; var runSig = new bool[4][];
-        bool rowSeen = false, spinNoted = false;
-        int lockedCount = 0;
+        var solver = new RunePuzzleSolver(beforeCrop, budgetMs, precropped: true, note: Note);
         var win = new List<Bitmap>(4); // 직전 프레임 창(최대 3장, 오래된 순) — 채도 교집합·정지 게이트 기준
-
-        // 위치 컨센서스 — 줄 인식(교집합)이 두 번 연속 일치하면 고정. 회전 화살표의 교집합 핵은
-        // 실제 중심에서 ±30px까지 어긋날 수 있어 로컬 박스를 넉넉히 잡고, 이후 로컬 블롭
-        // 중심으로 서서히 자기 보정한다(EMA).
-        PointF[]? pos = null; const int posBox = 64;
-        PointF[]? posAnchor = null; // pos 확정 시점의 원본 — EMA 미끄러짐 클램프 기준
-        // 회전 추적 — 화살표별 (시각 ms, 각도°) 시계열과 반동 방위 투표
-        var angleT = new List<double>[4]; var angleV = new List<double>[4];
-        var recoilVotes = new int[4, 4]; // [화살표, 방위 R U L D]
-        for (int j = 0; j < 4; j++) { angleT[j] = new List<double>(); angleV[j] = new List<double>(); }
-
-        bool fastMode = false, rotatingSeen = false;
-        int fastTick = 0;        // 고속 모드 틱 카운터 — 주기적 줄 재선출 체크용
-        Bitmap? prevFast = null; // 고속 모드의 직전 틱 프레임(진단 MovingPx용)
-        var lastRotAt = new int[4]; for (int j = 0; j < 4; j++) lastRotAt[j] = -999; // 화살표별 마지막 '회전 중' 표본 번호
-        // 로컬 정지 확정용 런 상태 — 무거운 줄 경로의 런과 소스가 달라(교집합 마스크 vs 로컬 글리프)
-        // 같은 배열을 쓰면 서로 리셋만 반복한다. 독립 이중화: 둘 중 먼저 안정되는 쪽이 확정.
-        var lRunDir = new char[4]; var lRunLen = new int[4]; var lRunStart = new long[4]; var lRunSig = new bool[4][];
-        // 무거운 줄 경로의 슬롯별 최근 판독 — 로컬 정지 잠금과 충돌하면 잠금을 보류한다(사용자
-        // 검수 2026-08-04). 20:38 실전: 관측점이 정확히 → 화살표 위였는데 로컬 sat140 추출이
-        // 글리프 일부만 잡아(a273/a420) 주축 244°로 일관 왜곡 → 축 안정까지 통과해 D 오답 잠금.
-        // 무거운 경로는 같은 블롭을 매 프레임 R로 정확히 분류하고 있었다 — 옳은 경로가 지는
-        // 경쟁을 막는다. 줄이 안 잡히는 맵(10:39 로컬 단독)은 판독이 낡아(600ms↑) 영향 없음.
-        var heavyDir = new char[4]; var heavyDirAt = new long[4]; var heavyX = new float[4];
-        for (int j = 0; j < 4; j++) heavyDirAt[j] = -9999;
-        // 시그니처 최근 이력 — 반짝임(스파클) 이펙트가 각도를 흔들어 정지 화살표가 회전으로
-        // 오인되는 것 방지(2026-08-04 위아래위위 룬: 정지 ↑가 가짜 반동 D 2표로 오답 확정).
-        // 3연속 동일 모양 = 정지. 회전 글리프는 매 프레임 모양이 변하고, 반동 멈칫은 2~3프레임이라
-        // '직전 3개 전부 유사'에 도달하기 전에 투표가 끝난다.
-        var sigHist = new List<bool[]>[4]; for (int j = 0; j < 4; j++) sigHist[j] = new List<bool[]>();
-        bool SigStable(List<bool[]> hist) => hist.Count >= 3
-            && RuneArrowDetector.SigSimilar(hist[^1], hist[^2]) && RuneArrowDetector.SigSimilar(hist[^2], hist[^3]);
-        // 미확정 화살표들의 로컬 분석 한 회. 회전/정지 라우팅은 <b>글리프 각도 시계열</b>로만 판단 —
-        // 박스 안 '움직임 픽셀 수'는 배경 애니메이션(불꽃·이펙트)에 오염돼 정지 화살표를 회전으로
-        // 오분류했다(10:39 실행: 고속 모드에서 정지 화살표가 시그니처 락 경로를 영영 못 탐).
-        //  · 회전 중(최근 3스텝 단조 ≥15°/100ms, 반동 딸깍 순간을 위해 3표본 히스테리시스) → 반동 감지
-        //  · 정지 → 고속 모드에서는 로컬 시그니처 런으로 확정을 잇는다(무거운 경로가 멈추므로)
-        void LocalPass(Bitmap frame, Bitmap? prev, long now)
-        {
-            for (int j = 0; j < 4; j++)
-            {
-                if (locked[j] is not null) continue;
-                var rect = new Rectangle((int)(pos![j].X - posBox / 2.0), (int)(pos[j].Y - posBox / 2.0), posBox, posBox);
-                var la = RuneArrowDetector.AnalyzeArrowAt(frame, beforeCrop, prev, rect);
-                if (la is not { } a) continue;
-                if (a.Area >= 60)
-                {
-                    // EMA 자기보정은 앵커(줄 인식 위치) ±22px로 클램프 — 자기 글리프가 픽에서
-                    // 빠지는 프레임이 이어지면 박스가 이웃 화살표로 미끄러져 남의 방향을 잠근다
-                    // (2026-08-04 위아래위위 룬: ↓화살표 관찰점이 옆 ↑화살표로 흘러 U 오답 락).
-                    float cx = (float)(pos[j].X * 0.7 + a.Center.X * 0.3);
-                    float cy = (float)(pos[j].Y * 0.7 + a.Center.Y * 0.3);
-                    pos[j] = new PointF(
-                        Math.Clamp(cx, posAnchor![j].X - 22, posAnchor[j].X + 22),
-                        Math.Clamp(cy, posAnchor[j].Y - 22, posAnchor[j].Y + 22));
-                }
-
-                angleT[j].Add(now); angleV[j].Add(RuneAngleTracker.FixAngleFlip(angleV[j], a.AngleDeg));
-                // 플립 고착 리셋 — 교정이 교대 플립 난수에 빠지면 시계열을 비워 자가 복원.
-                // 원시 각도는 매끈해서 새로 쌓으면 즉시 정상 회전으로 돌아온다(20:57 3번 ←).
-                if (RuneAngleTracker.DerailedAngles(angleT[j], angleV[j])) { angleT[j].Clear(); angleV[j].Clear(); }
-                sigHist[j].Add(a.Sig); if (sigHist[j].Count > 4) sigHist[j].RemoveAt(0);
-                int n = angleV[j].Count;
-                if (RuneAngleTracker.IsRotating(angleT[j], angleV[j])) lastRotAt[j] = n;
-                if (n - lastRotAt[j] <= 3 && !SigStable(sigHist[j])) // 회전 중(반동 딸깍 포함) — 모양까지 변할 때만
-                {
-                    RuneAngleTracker.TryDetectRecoil(j, angleT[j], angleV[j], recoilVotes, ref lockedCount, locked);
-                    rotatingSeen = true;
-                }
-                else
-                {
-                    // 정지 확정 — 로컬 시그니처 런. 무거운 줄 경로와 상시 병행(독립 런 상태) —
-                    // 줄 인식이 흔들리는 맵에서 정지 화살표가 굶는 것 방지(10:39 4정지 실패).
-                    if (lRunSig[j] is not null && lRunDir[j] == a.Dir && RuneArrowDetector.SigSimilar(lRunSig[j], a.Sig))
-                    {
-                        lRunLen[j]++;
-                        if (lRunLen[j] >= LockRun && now - lRunStart[j] >= LockSpanMs && RuneAngleTracker.AxisStable(angleV[j])
-                            // 경로 충돌 보류 — 무거운 줄 경로의 신선한(≤600ms)·같은 글리프(±24px)
-                            // 판독과 방향이 다르면 이 프레임엔 잠그지 않는다. 일치하거나 무거운
-                            // 경로가 먼저 잠그면 확정. 위치가 다르면 다른 걸 본 것이라 비교 무의미.
-                            && !(now - heavyDirAt[j] <= 600 && Math.Abs(heavyX[j] - pos[j].X) <= 24 && heavyDir[j] != lRunDir[j]))
-                        { locked[j] = lRunDir[j]; lockedCount++; }
-                    }
-                    else { lRunSig[j] = a.Sig; lRunDir[j] = a.Dir; lRunLen[j] = 1; lRunStart[j] = now; }
-                }
-            }
-        }
-
-        // 3잠금 + 1잡 슬롯 재배치(사용자 검수 2026-08-04) — 22:34 실전: 1번 화살표가 폭포 빛줄기
-        // 위에서 30px 조각으로 침식돼 크기 게이트(≤5배)에 조합이 죽고, 우측 잡블롭이 낀 '한 칸
-        // 밀린 줄'(간격 균일이라 에지 보정 미발동)이 채택 → 관측점 3개는 진짜 화살표(정상 잠금),
-        // 1개는 잡영역(난수 미확정) → 3/4 실패. 잠긴 3개의 간격이 균일하면 남은 화살표는 그 줄의
-        // 왼쪽 또는 오른쪽 한 칸 외삽 위치에 있다 — 양쪽을 로컬 글리프로 탐침해 있는 쪽으로 관측점
-        // 을 옮기고 상태를 리셋해 재관찰한다. 실패해도 인식 실패 종료라 오답 위험은 없다.
-        bool relocated = false;
-        void TryRelocateStarvedSlot(Bitmap frame, long now)
-        {
-            if (relocated || lockedCount != 3 || pos is null || now < 2200) return;
-            int starved = -1;
-            for (int j = 0; j < 4; j++) if (locked[j] is null) starved = j;
-            // 반동 표가 쌓였거나 최근까지 회전 중이면 진짜 회전 화살표 관찰 중 — 옮기면 안 된다
-            for (int c = 0; c < 4; c++) if (recoilVotes[starved, c] > 0) return;
-            if (angleV[starved].Count > 0 && angleV[starved].Count - lastRotAt[starved] <= 3) return;
-            var lx = Enumerable.Range(0, 4).Where(j => j != starved).Select(j => pos[j].X).OrderBy(x => x).ToArray();
-            double g1 = lx[1] - lx[0], g2 = lx[2] - lx[1];
-            if (Math.Max(g1, g2) > Math.Min(g1, g2) * 1.35) return; // 잠긴 3개가 등간격일 때만
-            float m = (float)((g1 + g2) / 2);
-            if (m < 40 || m > 170) return; // 간격 상식 범위(실측 49~136px)
-            float py = Enumerable.Range(0, 4).Where(j => j != starved).Average(j => pos[j].Y);
-            (PointF P, int Area) Probe(float px)
-            {
-                if (px < posBox / 2f || px > frame.Width - posBox / 2f) return (default, 0);
-                var r = new Rectangle((int)(px - posBox / 2.0), (int)(py - posBox / 2.0), posBox, posBox);
-                var la = RuneArrowDetector.AnalyzeArrowAt(frame, beforeCrop, null, r);
-                return (new PointF(px, py), la?.Area ?? 0);
-            }
-            var left = Probe(lx[0] - m); var right = Probe(lx[2] + m);
-            var pick = left.Area >= right.Area ? left : right;
-            if (pick.Area < 40) return; // 침식 조각(실측 a30)도 로컬 추출로는 이보다 크게 잡힌다
-            Note($"슬롯 재배치 — 미확정 관측점({pos[starved].X:F0},{pos[starved].Y:F0})을 잠긴 줄 외삽 위치({pick.P.X:F0},{pick.P.Y:F0})로 이동해 재관찰");
-            pos[starved] = pick.P; posAnchor![starved] = pick.P;
-            angleT[starved].Clear(); angleV[starved].Clear(); sigHist[starved].Clear();
-            lRunSig[starved] = null!; lRunLen[starved] = 0;
-            runSig[starved] = null!; runLen[starved] = 0;
-            lastRotAt[starved] = -999; heavyDirAt[starved] = -9999;
-            relocated = true;
-            // 재관찰 시간 확보 — 정지 잠금은 3표본+250ms면 된다. 사용자 지정 4초에 구제 여유만
-            // 최소로 얹는다(최대 5초).
-            budgetMs = Math.Min(5000, Math.Max(budgetMs, (int)now + 1000));
-        }
-
-        // 줄 채택 + 재선출 — 게이트 통과 줄을 즉시 채택하되, 초반 2.5초 안에 '더 강한 줄'
-        // (면적 합 1.4배↑, 위치 28px↑ 상이)이 보이면 관측 위치를 교체한다. 이 룬 UI는 글리프
-        // 간격이 균일하지 않아(17:52 실측 97/136/49) 기하 게이트만으로 잡줄을 다 못 막는다 —
-        // 몹 파편 줄이 먼저 잡혀 관측점이 몹 몸통에 앉는 사고(17:36·17:52 카르시온)를 복구.
-        // 교체된 화살표는 각도·시그니처·투표·잠금을 전부 리셋(다른 지점의 기록은 무효).
-        double adoptedRowArea = 0;
-        void AdoptRow(List<ArrowSample> row)
-        {
-            double area = row.Sum(x => (double)x.Area);
-            if (pos is null)
-            {
-                pos = row.Select(x => x.Center).ToArray(); posAnchor = (PointF[])pos.Clone();
-                adoptedRowArea = area;
-                return;
-            }
-            // 잠금 보호 — 이미 잠긴 슬롯이 생겼으면 관측 위치를 옮기지 않는다(사용자 검수 2026-08-04).
-            // 20:38 실전: 0.72초에 진짜 줄(476/594/682/752)을 잡았는데 0.18초 뒤 이펙트 병합
-            // 비대 블롭(a1624)+이펙트 조각(a579) 잡줄이 면적 1.8배로 재선출을 통과해 줄을 뺏었고,
-            // 2·3번 관측점이 같은 화살표로 미끄러져 오답(↓→→↓)을 입력했다. 잠금은 '그 자리가
-            // 진짜 글리프'라는 가장 강한 증거다 — 잡 관측점은 난수 각도라 축 안정을 통과하지 못한다.
-            if (lockedCount > 0 || sw.ElapsedMilliseconds >= 2500 || area < adoptedRowArea * 1.4) return;
-            bool Moved(int j) => Math.Abs(row[j].Center.X - posAnchor![j].X) > 28
-                              || Math.Abs(row[j].Center.Y - posAnchor[j].Y) > 28;
-            if (!Enumerable.Range(0, 4).Any(Moved)) { adoptedRowArea = Math.Max(adoptedRowArea, area); return; }
-            for (int j = 0; j < 4; j++)
-            {
-                bool moved = Moved(j);
-                pos![j] = row[j].Center; posAnchor![j] = row[j].Center;
-                if (!moved) continue;
-                if (locked[j] is not null) { locked[j] = null; lockedCount--; }
-                angleT[j].Clear(); angleV[j].Clear(); sigHist[j].Clear();
-                lRunSig[j] = null!; lRunLen[j] = 0;
-                runSig[j] = null!; runLen[j] = 0;
-                for (int c = 0; c < 4; c++) recoilVotes[j, c] = 0;
-                lastRotAt[j] = -999;
-            }
-            adoptedRowArea = area;
-            Note($"줄 재선출 — 더 강한 화살표 줄로 관측 위치 교체: {string.Join(" ", row.Select(p => $"({p.Center.X:0},{p.Center.Y:0})"))}");
-        }
-
+        Bitmap? prevFast = null;       // 고속 모드의 직전 틱 프레임(진단 MovingPx용)
+        int fastTick = 0;              // 고속 모드 틱 카운터 — 주기적 줄 재선출 체크용
         try
         {
-            while (sw.ElapsedMilliseconds < budgetMs && lockedCount < 4)
+            while (sw.ElapsedMilliseconds < solver.BudgetMs && solver.LockedCount < 4)
             {
                 ct.ThrowIfCancellationRequested();
 
-                // 고속 모드 — 회전이 판정되면 무거운 줄 인식은 끄고 로컬 분석만 50ms 주기로 돈다
-                // (캡처 ~15ms + 로컬 4개 ~8ms라 주기 유지 가능; 반동은 순간이라 촘촘함이 생명)
-                if (fastMode)
+                if (solver.FastMode)
                 {
                     long tickStart = sw.ElapsedMilliseconds;
                     Bitmap? ff = null;
@@ -1096,19 +911,14 @@ public sealed class PositionWatcher : IDisposable
                     {
                         try
                         {
-                            LocalPass(ff, prevFast, sw.ElapsedMilliseconds);
-                            TryRelocateStarvedSlot(ff, sw.ElapsedMilliseconds);
+                            solver.StepLocal(ff, prevFast, sw.ElapsedMilliseconds);
+                            solver.TryRelocate(ff, sw.ElapsedMilliseconds);
                             RecordStrip(ff);
                             if (_runeShots.Count < 4) _runeShots.Add(ff);
                             // 잘못 채택된 줄의 복구 기회 — 8틱(~0.4초)마다 무거운 줄 인식을 끼워
-                            // 더 강한 줄이 보이면 재선출. 정지 퍼즐이 잡줄 관측점의 난수 각도로
-                            // '가짜 회전' 판정돼 고속 모드에 갇히면 무거운 경로가 영영 안 돌아
-                            // 재선출 기회가 없던 문제(17:52 카르시온 3/4 실패).
+                            // 더 강한 줄이 보이면 재선출(솔버 StepHeavyRow 주석 참조).
                             if (++fastTick % 8 == 0 && sw.ElapsedMilliseconds < 2500)
-                            {
-                                var row2 = RuneArrowDetector.AnalyzeFrame(ff, win, beforeCrop, precropped: true);
-                                if (row2 is not null) AdoptRow(row2);
-                            }
+                                solver.StepHeavyRow(ff, win, () => sw.ElapsedMilliseconds);
                         }
                         finally
                         {
@@ -1117,8 +927,8 @@ public sealed class PositionWatcher : IDisposable
                             prevFast = ff;
                         }
                     }
-                    long wait = FastTickMs - (sw.ElapsedMilliseconds - tickStart);
-                    if (lockedCount < 4 && wait > 0) await PreciseDelay.WaitAsync((int)wait, ct).ConfigureAwait(false);
+                    long wait = RunePuzzleSolver.FastTickMs - (sw.ElapsedMilliseconds - tickStart);
+                    if (solver.LockedCount < 4 && wait > 0) await PreciseDelay.WaitAsync((int)wait, ct).ConfigureAwait(false);
                     continue;
                 }
 
@@ -1126,69 +936,9 @@ public sealed class PositionWatcher : IDisposable
                 try { f = ScreenCapture.Capture(screenCrop); } catch { /* 일시적 캡처 실패 */ }
                 if (f is not null)
                 {
-                    List<ArrowSample>? row = null;
                     // finally로 f의 소유권을 win/_runeShots에 반드시 넘긴다 — 분석이 예외를 던져도
                     // (캡처 자원 고갈 등) f가 리스트 어딘가에 있어 정리 경로에서 dispose된다
-                    try
-                    {
-                        row = RuneArrowDetector.AnalyzeFrame(f, win, beforeCrop, precropped: true);
-                        long now = sw.ElapsedMilliseconds;
-
-                        if (row is not null)
-                        {
-                            rowSeen = true;
-                            for (int j = 0; j < 4; j++)
-                            {
-                                centers[j] = row[j].Center;
-                                heavyDir[j] = row[j].Dir; heavyDirAt[j] = now; heavyX[j] = row[j].Center.X; // 로컬 잠금 충돌 보류 기준
-                                if (locked[j] is not null) continue;
-                                // 정지 확정: '런 시작' 모양·방향이 계속 같아야 함
-                                if (runSig[j] is not null && runDir[j] == row[j].Dir
-                                    && RuneArrowDetector.SigSimilar(runSig[j], row[j].Sig))
-                                {
-                                    runLen[j]++;
-                                    if (runLen[j] >= LockRun && now - runStart[j] >= LockSpanMs) { locked[j] = runDir[j]; lockedCount++; }
-                                }
-                                else { runSig[j] = row[j].Sig; runDir[j] = row[j].Dir; runLen[j] = 1; runStart[j] = now; }
-                            }
-                        }
-
-                        // 위치 — 줄 게이트 통과한 첫 줄 즉시 채택(스페이스+100ms부터 화살표가 떠 있다는
-                        // 전제, 사용자 지정 2026-08-04) + 더 강한 줄이 보이면 재선출(AdoptRow 주석 참조).
-                        if (row is not null) AdoptRow(row);
-                        // 부분 줄 보완 — 화살표 하나가 배경과 병합 소실되면 4개 줄이 영영 안 잡힌다
-                        // (14:46 보라맵). 0.9초까지 줄이 없으면 3개+외삽으로 위치만 확보하고,
-                        // 방향·잠금은 로컬 관찰에 맡긴다.
-                        if (pos is null && row is null && sw.ElapsedMilliseconds > 900)
-                        {
-                            var pp = RuneArrowDetector.TryPartialRow(f, beforeCrop, precropped: true);
-                            if (pp is { Length: 4 })
-                            {
-                                pos = pp; posAnchor = (PointF[])pp.Clone();
-                                Note($"부분 줄 보완 — 3개+외삽으로 위치 확보: {string.Join(" ", pp.Select(p => $"({p.X:0},{p.Y:0})"))}");
-                            }
-                        }
-
-                        // 로컬 추적 — 위치가 고정된 뒤: 회전 화살표의 각도 시계열 + 반동 감지.
-                        // 로컬 블롭 중심으로 위치를 서서히 보정(회전 핵 어긋남 수렴).
-                        if (pos is not null) LocalPass(f, win.Count > 0 ? win[^1] : null, now);
-                        if (pos is not null) TryRelocateStarvedSlot(f, now);
-
-                        // 회전 판정(초반 1초 내 각도 진행 감지) → 고속 모드 전환 + 예산 연장
-                        if (!fastMode && rotatingSeen && pos is not null)
-                        {
-                            fastMode = true; spinNoted = true;
-                            budgetMs = Math.Max(budgetMs, RotatingBudgetMs);
-                            Note($"회전 감지 — {FastTickMs}ms 간격 고속 관찰로 반동을 추적합니다(최대 4초)");
-                        }
-                        else if (!spinNoted && sw.ElapsedMilliseconds > 800 && lockedCount < 4)
-                        {
-                            spinNoted = true;
-                            // 각도 기반 판정이 못 잡았어도(위치 미확보 등) 확정이 늦으면 예산은 늘린다
-                            budgetMs = Math.Max(budgetMs, RotatingBudgetMs);
-                            Note("화살표 회전 감지 — 반동(격발) 방향을 관찰합니다(최대 4초)");
-                        }
-                    }
+                    try { solver.StepFrame(f, win, () => sw.ElapsedMilliseconds); }
                     finally
                     {
                         if (_runeShots.Count < 4) _runeShots.Add(f); // 진단 보관(첫 4프레임)
@@ -1201,20 +951,19 @@ public sealed class PositionWatcher : IDisposable
                         }
                     }
                 }
-                // 고속 회전(1바퀴 <1초, 사용자 확인) 대응 — 위치 고정 후에는 무거운 줄 인식 사이에
-                // 가벼운 로컬 샘플을 한 번 더 끼워 각도 샘플링을 ~2배 조밀하게 만든다(반동 포착률↑)
-                if (pos is not null && lockedCount < 4 && sw.ElapsedMilliseconds < budgetMs)
+                // 위치 고정 후 중간 로컬 표본 1회 — 각도 샘플링 ~2배 조밀화(반동 포착률↑)
+                if (solver.PosAcquired && solver.LockedCount < 4 && sw.ElapsedMilliseconds < solver.BudgetMs)
                 {
                     await PreciseDelay.WaitAsync(35, ct).ConfigureAwait(false);
                     Bitmap? f2 = null;
                     try { f2 = ScreenCapture.Capture(screenCrop); } catch { /* 일시적 캡처 실패 */ }
                     if (f2 is not null)
                     {
-                        try { LocalPass(f2, win.Count > 0 ? win[^1] : null, sw.ElapsedMilliseconds); RecordStrip(f2); }
+                        try { solver.StepLocal(f2, win.Count > 0 ? win[^1] : null, sw.ElapsedMilliseconds); RecordStrip(f2); }
                         finally { f2.Dispose(); }
                     }
                 }
-                if (lockedCount < 4) await PreciseDelay.WaitAsync(PuzzleSampleGapMs, ct).ConfigureAwait(false);
+                if (solver.LockedCount < 4) await PreciseDelay.WaitAsync(RunePuzzleSolver.PuzzleSampleGapMs, ct).ConfigureAwait(false);
             }
         }
         finally
@@ -1222,61 +971,11 @@ public sealed class PositionWatcher : IDisposable
             foreach (var b in win) if (!_runeShots.Contains(b)) b.Dispose();
             if (prevFast is not null && !_runeShots.Contains(prevFast)) prevFast.Dispose();
         }
-        // 실패 트레이스 — 화살표별 잠금·반동 투표·각도 시계열을 logs\rune-solve.txt로 남긴다
-        // (스트립 이미지 없이도 '반동 미관측'의 원인 — 투표 분산·각도 노이즈·표본 공백 — 을 즉시 판독).
-        void DumpSolveTrace(string why)
-        {
-            try
-            {
-                var sb = new System.Text.StringBuilder();
-                sb.AppendLine($"{DateTime.Now:HH:mm:ss.fff} 퍼즐 판정({why}) t={sw.ElapsedMilliseconds}ms lock={lockedCount}/4 회전관측={rotatingSeen} 고속={fastMode} pos={(pos is null ? "미확보" : "고정")}");
-                for (int j = 0; j < 4; j++)
-                {
-                    sb.Append($"[{j}] lock={locked[j]?.ToString() ?? "?"} 투표 R:{recoilVotes[j, 0]} U:{recoilVotes[j, 1]} L:{recoilVotes[j, 2]} D:{recoilVotes[j, 3]}");
-                    if (pos is not null) sb.Append($" pos=({pos[j].X:F0},{pos[j].Y:F0})");
-                    sb.AppendLine();
-                    var t = angleT[j]; var v = angleV[j];
-                    sb.Append("    ");
-                    for (int k = Math.Max(0, v.Count - 60); k < v.Count; k++) sb.Append($"{t[k]:F0}:{v[k]:F0}° ");
-                    sb.AppendLine();
-                }
-                FileLog.SaveText("rune-solve", sb.ToString());
-            }
-            catch { /* 진단 저장 실패 무시 */ }
-        }
-
-        if (!rowSeen && pos is null) { DumpSolveTrace("줄 미인식"); Note("퍼즐 인식 실패 — 화살표 줄을 찾지 못함"); return null; }
-        // 4개 전부 확정될 때만 입력한다 — 회전 중 표본의 다수결은 추측이라 오답이 된다
-        // (00:41 실행: 멈춤 3/4 + 다수결 1 → ↑ ↑ ↑ ← 오답 입력). 미달이면 재발동으로 재관찰.
-        if (lockedCount < 4)
-        {
-            DumpSolveTrace("반동 미관측");
-            Note($"퍼즐 확정 실패 — {lockedCount}/4뿐(반동 미관측), 재발동 대기");
-            return null;
-        }
-
-        // 중복 관측 안전장치(사용자 검수 2026-08-04) — 두 슬롯이 같은 화살표를 읽으면 4/4여도
-        // 오답이다(20:38 실전: 잡줄 재선출로 2·3번 관측점이 15px 간격 → 같은 →를 두 번 입력,
-        // 4번째 화살표는 미관측). 오답 입력은 룬 소실+쿨다운이라 인식 실패 종료가 항상 낫다.
-        if (pos is not null)
-            for (int i = 0; i < 4; i++)
-                for (int j = i + 1; j < 4; j++)
-                    if (Math.Abs(pos[i].X - pos[j].X) < MinSlotSepPx && Math.Abs(pos[i].Y - pos[j].Y) < MinSlotSepPx)
-                    {
-                        DumpSolveTrace($"중복 관측 슬롯{i + 1}·{j + 1}");
-                        Note($"퍼즐 확정 무효 — 슬롯 {i + 1}·{j + 1} 관측점 겹침({pos[i].X:F0},{pos[i].Y:F0} vs {pos[j].X:F0},{pos[j].Y:F0}), 오답 입력 방지 종료");
-                        return null;
-                    }
-
-        // 입력 순서는 관측점 X좌표 순 — 슬롯 재배치로 인덱스 순서와 좌우 순서가 어긋날 수 있다
-        // (평상시엔 줄 채택이 좌→우 정렬이라 정렬해도 동일).
-        var order = Enumerable.Range(0, 4).ToList();
-        if (pos is not null) order.Sort((i1, i2) => pos[i1].X.CompareTo(pos[i2].X));
-        var result = new List<RuneArrow>(4);
-        foreach (int j in order) result.Add(new RuneArrow(centers[j], locked[j]!.Value));
-        DumpSolveTrace("확정 4/4"); // 성공 판정도 트레이스를 남긴다 — 오확정 사후 분석용(사용자 지시 2026-08-04)
-        Note($"퍼즐 확정 — 4/4{(spinNoted ? " (회전 포함)" : "")}");
-        return result;
+        var arrows = solver.Confirm(out string traceWhy, out string noteMsg);
+        try { FileLog.SaveText("rune-solve", solver.BuildTrace(traceWhy, sw.ElapsedMilliseconds)); }
+        catch { /* 진단 저장 실패 무시 */ }
+        Note(noteMsg);
+        return arrows;
     }
 
     /// <summary>마지막 판정 버스트를 logs\rune-frame-N.png·rune-puzzle.png로 저장(오답·실패 재현용,
