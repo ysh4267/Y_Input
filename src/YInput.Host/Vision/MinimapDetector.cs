@@ -162,6 +162,12 @@ internal static class MinimapDetector
             }
             int bw = maxX - minX + 1, bh = maxY - minY + 1;
             if (count < RuneMinBlobArea || count > RuneMaxBlobArea || bw > RuneMaxBlobBox || bh > RuneMaxBlobBox) continue;
+            // 모양 게이트 — 룬은 다이아(◆)라 바운딩박스의 절반만 채운다(≈0.5). 꽉 찬 원(≈0.79)·
+            // 사각(≈1.0)인 보라 계열 NPC 마커가 색만으로 통과해 NPC에게 말을 걸었다(08-04 보고).
+            // 침식된 작은 코어(면적<15)는 모양 판정이 무의미해 통과시킨다.
+            double fill = count / (double)(bw * bh);
+            if (count >= 15 && fill > 0.68) continue;
+            if (Math.Max(bw, bh) > Math.Min(bw, bh) * 2.2) continue; // 길쭉한 덩어리(장식·라벨) 배제
             var c = new PointF((float)sumX / count + ox, (float)sumY / count + oy);
             if (count > bestScore) { bestScore = count; best = c; }
         }

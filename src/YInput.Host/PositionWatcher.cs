@@ -802,12 +802,25 @@ public sealed class PositionWatcher : IDisposable
     }
 
     /// <summary>미니맵 영역에서 룬(보라 다이아) 아이콘 위치(미니맵 상대). 없으면 null.
-    /// 룬 사용 시작 시 1회만 호출된다 — 이후에는 갱신하지 않는다.</summary>
+    /// 룬 사용 시작 시 1회만 호출된다 — 이후에는 갱신하지 않는다.
+    /// 측정 시점의 미니맵 크롭을 logs\rune-minimap.png로 남긴다 — 오탐(색이 비슷한 NPC 마커를
+    /// 룬으로 판정해 말을 걸었던 08-04 사례)·미탐 진단은 이 크롭으로만 가능하다.</summary>
     private PointF? MeasureRune(WatcherSettings s, Rectangle mini)
     {
         using var frame = CaptureGameFrame(s.Process, out _);
         if (frame is null) return null;
-        return MinimapDetector.FindRuneIcon(frame, mini);
+        var rune = MinimapDetector.FindRuneIcon(frame, mini);
+        try
+        {
+            var crop = Rectangle.Intersect(mini, new Rectangle(0, 0, frame.Width, frame.Height));
+            if (crop.Width > 0 && crop.Height > 0)
+            {
+                using var mc = frame.Clone(crop, frame.PixelFormat);
+                FileLog.SavePng("rune-minimap", ScreenCapture.ToPng(mc));
+            }
+        }
+        catch { /* 진단 저장 실패 무시 */ }
+        return rune;
     }
 
     private readonly List<Bitmap> _runeShots = new(); // 마지막 판정 버스트 프레임 — 진단 저장은 판정 뒤로 미룬다
