@@ -1,0 +1,269 @@
+using System.Drawing;
+using System.Drawing.Imaging;
+
+namespace YInput.Host.Vision;
+
+/// <summary>줄 선택 — 후보 블롭들에서 화살표 4개 줄을 고르는 기하·점수 로직(partial).
+/// 밴드 기하, 줄 조합 점수화(PickRow), 에지 슬롯 외삽 교체, 부분 줄 보완.</summary>
+internal static partial class RuneArrowDetector
+{
+                                           // sat 80~120대)까지 지우고 순수 무지개 글리프(sat 150+)만 남긴다.
+                                           // 10:14 실행: sat80으로는 수정 홍수가 회전 글리프를 삼켰다
+    private const double BannerWideFrac = 0.30; // 안내 배너 판정: 가로 이 비율 이상 변한 행
+    private const int BannerMinRows = 6;        // 그런 행이 연속 이만큼 = 배너
+
+    private const int MinArrowArea = 30, MaxArrowArea = 2500; // 하한은 반투명 합성으로 작아진 코어 기준
+    private const int MinArrowBox = 8, MaxArrowBox = 70;
+    private const int RowBandPx = 22;    // 같은 줄(4개 나열) 판정 Y 허용폭
+    private const int MinGapPx = 50, MaxGapPx = 280; // 화살표 이웃 간격 상식 범위(실측 85~125px) —
+
+                                                     // 데미지 숫자·배너 글자 조각(13~35px) 배제
+    // 줄 선택 게이트 공용 상수(PickRow·TryPartialRow) — 실측 근거는 사용처 주석 참조.
+    private const double GapFracLo = 0.040, GapFracHi = 0.145; // 이웃 간격 창폭 비례 상식 범위(실측 49~136px = 0.046~0.126W)
+    private const double GapRatioHardMax = 3.5;                // 간격 균일비 순수 상식 상한(실측 최대 2.78 — 카르시온 97/136/49)
+    private const double GapRatioSoftW = 0.35;                 // 소프트 균일비 페널티 가중(면적 합 대비) —
+                                                               // DDRD 잡줄(비 1.94, 면적 우세)은 지고
+                                                               // 카르시온 진짜 줄(비 2.78, 면적 4배)은 이기는 창(0.3~0.4)
+    private const double RowFracLo = 0.03, RowFracHi = 0.85;   // 후보 y 밴드 구간. 하한 0.20→0.03(22:19 실전):
+                                                               // 필 y도 룬 월드 좌표를 따라 움직여 화살표가 창높이
+                                                               // 29.3%(밴드 8.9%)까지 올라온다 — 0.20 컷이 진짜 줄을
+                                                               // 후보에서 제거해 몹 잡줄(y~260) 채택 → 3/4 실패.
+                                                               // 0.20의 원목적(14:13 배너 하단 반짝이 잡줄)은 현재
+                                                               // 면적 경쟁·박스 벌점이 점수로 막는다(DDRD 재검증).
+    // 에지 슬롯 간격 외삽 교체(PickRow 후처리) — 20:19 실전: 침식 보라(a263)+병합 비대(a1347)가
+    // 한 줄에 공존하면 크기 게이트·면적 경쟁이 진짜 줄에 불리해져 끝 슬롯을 잡블롭(버섯 a783,
+    // 간격 161)이 차지했다. 나머지 두 간격이 균일(92/97)할 때만 외삽 위치의 실존 후보로 교체.
+    private const double EdgeGapSuspectMin = 1.5; // 에지 간격 ≥ 내부 균일 간격 평균 × 이 값 → 의심(실측 161/94.5=1.70)
+    private const double EdgeGapUniformMax = 1.3; // '나머지 두 간격 균일' 상한 — 카르시온2 97/49(비 1.98)는 미발동
+    private const int EdgeRepairTolPx = 25;       // 외삽 위치 허용 오차(실측: 후보 711 vs 외삽 722.5 = 11.5px)
+
+    /// <summary>부분 줄 보완 — 화살표 하나가 배경(몬스터 발광 등)과 병합되어 후보에서 사라지면
+    /// 4개 줄이 영영 안 잡힌다(2026-08-04 14:46 보라맵: ↓화살표가 병합 소실 → 3회 시도 전부
+    /// 줄 실패). 게이트를 통과하는 3개 조합을 찾아 빠진 슬롯을 간격 외삽으로 채워 '위치만'
+    /// 반환한다 — 방향·잠금은 이후 로컬 관찰(AnalyzeArrowAt 폴백 체인)이 해결한다.
+    /// 한쪽 간격이 다른 쪽의 ~2배면 내부 슬롯 누락, 아니면 좌·우 끝 중 로컬 블롭이 있는 쪽.</summary>
+    internal static PointF[]? TryPartialRow(Bitmap frame, Bitmap? beforeRef, bool precropped)
+    {
+        if (!TryRegion(frame, precropped, out var region)) return null;
+        int w = region.Width, h = region.Height;
+        var mask = VividMask(frame, region, w, h, requireWarm: false);
+        if (beforeRef is not null && beforeRef.Width == frame.Width && beforeRef.Height == frame.Height)
+        {
+            var fresh = new bool[w * h];
+            AccumulateDiff(beforeRef, frame, region, w, h, DiffMin, fresh);
+            for (int i = 0; i < mask.Length; i++) mask[i] &= fresh[i];
+        }
+        ThinFilter(mask, w, h);
+        var (bandY0, bandY1, _) = BannerBand(w, h, (int)(h / (RegionY1 - RegionY0)));
+        double rowY0 = bandY0 + RowFracLo * (bandY1 - bandY0), rowY1 = bandY0 + RowFracHi * (bandY1 - bandY0);
+        var cands = MergeNear(FindBlobs(mask, w, h)).Where(b =>
+            b.Area is >= MinArrowArea and <= MaxArrowArea &&
+            b.W is >= MinArrowBox and <= MaxArrowBox && b.H is >= MinArrowBox and <= MaxArrowBox &&
+            b.Cy >= rowY0 && b.Cy <= rowY1).OrderBy(b => b.Cx).ToList();
+        double gLo = frame.Width * GapFracLo, gHi = frame.Width * GapFracHi; // PickRow와 동일 상수
+        List<Blob>? best = null; double bestScore = double.MinValue;
+        for (int a = 0; a < cands.Count - 2; a++)
+            for (int b2 = a + 1; b2 < cands.Count - 1; b2++)
+                for (int c = b2 + 1; c < cands.Count; c++)
+                {
+                    var t3 = new[] { cands[a], cands[b2], cands[c] };
+                    if (t3.Max(x => x.Cy) - t3.Min(x => x.Cy) > RowBandPx) continue;
+                    double g1 = t3[1].Cx - t3[0].Cx, g2 = t3[2].Cx - t3[1].Cx;
+                    // 각 간격은 1슬롯(범위 내) 또는 2슬롯(내부 누락, 범위의 2배) 허용
+                    bool ok1 = g1 >= gLo && g1 <= gHi, ok2 = g2 >= gLo && g2 <= gHi;
+                    bool dbl1 = g1 >= gLo * 2 && g1 <= gHi * 2, dbl2 = g2 >= gLo * 2 && g2 <= gHi * 2;
+                    if (!((ok1 && ok2) || (ok1 && dbl2) || (dbl1 && ok2))) continue;
+                    int aMin = t3.Min(x => x.Area), aMax = t3.Max(x => x.Area);
+                    if (aMax > aMin * 5) continue;
+                    double score = t3.Sum(x => (double)x.Area);
+                    if (score > bestScore) { bestScore = score; best = t3.ToList(); }
+                }
+        if (best is null) return null;
+        double bg1 = best[1].Cx - best[0].Cx, bg2 = best[2].Cx - best[1].Cx;
+        double yAvg = best.Average(x => x.Cy);
+        var xs = new List<double> { best[0].Cx, best[1].Cx, best[2].Cx };
+        if (bg1 > gHi) xs.Insert(1, best[0].Cx + bg1 / 2);          // 내부 누락(왼쪽 간격이 2슬롯)
+        else if (bg2 > gHi) xs.Insert(2, best[1].Cx + bg2 / 2);     // 내부 누락(오른쪽 간격이 2슬롯)
+        else
+        {
+            // 끝 슬롯 누락 — 좌/우 외삽 중 로컬 글리프가 실제로 잡히는 쪽을 채택
+            double gapAvg = (bg1 + bg2) / 2;
+            double leftX = best[0].Cx - gapAvg, rightX = best[2].Cx + gapAvg;
+            bool leftOk = leftX - 20 >= 0, rightOk = rightX + 20 < w;
+            bool leftHit = false, rightHit = false;
+            if (leftOk)
+                leftHit = AnalyzeArrowAt(frame, beforeRef, null,
+                    new Rectangle(region.X + (int)leftX - 32, region.Y + (int)yAvg - 32, 64, 64)) is not null;
+            if (rightOk)
+                rightHit = AnalyzeArrowAt(frame, beforeRef, null,
+                    new Rectangle(region.X + (int)rightX - 32, region.Y + (int)yAvg - 32, 64, 64)) is not null;
+            if (leftHit || (leftOk && !rightHit)) xs.Insert(0, leftX);
+            else if (rightOk) xs.Add(rightX);
+            else return null;
+        }
+        return xs.Select(x => new PointF((float)(region.X + x), (float)(region.Y + yAvg))).ToArray();
+    }
+
+    /// <summary>마스크에서 '화살표 줄' 블롭 4개 선택(왼쪽부터). fullArea = 밴드·중심 제약 없이
+    /// 전 영역 탐색(진단 전용 — 밴드 기하가 틀리는 창 크기를 확인할 때). 실패 시 null.</summary>
+    private static List<Blob>? DetectRow(Bitmap frame, Bitmap? bannerRef, bool[] mask, Rectangle region, int w, int h, bool thinFilter, int fullFrameH, bool fullArea = false)
+    {
+        if (thinFilter) ThinFilter(mask, w, h);
+        var (bandY0, bandY1, bannerCx) = fullArea ? (0, h - 1, -1.0) : BannerBand(w, h, fullFrameH);
+
+        // 화살표 줄의 밴드 세로 위치는 맵·창마다 다르다 — 실측: 카르시온 나무줄기3 29~40%(17:36 실전:
+        // 45% 하한이 진짜 화살표 4개를 전부 걸러내 줄 구성 원천 실패), 이전 맵들 36~62%.
+        // 하한 20%는 밴드 상단 가장자리 잡블롭 줄(y 0~18% — 배너 하단 반짝이, 14:13 룬)만 차단한다.
+        double rowY0 = bandY0 + RowFracLo * (bandY1 - bandY0), rowY1 = bandY0 + RowFracHi * (bandY1 - bandY0);
+        var cands = MergeNear(FindBlobs(mask, w, h)).Where(b =>
+            b.Area is >= MinArrowArea and <= MaxArrowArea &&
+            b.W is >= MinArrowBox and <= MaxArrowBox && b.H is >= MinArrowBox and <= MaxArrowBox &&
+            b.Cy >= rowY0 && b.Cy <= rowY1).ToList();
+        var row = PickRow(cands, bannerCx, frame.Width);
+        if (DiagLog is not null)
+        {
+            DiagLog($"밴드 y{region.Y + bandY0}..{region.Y + bandY1} 중심X {(bannerCx >= 0 ? (region.X + bannerCx).ToString("0") : "-")} 후보 {cands.Count}"
+                + (row is null ? " → 줄 없음" : " → " + string.Join(" ", row.Select(b =>
+                    $"({region.X + b.Cx:0},{region.Y + b.Cy:0})a{b.Area}{ClassifyScores(b, w, frame, region).Dir}"))));
+            foreach (var b in cands.OrderBy(b => b.Cx))
+            {
+                var (dir, up, _, left, _) = ClassifyScores(b, w);
+                DiagLog($"  후보 ({region.X + b.Cx:0},{region.Y + b.Cy:0}) a{b.Area} {b.W}x{b.H} {dir} |L{left:+0.00;-0.00}|U{up:+0.00;-0.00}|");
+            }
+        }
+        return row;
+    }
+
+    /// <summary>후보들 중 '화살표 줄' 4개 선택 — 같은 높이(±RowBandPx), 이웃 간격 35~280px,
+    /// 크기 유사(최대/최소 면적 ≤5배), 배너 중심 정렬(±12% 폭). 조건을 만족하는 조합 중
+    /// '면적 합 − 박스 불균일 벌점 − 중심 이탈'이 최대인 것. 화살표 4개는 글리프 크기가 같아
+    /// 바운딩 박스가 거의 동일(22~30px)하고, 불꽃 잔광·이펙트 블롭은 박스가 튄다(34x28, 49x57 —
+    /// 01:16·00:45 실행에서 면적만으로는 정크가 진짜 화살표를 밀어냈다). 모양 비대칭은 판별자로
+    /// 못 쓴다 — 진짜 ←도 침식되면 |0.06|까지 떨어진다(00:45 sat80). 없으면 null.</summary>
+    private static List<Blob>? PickRow(List<Blob> cands, double bannerCx, int frameW)
+    {
+        if (cands.Count < 4) return null;
+        // 상위 20개 — 불타는 맵은 노이즈 블롭이 커서 14개 컷으로는 작은 화살표가 밀려났다
+        var top = cands.OrderByDescending(b => b.Area).Take(20).OrderBy(b => b.Cx).ToList();
+        int n = top.Count;
+        List<Blob>? best = null; double bestScore = double.MinValue;
+        for (int a = 0; a < n - 3; a++)
+            for (int b2 = a + 1; b2 < n - 2; b2++)
+                for (int c = b2 + 1; c < n - 1; c++)
+                    for (int d = c + 1; d < n; d++)
+                    {
+                        var combo = new[] { top[a], top[b2], top[c], top[d] };
+                        double yMin = combo.Min(x => x.Cy), yMax = combo.Max(x => x.Cy);
+                        if (yMax - yMin > RowBandPx) continue;
+                        bool gapsOk = true;
+                        double gMin = double.MaxValue, gMax = 0;
+                        // 간격은 '상식 범위'만 하드 게이트 — 이 룬 UI의 글리프 간격은 균일하지 않다.
+                        // 실측(1076px 창): 카르시온 17:52 실전 97/136/49(비 2.78!) — ←·→가 49px로
+                        // 붙어 렌더됐다. 좁은 범위·균일비 하드컷은 진짜 줄을 두 번 죽였다(17:36·17:52).
+                        // 잡줄 방어는 점수 경쟁(면적 — 진짜 화살표 a300~460 vs 파편 a50~150)과
+                        // 아래 소프트 균일비 페널티가 담당한다.
+                        double gLo = frameW * GapFracLo, gHi = frameW * GapFracHi;
+                        for (int i = 1; i < 4; i++)
+                        {
+                            double gap = combo[i].Cx - combo[i - 1].Cx;
+                            if (gap < gLo || gap > gHi) { gapsOk = false; break; }
+                            gMin = Math.Min(gMin, gap); gMax = Math.Max(gMax, gap);
+                        }
+                        if (!gapsOk || gMax > gMin * GapRatioHardMax) continue;
+                        int aMin = combo.Min(x => x.Area), aMax = combo.Max(x => x.Area);
+                        if (aMax > aMin * 5) continue; // 크기가 제각각인 묶음은 화살표 줄이 아니다
+                        double avgX = combo.Average(x => x.Cx);
+                        double centerPenalty = 0;
+                        if (bannerCx >= 0)
+                        {
+                            double off = Math.Abs(avgX - bannerCx);
+                            // 필은 창 중앙이 아니라 룬의 월드 좌표에 앵커된다 — 맵 가장자리 카메라
+                            // 클램프 시 창 중앙에서 밀린다(실측: 20:19 +2 · 20:38 +51 · 22:08 +67px,
+                            // 22:08은 0.05W=57px 게이트가 진짜 줄 ↓←→↓를 죽여 2/4 실패). 0.065W로
+                            // 완화 — 상한 실측 창: 진짜 최대 이탈 67px=0.058W(1149) < 0.065W < DLUU
+                            // 잡줄 80px=0.075W(1076)·한 칸 밀린 줄 ≈ 간격 90px=0.078W(14:04 룬).
+                            // 0.075W를 시도했더니 DLUU 잡줄이 0.45px 차로 통과해 ④가 잡줄을 채택하는
+                            // 회귀가 났다(부분 줄 보완 경로가 영영 안 돎). 중앙 근접 선호(이탈×2
+                            // 페널티)는 계속 유지.
+                            if (off > frameW * 0.065) continue;
+                            centerPenalty = off * 2;
+                        }
+                        double wRatio = combo.Max(x => x.W) / (double)combo.Min(x => x.W);
+                        double hRatio = combo.Max(x => x.H) / (double)combo.Min(x => x.H);
+                        double boxPenalty = 300 * (wRatio - 1 + hRatio - 1);
+                        double areaSum = combo.Sum(x => (double)x.Area);
+                        // 소프트 균일비 페널티(면적 비례) — 균일한 줄을 선호하되 결격은 아니다.
+                        // DDRD: 잡줄(비 1.67, 면적 우세)이 진짜 줄(비 1.08)을 하드컷 완화 때 밀어냈던
+                        // 사례의 방어를 점수로 옮긴 것. 카르시온의 진짜 줄(비 2.78)은 면적 합이
+                        // 파편 줄의 3배 이상이라 페널티를 감수하고도 이긴다.
+                        double gapPenalty = areaSum * GapRatioSoftW * (gMax / gMin - 1);
+                        double score = areaSum - centerPenalty - boxPenalty - gapPenalty;
+                        if (score > bestScore) { bestScore = score; best = combo.ToList(); }
+                    }
+        if (best is not null) RepairEdgeSlot(best, cands);
+        return best;
+    }
+
+    /// <summary>에지 슬롯 간격 외삽 교체 — 선택된 줄의 끝 슬롯(1번/4번)이 잡블롭일 때 복구.
+    /// 조건: 나머지 두 간격이 균일(비 ≤1.3)한데 에지 간격만 그 평균의 1.5배 이상 → 외삽 위치
+    /// (±25px, 줄 y밴드 유지)에 실존하는 후보가 있으면 <b>면적과 무관하게</b> 그 후보로 교체.
+    /// 근거(20:19 실전, D R D D): 진짜 줄 439/531/628/711(간격 92/97/83)의 4번 보라가 침식(a263)
+    /// +3번이 몹과 병합(a1347)돼 크기 게이트(≤5배)에서 정답 조합이 탈락(비 5.12), 대신 버섯
+    /// a783이 4번을 차지(간격 92/97/161) → 관측점 난수 각도 → 3/4 실패. 균일 간격 실존 후보는
+    /// 잡블롭보다 강한 줄 증거다. 불균일 진짜 줄(카르시온2 97/136/49 — 나머지 비 1.98)과
+    /// 정상 줄(LUUX 108/89/90 — 에지 1.2배)은 발동 조건에 걸리지 않음을 픽스처로 검증.</summary>
+    private static void RepairEdgeSlot(List<Blob> row, List<Blob> cands)
+    {
+        for (int pass = 0; pass < 2; pass++)
+        {
+            bool lastEdge = pass == 0;
+            double g1 = row[1].Cx - row[0].Cx, g2 = row[2].Cx - row[1].Cx, g3 = row[3].Cx - row[2].Cx;
+            double edge = lastEdge ? g3 : g1;
+            double oA = lastEdge ? g1 : g2, oB = lastEdge ? g2 : g3;
+            if (Math.Max(oA, oB) > Math.Min(oA, oB) * EdgeGapUniformMax) continue;
+            double m = (oA + oB) / 2;
+            if (edge < m * EdgeGapSuspectMin) continue;
+            int slot = lastEdge ? 3 : 0;
+            double expX = lastEdge ? row[2].Cx + m : row[1].Cx - m;
+            // 유지되는 3개와 y밴드를 이뤄야 한다 — 의심 에지 블롭의 y는 기준에서 제외
+            var kept = row.Where((_, i) => i != slot).ToList();
+            double kyMin = kept.Min(b => b.Cy), kyMax = kept.Max(b => b.Cy);
+            Blob? swap = null;
+            foreach (var c in cands)
+            {
+                if (row.Contains(c)) continue;
+                if (Math.Abs(c.Cx - expX) > EdgeRepairTolPx) continue;
+                if (Math.Max(kyMax, c.Cy) - Math.Min(kyMin, c.Cy) > RowBandPx) continue;
+                if (swap is null || c.Area > swap.Area) swap = c;
+            }
+            if (swap is null) continue;
+            DiagLog?.Invoke($"[에지 보정] 슬롯{slot + 1} ({row[slot].Cx:0},{row[slot].Cy:0})a{row[slot].Area} 간격 {edge:0} → "
+                + $"외삽 {expX:0}±{EdgeRepairTolPx}의 ({swap.Cx:0},{swap.Cy:0})a{swap.Area}로 교체");
+            row[slot] = swap;
+        }
+    }
+
+    /// <summary>화살표 탐색 밴드 — <b>창 기준 고정 기하</b>. 룬 퍼즐 UI는 창 기준 고정 위치다
+    /// (실측 두 맵 동일: 배너 띠 상단 ≈ 창높이 20%, 안내 텍스트 ≈ 23~27%, 화살표 줄 ≈ 29.5~33%).
+    /// 발동 전 차분·어두워짐으로 배너를 '탐지'하는 방식은 불타는 맵에서 세 번 다르게 실패했다
+    /// (첫 행 오검출 → 불꽃 노이즈 / 피크 앵커 → 불꽃이 사라진 자리 어두워짐이 배너보다 큼) —
+    /// 배경과 무관한 고정 밴드가 유일하게 안정적이다. 텍스트 글리프(≤27%)는 밴드 밖.
+    /// CenterX = 탐색 영역 가로 중앙(퍼즐 UI는 창 중앙 정렬 — 우측 팝업 줄 배제용).</summary>
+    private const double ArrowBandTopFrac = 0.28, ArrowBandBotFrac = 0.42;
+
+    private static (int Y0, int Y1, double CenterX) BannerBand(int w, int h, int fullFrameH)
+    {
+        int offset = (int)(RegionY0 * fullFrameH); // 탐색 영역 상단의 창 기준 y (크롭·전체 프레임 공통)
+        int y0 = Math.Clamp((int)(ArrowBandTopFrac * fullFrameH) - offset, 0, h - 1);
+        int y1 = Math.Clamp((int)(ArrowBandBotFrac * fullFrameH) - offset, y0, h - 1);
+        return (y0, y1, w / 2.0);
+    }
+
+    /// <summary>퍼즐 영역 크롭 안에서 화살표 밴드가 차지하는 사각형 — 실패 진단 녹화(스트립)용.</summary>
+    public static Rectangle ArrowBandRect(int cropW, int cropH)
+    {
+        int fullH = (int)(cropH / (RegionY1 - RegionY0));
+        var (y0, y1, _) = BannerBand(cropW, cropH, fullH);
+        return new Rectangle(0, y0, cropW, Math.Max(1, y1 - y0));
+    }
+}
