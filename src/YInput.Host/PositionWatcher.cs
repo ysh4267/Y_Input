@@ -496,14 +496,15 @@ public sealed class PositionWatcher : IDisposable
     private enum Walk { Arrived, Timeout, LostDot, NotForeground }
 
     /// <summary>미니맵 X 목표까지 좌우 이동 — 연속 홀드 + 홀드 중 폴링(도착 직전/지나침에 뗌) +
-    /// 멀면(>FlashJumpMinDx) Alt 따닥 더블점프 도약 + 감쇠 리바운드(220→132→79→50ms) +
+    /// 멀면(>FlashJumpMinDx) Alt 따닥 더블점프 도약 + 남은 거리 비례 5단계 리바운드
+    /// (≥6px 280 / ≥4px 220 / ≥2.5px 160 / ≥1.5px 110 / 그 외 70ms) +
     /// 뗀 뒤 SettleMs 대기 후 재측정. 위치 보정·룬 이동 공용.</summary>
     private async Task<(Walk Result, PointF Dot)> WalkToXAsync(WatcherSettings s, Rectangle mini, PointF dot, double targetX,
         double tol, Stopwatch sw, long maxMs, string state, string label, CancellationToken ct)
     {
         double miniDx = dot.X - targetX;
         double releaseEarly = Math.Max(tol, 1.2); // 키를 뗀 뒤 관성 미끄러짐 여유분
-        int rebounds = 0; // 도착/지나침 후 반대 방향 재보정 횟수 — 누를수록 짧게(최소 50ms)
+        int rebounds = 0; // 도착/지나침 후 반대 방향 재보정 횟수 — 첫 홀드(무제한) 판별용
 
         while (Math.Abs(miniDx) > tol && sw.ElapsedMilliseconds < maxMs)
         {
@@ -513,9 +514,16 @@ public sealed class PositionWatcher : IDisposable
             // 점이 목표보다 오른쪽(+) = 캐릭터가 오른쪽에 있음 → 왼쪽 키
             ushort key = miniDx > 0 ? ScLeft : ScRight;
             int dirSign = Math.Sign(miniDx);
-            // 첫 홀드는 도착할 때까지 무제한, 이후 되돌림은 220→132→79→50ms로 점점 짧게 눌러 미세 조정
+            // 첫 홀드는 도착할 때까지 무제한. 되돌림(미세조정)은 '남은 거리' 기준 5단계(사용자 지정
+            // 2026-08-04: 횟수 감쇠는 거리가 남았는데도 짧은 탭만 반복했다) — 멀면 조금 길게 누르고,
+            // 가까울수록 짧게. 폴링이 도착 직전/지나침에 어차피 떼므로 상한이 길어도 과주행 위험은 낮다.
+            double adx = Math.Abs(miniDx);
             long holdCapMs = rebounds == 0 ? long.MaxValue
-                                           : Math.Max(50, (long)(220 * Math.Pow(0.6, rebounds - 1)));
+                           : adx >= 6.0 ? 280
+                           : adx >= 4.0 ? 220
+                           : adx >= 2.5 ? 160
+                           : adx >= 1.5 ? 110
+                           : 70;
             var holdSw = Stopwatch.StartNew();
             long lastFjAt = -FlashJumpCooldownMs; // 홀드 시작 즉시 1회 도약 가능
             _backend.Send(new KeyboardEvent { Code = key, State = KeyDownE0 });
