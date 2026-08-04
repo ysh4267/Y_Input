@@ -1108,6 +1108,7 @@ internal static class RuneArrowDetector
             bool SigStable(List<bool[]> hist) => hist.Count >= 3
                 && SigSimilar(hist[^1], hist[^2]) && SigSimilar(hist[^2], hist[^3]);
             var lRunDir = new char[4]; var lRunLen = new int[4]; var lRunStart = new double[4]; var lRunSig = new bool[4][];
+            bool relocated = false; // 실전 TryRelocateStarvedSlot 미러 상태
             for (int fi = 0; fi < strips.Count; fi++)
             {
                 double t = fi * 50.0; // 명목 50ms 간격
@@ -1154,10 +1155,52 @@ internal static class RuneArrowDetector
                     parts.Add($"{(rotActive ? "회" : "정")}{(a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })}{a.AngleDeg:000}°a{a.Area}m{a.MovingPx}{(lockedCount > before1 ? "★락" : "")}");
                 }
                 sb.AppendLine($"f{fi:00} {t,5:0}ms  {string.Join("  ", parts)}");
+
+                // 실전 TryRelocateStarvedSlot 미러 — 3잠금+1잡 슬롯 재배치가 이 데이터에서
+                // 언제·어디로 발동하는지 오프라인 검증(스트립은 링 버퍼라 t가 실전보다 ~0.4초 이르다).
+                if (!relocated && lockedCount == 3 && t >= 2200)
+                {
+                    int starved = -1;
+                    for (int j = 0; j < 4; j++) if (locked[j] is null) starved = j;
+                    bool veto = false;
+                    for (int c = 0; c < 4; c++) if (votes[starved, c] > 0) veto = true;
+                    if (!veto && !(angleV[starved].Count > 0 && angleV[starved].Count - lastRotAt[starved] <= 3))
+                    {
+                        var lx = Enumerable.Range(0, 4).Where(j => j != starved).Select(j => pos[j].X).OrderBy(x => x).ToArray();
+                        double rg1 = lx[1] - lx[0], rg2 = lx[2] - lx[1];
+                        if (Math.Max(rg1, rg2) <= Math.Min(rg1, rg2) * 1.35 && (rg1 + rg2) / 2 is >= 40 and <= 170)
+                        {
+                            float rm = (float)((rg1 + rg2) / 2);
+                            float rpy = Enumerable.Range(0, 4).Where(j => j != starved).Average(j => pos[j].Y);
+                            (PointF P, int Area) Probe(float px)
+                            {
+                                if (px < box / 2f || px > strips[fi].Bmp.Width - box / 2f) return (default, 0);
+                                var rr = new Rectangle((int)(px - box / 2.0), (int)(rpy - box / 2.0), box, box);
+                                var pa = AnalyzeArrowAt(strips[fi].Bmp, activeRef, null, rr);
+                                return (new PointF(px, rpy), pa?.Area ?? 0);
+                            }
+                            var rLeft = Probe(lx[0] - rm); var rRight = Probe(lx[2] + rm);
+                            var rPick = rLeft.Area >= rRight.Area ? rLeft : rRight;
+                            if (rPick.Area >= 40)
+                            {
+                                sb.AppendLine($"      [슬롯 재배치 미러] 미확정 ({pos[starved].X:0},{pos[starved].Y:0}) → 외삽 ({rPick.P.X:0},{rPick.P.Y:0}) (좌a{rLeft.Area} 우a{rRight.Area})");
+                                pos[starved] = rPick.P; posAnchor[starved] = rPick.P;
+                                angleT[starved].Clear(); angleV[starved].Clear(); sigHist[starved].Clear();
+                                lRunSig[starved] = null!; lRunLen[starved] = 0;
+                                for (int c = 0; c < 4; c++) votes[starved, c] = 0;
+                                lastRotAt[starved] = -999;
+                                relocated = true;
+                            }
+                        }
+                    }
+                }
             }
             sb.AppendLine("반동 투표 [R U L D]:");
             for (int j = 0; j < 4; j++)
-                sb.AppendLine($"  화살표{j + 1}: {votes[j, 0]} {votes[j, 1]} {votes[j, 2]} {votes[j, 3]}  확정 {(locked[j] is { } dd ? dd.ToString() : "-")}");
+                sb.AppendLine($"  화살표{j + 1}: {votes[j, 0]} {votes[j, 1]} {votes[j, 2]} {votes[j, 3]}  확정 {(locked[j] is { } dd ? dd.ToString() : "-")}  pos=({pos[j].X:0},{pos[j].Y:0})");
+            var xOrder = Enumerable.Range(0, 4).OrderBy(j => pos[j].X).ToList();
+            sb.AppendLine("최종 입력(X순): " + string.Join(" ", xOrder.Select(j => locked[j] is { } d2
+                ? (d2 switch { 'L' => "←", 'R' => "→", 'U' => "↑", _ => "↓" }) : "?")));
         }
         catch (Exception ex) { sb.AppendLine("오류: " + ex); }
         finally
