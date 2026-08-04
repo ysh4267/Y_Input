@@ -72,9 +72,9 @@ public sealed class PositionWatcher : IDisposable
     private const double FlashJumpMinDx = 20.0;           // 목표가 이보다 멀면 방향키+Alt '따닥' 더블점프로 도약
     private const int FlashJumpTapMs = 45, FlashJumpGapMs = 80; // Alt 두 번 '따닥' 탭 길이·간격
     private const int FlashJumpCooldownMs = 700;          // 도약 사이 최소 간격 — 착지·재가속 시간
-    private const double RuneIconYOffset = 1.5;           // 룬 다이아 아이콘 중심이 발판보다 위에 그려지는 몫 —
-                                                          // 목표 Y를 이만큼만 살짝 내려 발판을 겨냥(4.0은 과했음,
-                                                          // 사용자 실측 피드백 2026-08-04)
+    private const double RuneIconYOffset = 0.5;           // 목표 Y를 아이콘보다 살짝 아래로. 실측(2026-08-04
+                                                          // 17:10 카르시온 나무줄기3, 같은 층): 아이콘 중심 Y=152.0,
+                                                          // 내 점 중심 Y=151.2 — 차이 1px 미만이라 오프셋은 최소만
     private const double RopeStuckDy = 3.0;               // 아래점프 후 이만큼도 못 내려갔으면 로프·사다리에 걸림
     private const int RopeSlideRiseMs = 250, RopeSlideMaxMs = 4000; // 로프 회복(↓ 홀드) 착지 폴링
     private const double MinPatchStdDev = 8;              // 패치 대비 하한(단색·특징 부족 거부)
