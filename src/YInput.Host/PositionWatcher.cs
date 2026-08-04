@@ -789,7 +789,8 @@ public sealed class PositionWatcher : IDisposable
     private const int LockRun = 3;              // 정지 확정 최소 연속 프레임
     private const int LockSpanMs = 250;         // 정지 확정 최소 지속시간
     private const int RecoilHits = 2;           // 반동 확정 최소 관측 횟수(같은 방위)
-    private const int StripKeep = 60;           // 실패 진단용 밴드 스트립 녹화 링 크기(~7초)
+    private const int FastTickMs = 50;          // 회전 판정 후 고속 관찰 주기(사용자 지정 — 1바퀴 <1초라 촘촘히)
+    private const int StripKeep = 90;           // 실패 진단용 밴드 스트립 녹화 링 크기(고속 50ms 기준 ~4.5초)
 
     /// <summary>퍼즐 화살표 4개 확정. 매 프레임: ① 검증된 줄 인식(교집합 단계)으로 정지 화살표
     /// 시그니처 락, ② 줄이 안 잡히면 합집합 마스크로 위치만 획득, ③ 위치가 확보되면 화살표별
@@ -815,7 +816,10 @@ public sealed class PositionWatcher : IDisposable
         var recoilVotes = new int[4, 4]; // [화살표, 방위 R U L D]
         for (int j = 0; j < 4; j++) { angleT[j] = new List<double>(); angleV[j] = new List<double>(); }
 
-        // 미확정 화살표들의 로컬 분석 한 회 — 각도 표본 추가 + 반동 감지 + 위치 EMA 보정
+        bool fastMode = false, rotatingSeen = false;
+
+        // 미확정 화살표들의 로컬 분석 한 회 — 각도 표본 추가 + 반동 감지 + 위치 EMA 보정.
+        // 고속 모드에서는 무거운 줄 인식이 멈추므로 정지 확정(시그니처 런)도 로컬 표본으로 잇는다.
         void LocalPass(Bitmap frame, long now)
         {
             for (int j = 0; j < 4; j++)
@@ -829,6 +833,33 @@ public sealed class PositionWatcher : IDisposable
                                         (float)(pos[j].Y * 0.7 + a.Center.Y * 0.3));
                 angleT[j].Add(now); angleV[j].Add(a.AngleDeg);
                 TryDetectRecoil(j, angleT[j], angleV[j], recoilVotes, ref lockedCount, locked);
+
+                if (fastMode)
+                {
+                    // 고속 모드의 정지 확정 — 로컬 시그니처 런(무거운 경로와 소스가 달라 혼용하지 않는다)
+                    if (runSig[j] is not null && runDir[j] == a.Dir && RuneArrowDetector.SigSimilar(runSig[j], a.Sig))
+                    {
+                        runLen[j]++;
+                        if (runLen[j] >= LockRun && now - runStart[j] >= LockSpanMs) { locked[j] = runDir[j]; lockedCount++; }
+                    }
+                    else { runSig[j] = a.Sig; runDir[j] = a.Dir; runLen[j] = 1; runStart[j] = now; }
+                }
+                else if (!rotatingSeen && angleV[j].Count >= 4)
+                {
+                    // 초반 회전 판정 — 최근 3스텝이 전부 같은 방향으로 ≥15°/100ms면 회전 중
+                    bool rot = true; int sgn = 0;
+                    var tv = angleT[j]; var av = angleV[j];
+                    for (int k = av.Count - 3; k < av.Count; k++)
+                    {
+                        double d = (av[k] - av[k - 1]) % 360;
+                        if (d > 180) d -= 360; else if (d <= -180) d += 360;
+                        double rate = d * 100 / Math.Max(40, tv[k] - tv[k - 1]);
+                        if (Math.Abs(rate) < 15) { rot = false; break; }
+                        int s = Math.Sign(rate);
+                        if (sgn == 0) sgn = s; else if (s != sgn) { rot = false; break; }
+                    }
+                    if (rot) rotatingSeen = true;
+                }
             }
         }
 
@@ -837,6 +868,29 @@ public sealed class PositionWatcher : IDisposable
             while (sw.ElapsedMilliseconds < budgetMs && lockedCount < 4)
             {
                 ct.ThrowIfCancellationRequested();
+
+                // 고속 모드 — 회전이 판정되면 무거운 줄 인식은 끄고 로컬 분석만 50ms 주기로 돈다
+                // (캡처 ~15ms + 로컬 4개 ~8ms라 주기 유지 가능; 반동은 순간이라 촘촘함이 생명)
+                if (fastMode)
+                {
+                    long tickStart = sw.ElapsedMilliseconds;
+                    Bitmap? ff = null;
+                    try { ff = ScreenCapture.Capture(screenCrop); } catch { /* 일시적 캡처 실패 */ }
+                    if (ff is not null)
+                    {
+                        try
+                        {
+                            LocalPass(ff, sw.ElapsedMilliseconds);
+                            RecordStrip(ff);
+                            if (_runeShots.Count < 4) _runeShots.Add(ff);
+                        }
+                        finally { if (!_runeShots.Contains(ff)) ff.Dispose(); }
+                    }
+                    long wait = FastTickMs - (sw.ElapsedMilliseconds - tickStart);
+                    if (lockedCount < 4 && wait > 0) await PreciseDelay.WaitAsync((int)wait, ct).ConfigureAwait(false);
+                    continue;
+                }
+
                 Bitmap? f = null;
                 try { f = ScreenCapture.Capture(screenCrop); } catch { /* 일시적 캡처 실패 */ }
                 if (f is not null)
@@ -867,24 +921,36 @@ public sealed class PositionWatcher : IDisposable
                             }
                         }
 
-                        // 위치 컨센서스 — 줄 인식이 연속 두 번 ±12px로 일치하면 고정
+                        // 위치 컨센서스 — 줄 인식이 연속 두 번 ±18px로 일치하면 고정
+                        // (회전 화살표의 교집합 핵은 창이 밀리며 수 px씩 흔들려 12px로는 못 잡는다)
                         if (pos is null && row is not null)
                         {
                             if (prevRowCenters is not null && Enumerable.Range(0, 4).All(j =>
-                                    Math.Abs(row[j].Center.X - prevRowCenters[j].X) <= 12 &&
-                                    Math.Abs(row[j].Center.Y - prevRowCenters[j].Y) <= 12))
+                                    Math.Abs(row[j].Center.X - prevRowCenters[j].X) <= 18 &&
+                                    Math.Abs(row[j].Center.Y - prevRowCenters[j].Y) <= 18))
                                 pos = row.Select(x => x.Center).ToArray();
                             prevRowCenters = row.Select(x => x.Center).ToArray();
                         }
+                        // 폴백 — 회전 핵이 흔들려 컨센서스가 계속 미끄러지면 1.2초 시점의 마지막
+                        // 줄 중심을 그대로 채택(로컬 EMA 보정이 이후 실제 중심으로 수렴시킨다)
+                        if (pos is null && prevRowCenters is not null && sw.ElapsedMilliseconds > 1200)
+                            pos = (PointF[])prevRowCenters.Clone();
 
                         // 로컬 추적 — 위치가 고정된 뒤: 회전 화살표의 각도 시계열 + 반동 감지.
                         // 로컬 블롭 중심으로 위치를 서서히 보정(회전 핵 어긋남 수렴).
                         if (pos is not null) LocalPass(f, now);
 
-                        if (!spinNoted && sw.ElapsedMilliseconds > 800 && lockedCount < 4)
+                        // 회전 판정(초반 1초 내 각도 진행 감지) → 고속 모드 전환 + 예산 연장
+                        if (!fastMode && rotatingSeen && pos is not null)
+                        {
+                            fastMode = true; spinNoted = true;
+                            budgetMs = Math.Max(budgetMs, RotatingBudgetMs);
+                            Note($"회전 감지 — {FastTickMs}ms 간격 고속 관찰로 반동을 추적합니다(최대 4초)");
+                        }
+                        else if (!spinNoted && sw.ElapsedMilliseconds > 800 && lockedCount < 4)
                         {
                             spinNoted = true;
-                            // 회전 변형 — 반동을 여러 바퀴 관찰해야 하므로 예산을 늘린다
+                            // 각도 기반 판정이 못 잡았어도(위치 미확보 등) 확정이 늦으면 예산은 늘린다
                             budgetMs = Math.Max(budgetMs, RotatingBudgetMs);
                             Note("화살표 회전 감지 — 반동(격발) 방향을 관찰합니다(최대 4초)");
                         }
