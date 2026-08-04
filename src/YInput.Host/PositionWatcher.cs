@@ -545,8 +545,16 @@ public sealed class PositionWatcher : IDisposable
         try
         {
             if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면이 아니라 룬 사용을 건너뜁니다."); return; }
-            // 룬 위치는 여기서 1회만 측정 — 이후 갱신하지 않는다(맵 이동·재접속 전까지 룬은 그대로).
-            if (MeasureRune(s, mini) is not { } runeAt) { Status("skip", "미니맵에 룬(보라 다이아) 아이콘이 없어 건너뜁니다."); return; }
+            // 룬 존재 확인 — 매크로는 룬 유무와 무관하게 주기적으로 실행되는 전제라, 없으면 '룬 없음'으로
+            // 결론 내리고 이 과정을 즉시 끝낸다(있을 때만 가서 깐다). 한 프레임 캡처 노이즈로
+            // 오판하지 않게 짧은 재확인 한 번만 거친다. 위치는 여기서 1회만 측정 — 이후 갱신하지 않는다.
+            var rune0 = MeasureRune(s, mini);
+            if (rune0 is null)
+            {
+                await PreciseDelay.WaitAsync(150, ct).ConfigureAwait(false);
+                rune0 = MeasureRune(s, mini);
+            }
+            if (rune0 is not { } runeAt) { Status("skip", "미니맵에 룬 없음 — 이번 회차를 바로 종료합니다."); return; }
             var sw = Stopwatch.StartNew();
 
             // ── 1단계: 내 캐릭터 점 식별(위치 보정과 동일 — 여러 개면 프로브 이동으로 확인) ──
@@ -763,16 +771,24 @@ public sealed class PositionWatcher : IDisposable
 
                 // 입력 후 퍼즐(배너)이 사라졌는지 확인 — 화살표 재탐지는 룬 해제 이펙트를 오인할 수 있어
                 // 배너 잔존 여부로 판정한다(23:48 실행: 성공인데 이펙트를 화살표로 재탐지해 실패 경고).
+                // 성공 직후엔 룬 해방 이펙트·문구가 배너 띠 구간에 '새로 나타난 선명한 픽셀'로 찍혀
+                // 존재 판정이 잠시 참이 될 수 있다(09:44 실행: 정답인데 경고) — 이펙트가 가라앉을
+                // 시간을 두고 최대 3회 재확인한 뒤에만 실패로 판단한다.
                 await PreciseDelay.WaitAsync(900, ct).ConfigureAwait(false);
                 bool stillOpen = false;
-                try
+                for (int chk = 0; chk < 3; chk++)
                 {
-                    using var va = ScreenCapture.Capture(screenCrop);
-                    await PreciseDelay.WaitAsync(180, ct).ConfigureAwait(false);
-                    using var vb = ScreenCapture.Capture(screenCrop);
-                    stillOpen = RuneArrowDetector.PuzzlePresent(va, vb, beforeCrop, precropped: true);
+                    try
+                    {
+                        using var va = ScreenCapture.Capture(screenCrop);
+                        await PreciseDelay.WaitAsync(180, ct).ConfigureAwait(false);
+                        using var vb = ScreenCapture.Capture(screenCrop);
+                        stillOpen = RuneArrowDetector.PuzzlePresent(va, vb, beforeCrop, precropped: true);
+                    }
+                    catch { stillOpen = false; /* 캡처 실패 — 검증 생략 */ }
+                    if (!stillOpen) break;
+                    await PreciseDelay.WaitAsync(800, ct).ConfigureAwait(false);
                 }
-                catch { /* 캡처 실패 — 검증 생략 */ }
                 if (stillOpen)
                     Status("fail", "퍼즐 입력 후에도 퍼즐이 남아 있습니다 — 인식이 틀렸을 수 있어요(logs\\rune-puzzle.png 확인).");
                 else
