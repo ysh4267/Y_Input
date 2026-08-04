@@ -48,6 +48,10 @@ internal static class RuneArrowDetector
     private const int RowBandPx = 22;    // 같은 줄(4개 나열) 판정 Y 허용폭
     private const int MinGapPx = 50, MaxGapPx = 280; // 화살표 이웃 간격 상식 범위(실측 85~125px) —
                                                      // 데미지 숫자·배너 글자 조각(13~35px) 배제
+    // 줄 선택 게이트 공용 상수(PickRow·TryPartialRow) — 실측 근거는 사용처 주석 참조.
+    private const double GapFracLo = 0.058, GapFracHi = 0.135; // 이웃 간격 창폭 비례(실측 67~125px = 0.062~0.116W)
+    private const double GapRatioMax = 1.75;                   // 간격 균일비 상한(실측 최대 1.69 — 카르시온 113/67/110)
+    private const double RowFracLo = 0.20, RowFracHi = 0.85;   // 후보 y 밴드 구간(실측 29~62% — 상단 잡줄 0~18%만 차단)
 
     /// <summary>퍼즐 UI 탐색 영역(창 상대) — 캡처를 이 영역만 화면 복사로 뜨면 전체 창 캡처보다
     /// 훨씬 빠르다(취소 타이머 3초 안에 인식·입력을 끝내야 함).</summary>
@@ -429,12 +433,12 @@ internal static class RuneArrowDetector
         }
         ThinFilter(mask, w, h);
         var (bandY0, bandY1, _) = BannerBand(w, h, (int)(h / (RegionY1 - RegionY0)));
-        double rowY0 = bandY0 + 0.45 * (bandY1 - bandY0), rowY1 = bandY0 + 0.80 * (bandY1 - bandY0);
+        double rowY0 = bandY0 + RowFracLo * (bandY1 - bandY0), rowY1 = bandY0 + RowFracHi * (bandY1 - bandY0);
         var cands = MergeNear(FindBlobs(mask, w, h)).Where(b =>
             b.Area is >= MinArrowArea and <= MaxArrowArea &&
             b.W is >= MinArrowBox and <= MaxArrowBox && b.H is >= MinArrowBox and <= MaxArrowBox &&
             b.Cy >= rowY0 && b.Cy <= rowY1).OrderBy(b => b.Cx).ToList();
-        double gLo = frame.Width * 0.068, gHi = frame.Width * 0.135; // 하한 0.068W — PickRow와 동일(60px 잡줄 차단)
+        double gLo = frame.Width * GapFracLo, gHi = frame.Width * GapFracHi; // PickRow와 동일 상수
         List<Blob>? best = null; double bestScore = double.MinValue;
         for (int a = 0; a < cands.Count - 2; a++)
             for (int b2 = a + 1; b2 < cands.Count - 1; b2++)
@@ -491,10 +495,10 @@ internal static class RuneArrowDetector
         if (thinFilter) ThinFilter(mask, w, h);
         var (bandY0, bandY1, bannerCx) = fullArea ? (0, h - 1, -1.0) : BannerBand(w, h, fullFrameH);
 
-        // 화살표 줄은 밴드 세로 45~80% 구간에 고정(실측: 두 맵·세 룬 모두 62% 부근, 스트립 55~70%).
-        // 밴드 상단 가장자리 잡블롭 줄(y 0~18% — 배너 하단 반짝이)이 등간격으로 뭉치면
-        // ① 경로가 그 줄을 먼저 반환해 이긴다(2026-08-04 14:13 룬: y197~214 잡줄 → 2번 누락).
-        double rowY0 = bandY0 + 0.45 * (bandY1 - bandY0), rowY1 = bandY0 + 0.80 * (bandY1 - bandY0);
+        // 화살표 줄의 밴드 세로 위치는 맵·창마다 다르다 — 실측: 카르시온 나무줄기3 29~40%(17:36 실전:
+        // 45% 하한이 진짜 화살표 4개를 전부 걸러내 줄 구성 원천 실패), 이전 맵들 36~62%.
+        // 하한 20%는 밴드 상단 가장자리 잡블롭 줄(y 0~18% — 배너 하단 반짝이, 14:13 룬)만 차단한다.
+        double rowY0 = bandY0 + RowFracLo * (bandY1 - bandY0), rowY1 = bandY0 + RowFracHi * (bandY1 - bandY0);
         var cands = MergeNear(FindBlobs(mask, w, h)).Where(b =>
             b.Area is >= MinArrowArea and <= MaxArrowArea &&
             b.W is >= MinArrowBox and <= MaxArrowBox && b.H is >= MinArrowBox and <= MaxArrowBox &&
@@ -549,6 +553,16 @@ internal static class RuneArrowDetector
     /// 못 쓴다 — 진짜 ←도 침식되면 |0.06|까지 떨어진다(00:45 sat80). 없으면 null.</summary>
     private static List<Blob>? PickRow(List<Blob> cands, double bannerCx, int frameW)
     {
+        // 2단계 균일비 — 실측: 대부분의 줄은 균일비 ≤1.6(DDRD 92/90/97=1.08 등)이지만
+        // 카르시온 나무줄기3(17:36)은 진짜 줄이 113/67/110=1.69다. 상한을 1.75로 그냥 열면
+        // DDRD에서 비 1.67 잡줄(400/532/611/711, 면적 우세)이 진짜 줄을 밀어냈다 —
+        // 균일한 줄이 하나라도 있으면 그쪽 세계에서만 고르고, 없을 때만 1.75까지 허용한다.
+        return PickRowWithRatio(cands, bannerCx, frameW, 1.6)
+            ?? PickRowWithRatio(cands, bannerCx, frameW, GapRatioMax);
+    }
+
+    private static List<Blob>? PickRowWithRatio(List<Blob> cands, double bannerCx, int frameW, double ratioMax)
+    {
         if (cands.Count < 4) return null;
         // 상위 20개 — 불타는 맵은 노이즈 블롭이 커서 14개 컷으로는 작은 화살표가 밀려났다
         var top = cands.OrderByDescending(b => b.Area).Take(20).OrderBy(b => b.Cx).ToList();
@@ -564,22 +578,17 @@ internal static class RuneArrowDetector
                         if (yMax - yMin > RowBandPx) continue;
                         bool gapsOk = true;
                         double gMin = double.MaxValue, gMax = 0;
-                        // 간격은 창폭 비례 절대 범위 + 균일성(비 ≤1.6). 실측 간격: 1076px 창에서
-                        // 78~125px(0.0725~0.116W) — 하한 0.068W는 실측 최소(78) 바로 아래까지만 연다.
-                        // 0.055W(59px)로 열었더니 ~60px 등간격 잡블롭 줄이 중앙·균일비까지 우연히
-                        // 만족하며 통과, 관측 슬롯이 한 칸씩 어긋나 옆 화살표를 잠갔다(16:11 실행:
-                        // ←↑↑↑ 입력, 4번 오답 — 실제 줄 438/528/624/737 vs 채택 줄 ~450/510/570/630).
-                        double gLo = frameW * 0.068, gHi = frameW * 0.135;
+                        // 간격은 창폭 비례 절대 범위 + 균일성. 실측 간격(1076px 창): 67~125px
+                        // (0.062~0.116W) — 하한 0.058W(62px)는 실측 최소(67) 바로 아래까지만 연다.
+                        // 16:11의 ~60px 등간격 잡블롭 줄(슬롯 한 칸 어긋남 오답)은 하한 미달로 차단.
+                        double gLo = frameW * GapFracLo, gHi = frameW * GapFracHi;
                         for (int i = 1; i < 4; i++)
                         {
                             double gap = combo[i].Cx - combo[i - 1].Cx;
                             if (gap < gLo || gap > gHi) { gapsOk = false; break; }
                             gMin = Math.Min(gMin, gap); gMax = Math.Max(gMax, gap);
                         }
-                        // 균일비 1.6 — 고전 정지형 룬은 간격이 78~115로 불균일하다(2026-08-04 14:46
-                        // 보라맵: 115/78/109 비 1.47이 1.5 게이트에 턱걸이). 잡줄 방어는 나머지
-                        // 게이트(절대 범위·중앙·y구간·크기 균일)가 겹으로 담당.
-                        if (!gapsOk || gMax > gMin * 1.6) continue;
+                        if (!gapsOk || gMax > gMin * ratioMax) continue;
                         int aMin = combo.Min(x => x.Area), aMax = combo.Max(x => x.Area);
                         if (aMax > aMin * 5) continue; // 크기가 제각각인 묶음은 화살표 줄이 아니다
                         double avgX = combo.Average(x => x.Cx);
@@ -587,7 +596,7 @@ internal static class RuneArrowDetector
                         if (bannerCx >= 0)
                         {
                             double off = Math.Abs(avgX - bannerCx);
-                            // 화살표 줄은 필 중앙에 정확히 대칭(실측 이탈 ≤5px). 한 칸 밀린 줄(화살표
+                            // 화살표 줄은 필 중앙 부근(실측 이탈 ≤50px). 한 칸 밀린 줄(화살표
                             // 하나가 에지온으로 빠지고 잡블롭이 반대쪽에 끼는 조합)은 중심이 간격만큼
                             // (~90px) 이탈한다 — 0.12W(129px)로는 통과했다(2026-08-04 14:04 룬).
                             if (off > frameW * 0.05) continue;
