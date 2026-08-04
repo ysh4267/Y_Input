@@ -36,7 +36,9 @@ Invoke-RestMethod -Uri "http://127.0.0.1:48710/api/app/version"   # current 확�
 실행 증거는 설치 폴더 `logs\`에 남는다(시도마다 갱신): `rune-frame-0..3.png`(판정 버스트),
 `rune-before.png`(발동 직전 기준), `rune-strip-NN.png`(밴드 50ms 연속 녹화), `rune-solve.txt`
 (화살표별 잠금·반동 투표·각도 시계열), `rune-input.png`(입력 직전), `rune-minimap.png`,
-`rune-close.png`(닫힘 대기 타임아웃 시). **새 실패가 나면 덮어쓰기 전에 먼저 통째로 백업할 것.**
+`rune-close.png`(닫힘 대기 타임아웃 시). 고정 이름은 다음 시도가 덮어쓰지만, **실패(인식 실패·
+퍼즐 잔존) 시점의 사본이 `rune-fail-일시\` 폴더에 자동 보존**되므로 실패 분석은 그 폴더 기준으로
+한다(14일 뒤 자동 정리).
 
 ```powershell
 # 퍼즐 인식 재현(프레임): 실전 경로는 ④ — 줄 채택 위치·방향이 여기서 나온다

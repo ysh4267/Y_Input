@@ -770,7 +770,8 @@ public sealed class PositionWatcher : IDisposable
                 if (arrows is null)
                 {
                     SaveRuneShots(beforeCrop, includeStrips: true); // 실패 증거 — 재시도 대신 이걸로 인식을 고친다
-                    Status("fail", "룬 퍼즐 인식 실패 — 직접 입력해 주세요(logs\\rune-puzzle.png·rune-solve.txt 확인). 이번 회차를 종료합니다.");
+                    FileLog.SnapshotRune(); // 다음 시도(성공 포함)가 고정 이름을 덮어써도 실패 증거는 폴더로 남긴다
+                    Status("fail", "룬 퍼즐 인식 실패 — 직접 입력해 주세요(logs\\rune-fail-* 폴더 확인). 이번 회차를 종료합니다.");
                     return;
                 }
 
@@ -819,7 +820,10 @@ public sealed class PositionWatcher : IDisposable
                     await PreciseDelay.WaitAsync(800, ct).ConfigureAwait(false);
                 }
                 if (stillOpen)
-                    Status("fail", "퍼즐 입력 후에도 퍼즐이 남아 있습니다 — 인식이 틀렸을 수 있어요(logs\\rune-puzzle.png 확인).");
+                {
+                    FileLog.SnapshotRune(); // 오답 의심 증거도 폴더로 보존 — 다음 시도가 고정 이름을 덮어쓴다
+                    Status("fail", "퍼즐 입력 후에도 퍼즐이 남아 있습니다 — 인식이 틀렸을 수 있어요(logs\\rune-fail-* 폴더 확인).");
+                }
                 else
                     Status("done", $"룬 사용 완료 (퍼즐 {seq})");
             }
