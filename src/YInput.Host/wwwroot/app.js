@@ -51,6 +51,7 @@ let ovWindows = []; // 실행 중 창 목록 [{process,title}]
 function renderOverlayConfig(s) {
   if (!s) return;
   const e = $('ov-enabled'); if (e) e.checked = !!s.enabled;
+  const d = $('ov-debug'); if (d) d.checked = s.debug !== false; // 구버전 응답(필드 없음)은 켜짐 취급
   renderOverlayWhitelist(s.whitelist || []);
 }
 function renderOverlayWhitelist(list) {
@@ -91,6 +92,10 @@ async function loadOverlayConfig() {
 }
 async function onOverlayEnabled() {
   try { renderOverlayConfig(await api.setOverlay({ enabled: $('ov-enabled').checked })); }
+  catch (e) { log('error', e.message); }
+}
+async function onOverlayDebug() {
+  try { renderOverlayConfig(await api.setOverlay({ debug: $('ov-debug').checked })); }
   catch (e) { log('error', e.message); }
 }
 async function onOverlayAdd() {
@@ -1268,6 +1273,7 @@ function wire() {
   $('btn-sync-save').onclick = onSyncSave;
   $('btn-sync-now').onclick = onSyncNow;
   $('ov-enabled').onchange = onOverlayEnabled;
+  $('ov-debug').onchange = onOverlayDebug;
   $('ov-add').onclick = onOverlayAdd;
   $('ov-refresh').onclick = loadOverlayWindows;
   $('wt-winlist').onchange = async () => {

@@ -11,6 +11,7 @@ namespace YInput.Host;
 public sealed class OverlaySettings
 {
     public bool Enabled { get; set; } = true;
+    public bool Debug { get; set; } = true;              // 디버그 섹션(진행 단계·송출 키, 좌하단) 표시
     public List<string> Whitelist { get; set; } = new(); // 표시할 프로세스명(게임 감지 시 자동 추가)
     public List<string> Blacklist { get; set; } = new(); // 제외할 프로세스명(목록에서 빼면 자동 추가)
 }
@@ -55,12 +56,14 @@ public sealed class OverlayController : IDisposable
     {
         if (message.Length > 52) message = message[..52] + "…";
         string line = $"{DateTime.Now:HH:mm:ss.f} [{state}] {message}";
+        bool dbg;
         lock (_gate)
         {
             _stageLines.AddLast(line);
             while (_stageLines.Count > MaxStageLines) _stageLines.RemoveFirst();
+            dbg = _settings.Debug;
         }
-        if (!_pumpOn) PushRows();
+        if (dbg && !_pumpOn) PushRows();
     }
 
     public OverlayController(SynchronizationContext ui, string dataRoot, SocketHub hub, MacroService service, ProgressBroadcaster progress, InputBackend? backend = null)
@@ -86,12 +89,14 @@ public sealed class OverlayController : IDisposable
     {
         if (e is not KeyboardEvent ke) return; // 키보드만 — 마우스 이동 등은 노이즈
         string line = $"{DateTime.Now:HH:mm:ss.fff}  {KeyLabel(ke.Code, (ke.State & 0x02) != 0)} {(ke.IsKeyUp ? "뗌" : "누름")}";
+        bool dbg;
         lock (_gate)
         {
             _sentKeys.AddLast(line);
             while (_sentKeys.Count > MaxSentKeys) _sentKeys.RemoveFirst();
+            dbg = _settings.Debug;
         }
-        if (!_pumpOn) PushRows();
+        if (dbg && !_pumpOn) PushRows();
     }
 
     /// <summary>스캔코드(set 1) → 표시 이름. 흔한 키만 이름, 나머지는 SC 표기.</summary>
@@ -163,6 +168,16 @@ public sealed class OverlayController : IDisposable
         OverlaySettings snap;
         lock (_gate) { _settings.Enabled = enabled; snap = Clone(_settings); }
         Save(snap); Broadcast(snap); ApplyArm();
+        return snap;
+    }
+
+    /// <summary>디버그 섹션(진행 단계·송출 키) 표시 토글 — 꺼면 즉시 패널을 지우고 본문만 남긴다.
+    /// 기록(링 버퍼)은 계속 쌓이므로 다시 켜면 최근 내역이 바로 보인다.</summary>
+    public OverlaySettings SetDebug(bool debug)
+    {
+        OverlaySettings snap;
+        lock (_gate) { _settings.Debug = debug; snap = Clone(_settings); }
+        Save(snap); Broadcast(snap); PushRows();
         return snap;
     }
 
@@ -281,7 +296,13 @@ public sealed class OverlayController : IDisposable
     {
         var rows = BuildRows();
         List<string> keys, stages;
-        lock (_gate) { keys = _sentKeys.ToList(); stages = _stageLines.ToList(); }
+        lock (_gate)
+        {
+            // 디버그 꺼짐 → 빈 목록 전달(창은 디버그 패널을 아예 그리지 않고 본문을 다시 세로 중앙 정렬)
+            bool dbg = _settings.Debug;
+            keys = dbg ? _sentKeys.ToList() : new();
+            stages = dbg ? _stageLines.ToList() : new();
+        }
         _ui.Post(_ => { if (_window is null) return; _window.SetDebugInfo(stages, keys); _window.SetRows(rows); }, null);
     }
 
@@ -336,7 +357,7 @@ public sealed class OverlayController : IDisposable
     }
 
     private void Broadcast(OverlaySettings s) =>
-        _hub.Broadcast("overlaySettings", new { enabled = s.Enabled, whitelist = s.Whitelist, blacklist = s.Blacklist });
+        _hub.Broadcast("overlaySettings", new { enabled = s.Enabled, debug = s.Debug, whitelist = s.Whitelist, blacklist = s.Blacklist });
 
     private static string Normalize(string? t)
     {
@@ -346,5 +367,5 @@ public sealed class OverlayController : IDisposable
     }
 
     private static OverlaySettings Clone(OverlaySettings s) =>
-        new() { Enabled = s.Enabled, Whitelist = new(s.Whitelist), Blacklist = new(s.Blacklist) };
+        new() { Enabled = s.Enabled, Debug = s.Debug, Whitelist = new(s.Whitelist), Blacklist = new(s.Blacklist) };
 }

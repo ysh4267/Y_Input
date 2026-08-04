@@ -264,7 +264,13 @@ public static class ApiEndpoints
         // ---- 인게임 오버레이 설정(켜기 + 표시할 창 화이트/블랙리스트, 게임 자동감지) ----
         app.MapGet("/api/overlay", () => Results.Json(overlay.Get()));
         app.MapGet("/api/overlay/windows", () => Results.Json(new { windows = overlay.ListWindows() }));
-        app.MapPost("/api/overlay", (OverlayBody? b) => Results.Json(b?.Enabled is bool en ? overlay.SetEnabled(en) : overlay.Get()));
+        app.MapPost("/api/overlay", (OverlayBody? b) =>
+        {
+            var s = overlay.Get();
+            if (b?.Enabled is bool en) s = overlay.SetEnabled(en);
+            if (b?.Debug is bool dbg) s = overlay.SetDebug(dbg);
+            return Results.Json(s);
+        });
         app.MapPost("/api/overlay/whitelist/add", (OverlayTargetBody? b) =>
             Results.Json(string.IsNullOrWhiteSpace(b?.Process) ? overlay.Get() : overlay.WhitelistAdd(b!.Process)));
         app.MapPost("/api/overlay/whitelist/remove", (OverlayTargetBody? b) =>
@@ -466,7 +472,7 @@ public static class ApiEndpoints
     // 동기화 설정(gist). Token=null이면 기존 토큰 유지(빈 문자열이면 지움).
     private sealed record SyncConfigBody(bool Enabled = false, string? Token = null);
     private sealed record WidgetBody(string? Id = null);
-    private sealed record OverlayBody(bool? Enabled = null);
+    private sealed record OverlayBody(bool? Enabled = null, bool? Debug = null);
     private sealed record OverlayTargetBody(string? Process = null);
     private sealed record WatcherBody(string? Process = null, int? MaxCorrectionMs = null,
                                       double? MinScore = null, double? MiniTolerancePx = null);
