@@ -17,8 +17,8 @@ public sealed class WatcherSettings
 
     // 미니맵 영역은 전역이 아니라 '매크로별'로 저장된다(Macro.MapleMinimap) — 메이플 블록이 든
     // 매크로마다 자기 미니맵 rect를 갖고, 재생 훅과 편집기 측정 API가 그 rect를 넘겨받는다.
-    /// <summary>미니맵 허용오차(px). 점은 서브픽셀 centroid로 재므로 1 미만도 의미 있다.</summary>
-    public double MiniTolerancePx { get; set; } = 0.6;
+    /// <summary>미니맵 X 허용오차(px). 0.6은 리바운드 미세조정이 잦아 1.5로 완화(사용자 지정 2026-08-04).</summary>
+    public double MiniTolerancePx { get; set; } = 1.5;
 
     // 플레이어 점 색 임계(노랑) — UI 미노출, watcher.json 직접 수정으로 조정 가능
     public int DotMinR { get; set; } = 200;
@@ -440,22 +440,21 @@ public sealed class PositionWatcher : IDisposable
                 // 폴백도 저장 위치 근접이 아닌 크기 기반 — 근접 선택은 정지 블롭에 고정될 수 있다.
                 dot = IdentifyMovedLeft(dots0, dots1) ?? MinimapDetector.Pick(dots1).Center;
             }
-            // ── 2단계: 수평(X) 걷기 → 수직(층, Y) 점프 반복 — 룬 이동과 같은 구조.
-            //           X만 맞추면 위/아래층의 같은 X에서 멈춰버린다 — 저장 스팟의 층까지 맞춘다. ──
-            var dotNow = dot.Value;
-            double miniDx;
+            // ── 2단계: 수평(X) 정렬은 처음 한 번만 — 윗점프(V)·아래점프(↓+Alt)는 X를 옮기지
+            //           않으므로(사용자 지정) 이후에는 층(Y)이 맞을 때까지 수직 이동만 반복한다. ──
+            var walk = await WalkToXAsync(s, mini, dot.Value, spot.DotX, s.MiniTolerancePx, sw, s.MaxCorrectionMs,
+                                          "coarse", "미니맵 보정 중", ct).ConfigureAwait(false);
+            if (walk.Result == Walk.NotForeground) { Status("skip", "게임 창이 전면에서 벗어나 보정을 중단합니다."); return; }
+            if (walk.Result == Walk.LostDot) { Status("fail", "보정 중 미니맵 점을 놓쳤습니다."); return; }
+            var dotNow = walk.Dot;
+            double miniDx = dotNow.X - spot.DotX;
+            if (walk.Result == Walk.Timeout) { Status("fail", $"보정 시간 초과(미니맵 이탈 {miniDx:+0.0;-0.0}px 남음)."); return; }
+
             while (true)
             {
-                var walk = await WalkToXAsync(s, mini, dotNow, spot.DotX, s.MiniTolerancePx, sw, s.MaxCorrectionMs,
-                                              "coarse", "미니맵 보정 중", ct).ConfigureAwait(false);
-                if (walk.Result == Walk.NotForeground) { Status("skip", "게임 창이 전면에서 벗어나 보정을 중단합니다."); return; }
-                if (walk.Result == Walk.LostDot) { Status("fail", "보정 중 미니맵 점을 놓쳤습니다."); return; }
-                dotNow = walk.Dot;
-                miniDx = dotNow.X - spot.DotX;
-                if (walk.Result == Walk.Timeout) { Status("fail", $"보정 시간 초과(미니맵 이탈 {miniDx:+0.0;-0.0}px 남음)."); return; }
-
+                ct.ThrowIfCancellationRequested();
                 double miniDy = dotNow.Y - spot.DotY; // +: 캐릭터가 스팟보다 아래(위로 가야 함)
-                if (Math.Abs(miniDy) <= CorrectTolY) break; // X·Y 모두 일치 — 보정 완료
+                if (Math.Abs(miniDy) <= CorrectTolY) break; // 층 일치 — 보정 완료
                 if (sw.ElapsedMilliseconds >= s.MaxCorrectionMs) { Status("fail", $"보정 시간 초과(층차 {miniDy:+0.0;-0.0}px 남음)."); return; }
                 if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 보정을 중단합니다."); return; }
 
@@ -473,8 +472,9 @@ public sealed class PositionWatcher : IDisposable
                     ? await WaitLandedAsync(s, mini, dotNow, UpJumpRiseMs, UpJumpSettleMaxMs, ct).ConfigureAwait(false)
                     : await WaitDownLandedAsync(s, mini, dotNow, "coarse", ct).ConfigureAwait(false);
                 if (landed is null) { Status("fail", "보정 중 미니맵 점을 놓쳤습니다."); return; }
-                dotNow = landed.Value; // 착지 중 X가 흐트러졌을 수 있어 루프 선두에서 다시 수평 정렬
+                dotNow = landed.Value;
             }
+            miniDx = dotNow.X - spot.DotX; // 완료 보고용 최종 잔차
 
             // 파인(화면 매칭) 이동은 쓰지 않는다 — 주변 유저·말풍선이 패치에 겹치거나 카메라
             // 레이지무브가 정착 중이면 매칭이 흔들려, 맞춰둔 자리를 오히려 이탈시켰다(18:05 실행 로그).
@@ -630,30 +630,27 @@ public sealed class PositionWatcher : IDisposable
             {
                 var swm = Stopwatch.StartNew();
                 bool vStuck = false; // 점프로도 층이 안 바뀜 — 수직 이동의 물리적 한계 도달(무한 점프 방지)
+
+                // 수평(X) 정렬은 처음 한 번만 — 윗점프(V)·아래점프(↓+Alt)는 X를 옮기지 않으므로
+                // (사용자 지정) 이후에는 층(Y)이 맞을 때까지 수직 이동만 반복한다.
+                if (Math.Abs(dot.X - runeAt.X) > s.MiniTolerancePx)
+                {
+                    var walk = await WalkToXAsync(s, mini, dot, runeAt.X, s.MiniTolerancePx, swm, maxMs, "rune", "룬으로 이동 중", ct).ConfigureAwait(false);
+                    if (walk.Result == Walk.NotForeground) return 1;
+                    if (walk.Result == Walk.LostDot) return 2;
+                    dot = walk.Dot;
+                }
+
                 while (swm.ElapsedMilliseconds < maxMs)
                 {
                     ct.ThrowIfCancellationRequested();
                     if (!WindowLocator.IsForeground(s.Process)) return 1;
-                    // 허용오차는 위치 보정과 동일(사용자 지정): X=MiniTolerancePx, Y=CorrectTolY.
-                    // 단 룬 아이콘은 발판보다 몇 px 위에 그려져 점프로는 Y 잔차를 더 못 줄일 수 있다 —
-                    // '점프해도 층 불변'(vStuck) 확인 후에는 기존 룬 허용오차(RuneTolY)까지만 허용.
+                    // Y 허용오차는 위치 보정과 동일(사용자 지정): CorrectTolY. 단 룬 아이콘 오프셋
+                    // 추정이 어긋나 점프로는 잔차를 더 못 줄이는 경우('점프해도 층 불변' vStuck)에는
+                    // 기존 룬 허용오차(RuneTolY)까지만 인정한다.
                     double tolY = vStuck ? RuneTolY : CorrectTolY;
-                    if (Math.Abs(dot.X - runeAt.X) <= s.MiniTolerancePx && Math.Abs(dot.Y - runeAt.Y) <= tolY)
-                        break; // 도착 — 시작 시 측정한 룬 위치 기준(아이콘이 내 점에 가려져도 무관)
-                    var rune = runeAt;
-
-                    if (Math.Abs(dot.X - rune.X) > s.MiniTolerancePx)
-                    {
-                        var walk = await WalkToXAsync(s, mini, dot, rune.X, s.MiniTolerancePx, swm, maxMs, "rune", "룬으로 이동 중", ct).ConfigureAwait(false);
-                        if (walk.Result == Walk.NotForeground) return 1;
-                        if (walk.Result == Walk.LostDot) return 2;
-                        dot = walk.Dot;
-                        if (walk.Result == Walk.Timeout) break;
-                        continue; // 수평 정렬됨 — 다음 회차에서 수직 재평가
-                    }
-
-                    double dyOff = dot.Y - rune.Y; // +: 캐릭터가 룬보다 아래(위로 가야 함)
-                    if (Math.Abs(dyOff) <= tolY) break; // 도착
+                    double dyOff = dot.Y - runeAt.Y; // +: 캐릭터가 룬보다 아래(위로 가야 함)
+                    if (Math.Abs(dyOff) <= tolY) break; // 도착 — 시작 시 지정한 목표지점 기준
 
                     if (dyOff > 0)
                     {
@@ -677,7 +674,7 @@ public sealed class PositionWatcher : IDisposable
                     if (Math.Abs(landed.Value.Y - dot.Y) < 1.0)
                     {
                         vStuck = true;
-                        Status("rune", $"점프해도 층이 안 바뀜 — 현재 층에서 진행(높이 잔차 {landed.Value.Y - rune.Y:+0.0;-0.0}px)");
+                        Status("rune", $"점프해도 층이 안 바뀜 — 현재 층에서 진행(높이 잔차 {landed.Value.Y - runeAt.Y:+0.0;-0.0}px)");
                     }
                     dot = landed.Value;
 
