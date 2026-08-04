@@ -36,3 +36,5 @@ publish-local/
 publish/
 *.analysis.txt
 *.png.mask-*.png
+*.png.rune-mask.png
+*.png.rune.txt
