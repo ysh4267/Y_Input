@@ -108,16 +108,38 @@ internal static class MinimapDetector
     private const int RuneMinBlobArea = 6;    // 다이아 코어만 잡혀도 인정
     private const int RuneMaxBlobArea = 300;
     private const int RuneMaxBlobBox = 24;
+    // 색 게이트(블롭 평균) — 룬 다이아는 '마젠타'(실측 평균 RGB 221,102,255 · R-G=119).
+    // 색만 비슷한 파랑·라벤더 계열(맵 썸네일 아이콘 파편 R-G≤45, 기둥 장식 R-G≤48, R≤156)과
+    // 여기서 갈린다(08-04 퀸스로드: 룬 없는데 썸네일 파편 7px가 통과해 헛걸음한 사례).
+    private const int RuneMinMeanR = 180;
+    private const int RuneMinMeanRG = 75;
 
     /// <summary>미니맵 영역에서 룬(보라 다이아) 아이콘 중심을 찾는다(minimapRect 상대, 서브픽셀).
     /// 후보가 여럿이면 가장 큰 블롭. 없으면 null. (룬 사용 시작 시 1회만 측정하는 용도)</summary>
     public static PointF? FindRuneIcon(Bitmap frame, Rectangle minimapRect)
     {
-        var area = Rectangle.Intersect(minimapRect, new Rectangle(0, 0, frame.Width, frame.Height));
-        if (area.Width <= 0 || area.Height <= 0) return null;
+        PointF? best = null; double bestScore = double.MinValue;
+        foreach (var b in ScanRuneBlobs(frame, minimapRect, out _, out _, out _))
+            if (b.Pass && b.Count > bestScore) { bestScore = b.Count; best = b.Center; }
+        return best;
+    }
 
-        int w = area.Width, h = area.Height;
-        var mask = new bool[w * h];
+    /// <summary>룬 탐지 후보 블롭 하나 — 게이트 판정 결과(Pass/탈락 사유)와 평균 색 포함(진단용).</summary>
+    internal readonly record struct RuneBlob(PointF Center, int Count, int W, int H, double Fill,
+                                             int MeanR, int MeanG, int MeanB, bool Pass, string Note);
+
+    /// <summary>보라 마스크 → 블롭 분해 → 게이트 판정까지 프로덕션 경로 그대로 수행하고 후보 전부를
+    /// 돌려준다. FindRuneIcon(실전)과 --rune-minimap-analyze(진단)가 같은 코드를 쓰기 위한 공용부.</summary>
+    internal static List<RuneBlob> ScanRuneBlobs(Bitmap frame, Rectangle minimapRect, out bool[] mask, out int mw, out int mh)
+    {
+        var blobs = new List<RuneBlob>();
+        var area = Rectangle.Intersect(minimapRect, new Rectangle(0, 0, frame.Width, frame.Height));
+        mw = Math.Max(0, area.Width); mh = Math.Max(0, area.Height);
+        mask = new bool[mw * mh];
+        if (mw <= 0 || mh <= 0) return blobs;
+
+        int w = mw, h = mh;
+        var rs = new byte[w * h]; var gs = new byte[w * h]; var bs = new byte[w * h];
         var data = frame.LockBits(area, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
         try
         {
@@ -130,6 +152,7 @@ internal static class MinimapDetector
                     for (int x = 0; x < w; x++)
                     {
                         byte b = row[x * 4], g = row[x * 4 + 1], r = row[x * 4 + 2];
+                        rs[o + x] = r; gs[o + x] = g; bs[o + x] = b;
                         // 보라·라벤더: 파랑 우세 + 빨강 동반 + 초록 낮음
                         mask[o + x] = b >= 170 && r >= 100 && b - g >= 60;
                     }
@@ -141,11 +164,10 @@ internal static class MinimapDetector
         var seen = new bool[w * h];
         var stack = new Stack<int>();
         float ox = area.X - minimapRect.X, oy = area.Y - minimapRect.Y;
-        PointF? best = null; double bestScore = double.MinValue;
         for (int i = 0; i < mask.Length; i++)
         {
             if (!mask[i] || seen[i]) continue;
-            long sumX = 0, sumY = 0; int count = 0;
+            long sumX = 0, sumY = 0, sumR = 0, sumG = 0, sumB = 0; int count = 0;
             int minX = w, maxX = -1, minY = h, maxY = -1;
             stack.Push(i); seen[i] = true;
             while (stack.Count > 0)
@@ -153,6 +175,7 @@ internal static class MinimapDetector
                 int p = stack.Pop();
                 int px = p % w, py = p / w;
                 sumX += px; sumY += py; count++;
+                sumR += rs[p]; sumG += gs[p]; sumB += bs[p];
                 if (px < minX) minX = px; if (px > maxX) maxX = px;
                 if (py < minY) minY = py; if (py > maxY) maxY = py;
                 if (px > 0 && mask[p - 1] && !seen[p - 1]) { seen[p - 1] = true; stack.Push(p - 1); }
@@ -161,17 +184,52 @@ internal static class MinimapDetector
                 if (py < h - 1 && mask[p + w] && !seen[p + w]) { seen[p + w] = true; stack.Push(p + w); }
             }
             int bw = maxX - minX + 1, bh = maxY - minY + 1;
-            if (count < RuneMinBlobArea || count > RuneMaxBlobArea || bw > RuneMaxBlobBox || bh > RuneMaxBlobBox) continue;
+            double fill = count / (double)(bw * bh);
+            var c = new PointF((float)sumX / count + ox, (float)sumY / count + oy);
+            // 게이트 체인 — 첫 탈락 사유를 기록(진단 출력용). 실전 판정은 Pass만 사용.
+            bool pass; string note = "";
+            if (count < RuneMinBlobArea || count > RuneMaxBlobArea) { pass = false; note = "면적"; }
+            else if (bw > RuneMaxBlobBox || bh > RuneMaxBlobBox) { pass = false; note = "박스"; }
             // 모양 게이트 — 룬은 다이아(◆)라 바운딩박스의 절반만 채운다(≈0.5). 꽉 찬 원(≈0.79)·
             // 사각(≈1.0)인 보라 계열 NPC 마커가 색만으로 통과해 NPC에게 말을 걸었다(08-04 보고).
             // 침식된 작은 코어(면적<15)는 모양 판정이 무의미해 통과시킨다.
-            double fill = count / (double)(bw * bh);
-            if (count >= 15 && fill > 0.68) continue;
-            if (Math.Max(bw, bh) > Math.Min(bw, bh) * 2.2) continue; // 길쭉한 덩어리(장식·라벨) 배제
-            var c = new PointF((float)sumX / count + ox, (float)sumY / count + oy);
-            if (count > bestScore) { bestScore = count; best = c; }
+            else if (count >= 15 && fill > 0.68) { pass = false; note = "채움비"; }
+            else if (Math.Max(bw, bh) > Math.Min(bw, bh) * 2.2) { pass = false; note = "길쭉"; } // 장식·라벨 배제
+            else if (sumR / count < RuneMinMeanR || (sumR - sumG) / count < RuneMinMeanRG) { pass = false; note = "색"; } // 마젠타 아님
+            else pass = true;
+            blobs.Add(new RuneBlob(c, count, bw, bh, fill,
+                (int)(sumR / count), (int)(sumG / count), (int)(sumB / count), pass, note));
         }
-        return best;
+        return blobs;
+    }
+
+    /// <summary>--rune-minimap-analyze 진입점 — 저장된 rune-minimap.png로 룬 아이콘 탐지를 오프라인 재현.
+    /// 이미지 전체를 미니맵 영역으로 보고 후보 블롭 전부(게이트 판정 사유·평균 색 포함)와 최종 선택을
+    /// &lt;파일&gt;.rune.txt 로, 보라 마스크를 &lt;파일&gt;.rune-mask.png 로 남긴다.</summary>
+    public static void AnalyzeRuneToFile(string[] paths)
+    {
+        foreach (var path in paths)
+        {
+            try
+            {
+                using var bmp = new Bitmap(path);
+                var rect = new Rectangle(0, 0, bmp.Width, bmp.Height);
+                var blobs = ScanRuneBlobs(bmp, rect, out var mask, out int mw, out int mh);
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"{Path.GetFileName(path)} {bmp.Width}x{bmp.Height} — 보라 마스크 {mask.Count(x => x)}px, 블롭 {blobs.Count}개");
+                foreach (var b in blobs.OrderByDescending(x => x.Count))
+                    sb.AppendLine($"  ({b.Center.X,6:F1},{b.Center.Y,6:F1}) a{b.Count,-4} {b.W}x{b.H} 채움{b.Fill:F2} RGB({b.MeanR},{b.MeanG},{b.MeanB}) {(b.Pass ? "★통과" : "탈락:" + b.Note)}");
+                var pick = FindRuneIcon(bmp, rect);
+                sb.AppendLine(pick is { } p ? $"→ 룬 판정: ({p.X:F1},{p.Y:F1})" : "→ 룬 없음");
+                File.WriteAllText(path + ".rune.txt", sb.ToString());
+                using var mb = new Bitmap(mw, mh);
+                for (int y = 0; y < mh; y++)
+                    for (int x = 0; x < mw; x++)
+                        mb.SetPixel(x, y, mask[y * mw + x] ? Color.White : Color.Black);
+                mb.Save(path + ".rune-mask.png");
+            }
+            catch (Exception ex) { try { File.WriteAllText(path + ".rune.txt", "분석 실패: " + ex.Message); } catch { /* 무시 */ } }
+        }
     }
 
     // ---------- 검은 창(미니맵 패널) 기반 탐지 ----------

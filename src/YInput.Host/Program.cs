@@ -34,6 +34,10 @@ internal static class Program
         int raIdx = Array.IndexOf(cmdArgs, "--rune-analyze");
         if (raIdx >= 0 && raIdx + 1 < cmdArgs.Length) { Vision.RuneArrowDetector.AnalyzeToFile(cmdArgs[(raIdx + 1)..]); return; }
 
+        // 진단: 저장된 rune-minimap.png로 미니맵 룬 아이콘 탐지를 오프라인 재현(<png>.rune.txt 생성 후 종료).
+        int rmIdx = Array.IndexOf(cmdArgs, "--rune-minimap-analyze");
+        if (rmIdx >= 0 && rmIdx + 1 < cmdArgs.Length) { Vision.MinimapDetector.AnalyzeRuneToFile(cmdArgs[(rmIdx + 1)..]); return; }
+
         // 자체 설치: 설치 폴더가 아닌 곳에서 실행되면 설치 폴더로 복사 후 그쪽을 실행하고 이 인스턴스는 종료(뮤텍스 잡기 전).
         if (Installer.EnsureInstalled(cmdArgs)) return;
 
