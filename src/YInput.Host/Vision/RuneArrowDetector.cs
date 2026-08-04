@@ -1122,6 +1122,8 @@ internal static class RuneArrowDetector
                     }
                     int before1 = lockedCount;
                     angleT[j].Add(t); angleV[j].Add(PositionWatcher.FixAngleFlip(angleV[j], a.AngleDeg));
+                    if (PositionWatcher.DerailedAngles(angleT[j], angleV[j])) // 실전 LocalPass 미러: 플립 고착 리셋
+                    { angleT[j].Clear(); angleV[j].Clear(); sb.AppendLine($"      [화살표{j + 1} 플립 고착 → 시계열 리셋]"); }
                     sigHist[j].Add(a.Sig); if (sigHist[j].Count > 4) sigHist[j].RemoveAt(0);
                     int n1 = angleV[j].Count;
                     if (PositionWatcher.IsRotating(angleT[j], angleV[j])) lastRotAt[j] = n1;
