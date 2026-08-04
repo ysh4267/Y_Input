@@ -78,9 +78,12 @@ public sealed class PositionWatcher : IDisposable
     // (19:24 '아이콘 놓침' 실패, 19:48 목표 ±135px 널뜀 로그의 원인).
     private const double OccludeNearX = 5.0, OccludeNearY = 9.0;
     private const int RuneMaxMs = 30000;   // 수직 이동 포함 총 제한 — 위치 보정보다 길게
-    private const int JumpRiseMs = 450;        // 점프 직후 상승 구간 — 이륙 전 '정지' 오판 방지용 최소 대기
-    private const int UpJumpSettleMaxMs = 2500;   // 윗점프(V) 착지 폴링 상한 — 착지 순간 반동(튕김)이 있어 여유
+    private const int DownJumpRiseMs = 450;    // 아래점프 직후 낙하 진입 대기 — 이륙 전 '정지' 오판 방지
+    private const int UpJumpRiseMs = 800;      // 윗점프(V) 상승+정점 통과 대기 — 정점의 순간 정지를 착지로 오판 방지
+    private const int UpJumpSettleMaxMs = 2500;   // 윗점프 착지 폴링 상한 — 착지 순간 반동(튕김)이 있어 여유
     private const int DownJumpSettleMaxMs = 1800; // 아래점프 착지 폴링 상한
+    private const int PostUpJumpSpaceMs = 1500;   // 마지막 윗점프 → 스페이스 발동 최소 간격(사용자 지정 —
+                                                  // 착지 반동까지 완전히 끝난 뒤에만 발동)
 
     private readonly string _statePath;
     private readonly string _spotsDir;
@@ -561,6 +564,7 @@ public sealed class PositionWatcher : IDisposable
             }
 
             // ── 2단계: 수평 먼저 정렬 → 수직 점프 1회 → 다시 수평 재확인 반복(점프로 X가 흐트러질 수 있음) ──
+            long lastUpJumpAt = -1; // 마지막 윗점프(V) 시각 — 발동 전 최소 간격 보장용
             while (sw.ElapsedMilliseconds < RuneMaxMs)
             {
                 ct.ThrowIfCancellationRequested();
@@ -586,6 +590,7 @@ public sealed class PositionWatcher : IDisposable
                 {
                     Status("rune", $"윗점프(V)로 위층 이동 (높이차 {dyOff:+0.0;-0.0}px)");
                     await TapAsync(ScV, 120, ct, e0: false).ConfigureAwait(false);
+                    lastUpJumpAt = sw.ElapsedMilliseconds;
                 }
                 else
                 {
@@ -601,7 +606,9 @@ public sealed class PositionWatcher : IDisposable
                 }
                 // 착지·정지 폴링 — 윗점프(V)는 착지 순간 반동(튕김)이 있어 고정 대기로는 이르다.
                 // 미니맵 점이 연속 3표본 정지할 때까지 본 뒤에 다음 판단으로 넘어간다.
-                var landed = await WaitLandedAsync(s, mini, dot, dyOff > 0 ? UpJumpSettleMaxMs : DownJumpSettleMaxMs, ct).ConfigureAwait(false);
+                var landed = dyOff > 0
+                    ? await WaitLandedAsync(s, mini, dot, UpJumpRiseMs, UpJumpSettleMaxMs, ct).ConfigureAwait(false)
+                    : await WaitLandedAsync(s, mini, dot, DownJumpRiseMs, DownJumpSettleMaxMs, ct).ConfigureAwait(false);
                 if (landed is null) { Status("fail", "이동 중 미니맵 점을 놓쳤습니다."); return; }
                 dot = landed.Value;
             }
@@ -612,6 +619,15 @@ public sealed class PositionWatcher : IDisposable
             {
                 Status("fail", $"룬 도달 시간 초과(잔여 dx {dot.X - runeAt.X:+0.0;-0.0}px · dy {dot.Y - runeAt.Y:+0.0;-0.0}px).");
                 return;
+            }
+
+            // 윗점프 직후 곧장 발동하지 않는다(사용자 지정) — 착지 반동까지 완전히 끝난 뒤
+            // 스페이스를 눌러야 상호작용이 씹히지 않는다. 마지막 V로부터 최소 간격을 보장.
+            if (lastUpJumpAt >= 0)
+            {
+                long sinceUpJump = sw.ElapsedMilliseconds - lastUpJumpAt;
+                if (sinceUpJump < PostUpJumpSpaceMs)
+                    await PreciseDelay.WaitAsync((int)(PostUpJumpSpaceMs - sinceUpJump), ct).ConfigureAwait(false);
             }
 
             // ── 3단계: 발동 + 방향키 퍼즐 ──
@@ -1123,10 +1139,10 @@ public sealed class PositionWatcher : IDisposable
     /// 오판 방지) 후 미니맵 점이 연속 3표본(±1px, ~240ms) 움직이지 않으면 착지로 판정하고 그
     /// 좌표를 돌려준다. 윗점프(V)는 착지 순간 반동으로 한 번 더 튀므로 고정 대기로는 이르다 —
     /// 반동이 끝나 완전히 정지해야 통과된다. 상한까지 안정되지 않으면 마지막 측정값으로 진행.</summary>
-    private async Task<PointF?> WaitLandedAsync(WatcherSettings s, Rectangle mini, PointF last, int maxMs, CancellationToken ct)
+    private async Task<PointF?> WaitLandedAsync(WatcherSettings s, Rectangle mini, PointF last, int riseMs, int maxMs, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
-        await PreciseDelay.WaitAsync(JumpRiseMs, ct).ConfigureAwait(false);
+        await PreciseDelay.WaitAsync(riseMs, ct).ConfigureAwait(false);
         PointF? prev = null;
         int stable = 0;
         while (sw.ElapsedMilliseconds < maxMs)
