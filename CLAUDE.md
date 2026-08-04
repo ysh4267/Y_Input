@@ -65,6 +65,7 @@ YInput.exe --rune-minimap-analyze rune-minimap.png    # → .rune.txt 후보·�
 | `rune-strips-LUUX-slotshift-20260804` | 슬롯 어긋남 | 줄 채택 442/550/639/729 ±6 (프레임으로) |
 | `rune-frames-UUUR-carcion-20260804` | 정지형·몹 점거 | ④ ↑↑↑→ · 위치 358/470/537/646 ±5 |
 | `rune-frames-DULR-carcion2-20260804` | 정지형·불균일 간격(비 2.78) | ④ ↓↑←→ · 위치 389/486/622/671 ±5 |
+| `rune-frames-DRDD-purple4-20260804` | 침식+병합 공존·에지 잡블롭 | ②③ 에지 보정 789→711 · 줄 439/531/628/711 ±5 |
 | `rune-minimap\` | 아이콘 3장 | README 참조 |
 
 리플레이 산출물(`*.analysis.txt`, `*.png.mask-*.png`)은 gitignore됨 — 커밋하지 말 것.

@@ -56,6 +56,12 @@ internal static class RuneArrowDetector
                                                                // DDRD 잡줄(비 1.94, 면적 우세)은 지고
                                                                // 카르시온 진짜 줄(비 2.78, 면적 4배)은 이기는 창(0.3~0.4)
     private const double RowFracLo = 0.20, RowFracHi = 0.85;   // 후보 y 밴드 구간(실측 29~62% — 상단 잡줄 0~18%만 차단)
+    // 에지 슬롯 간격 외삽 교체(PickRow 후처리) — 20:19 실전: 침식 보라(a263)+병합 비대(a1347)가
+    // 한 줄에 공존하면 크기 게이트·면적 경쟁이 진짜 줄에 불리해져 끝 슬롯을 잡블롭(버섯 a783,
+    // 간격 161)이 차지했다. 나머지 두 간격이 균일(92/97)할 때만 외삽 위치의 실존 후보로 교체.
+    private const double EdgeGapSuspectMin = 1.5; // 에지 간격 ≥ 내부 균일 간격 평균 × 이 값 → 의심(실측 161/94.5=1.70)
+    private const double EdgeGapUniformMax = 1.3; // '나머지 두 간격 균일' 상한 — 카르시온2 97/49(비 1.98)는 미발동
+    private const int EdgeRepairTolPx = 25;       // 외삽 위치 허용 오차(실측: 후보 711 vs 외삽 722.5 = 11.5px)
 
     /// <summary>퍼즐 UI 탐색 영역(창 상대) — 캡처를 이 영역만 화면 복사로 뜨면 전체 창 캡처보다
     /// 훨씬 빠르다(취소 타이머 3초 안에 인식·입력을 끝내야 함).</summary>
@@ -610,7 +616,47 @@ internal static class RuneArrowDetector
                         double score = areaSum - centerPenalty - boxPenalty - gapPenalty;
                         if (score > bestScore) { bestScore = score; best = combo.ToList(); }
                     }
+        if (best is not null) RepairEdgeSlot(best, cands);
         return best;
+    }
+
+    /// <summary>에지 슬롯 간격 외삽 교체 — 선택된 줄의 끝 슬롯(1번/4번)이 잡블롭일 때 복구.
+    /// 조건: 나머지 두 간격이 균일(비 ≤1.3)한데 에지 간격만 그 평균의 1.5배 이상 → 외삽 위치
+    /// (±25px, 줄 y밴드 유지)에 실존하는 후보가 있으면 <b>면적과 무관하게</b> 그 후보로 교체.
+    /// 근거(20:19 실전, D R D D): 진짜 줄 439/531/628/711(간격 92/97/83)의 4번 보라가 침식(a263)
+    /// +3번이 몹과 병합(a1347)돼 크기 게이트(≤5배)에서 정답 조합이 탈락(비 5.12), 대신 버섯
+    /// a783이 4번을 차지(간격 92/97/161) → 관측점 난수 각도 → 3/4 실패. 균일 간격 실존 후보는
+    /// 잡블롭보다 강한 줄 증거다. 불균일 진짜 줄(카르시온2 97/136/49 — 나머지 비 1.98)과
+    /// 정상 줄(LUUX 108/89/90 — 에지 1.2배)은 발동 조건에 걸리지 않음을 픽스처로 검증.</summary>
+    private static void RepairEdgeSlot(List<Blob> row, List<Blob> cands)
+    {
+        for (int pass = 0; pass < 2; pass++)
+        {
+            bool lastEdge = pass == 0;
+            double g1 = row[1].Cx - row[0].Cx, g2 = row[2].Cx - row[1].Cx, g3 = row[3].Cx - row[2].Cx;
+            double edge = lastEdge ? g3 : g1;
+            double oA = lastEdge ? g1 : g2, oB = lastEdge ? g2 : g3;
+            if (Math.Max(oA, oB) > Math.Min(oA, oB) * EdgeGapUniformMax) continue;
+            double m = (oA + oB) / 2;
+            if (edge < m * EdgeGapSuspectMin) continue;
+            int slot = lastEdge ? 3 : 0;
+            double expX = lastEdge ? row[2].Cx + m : row[1].Cx - m;
+            // 유지되는 3개와 y밴드를 이뤄야 한다 — 의심 에지 블롭의 y는 기준에서 제외
+            var kept = row.Where((_, i) => i != slot).ToList();
+            double kyMin = kept.Min(b => b.Cy), kyMax = kept.Max(b => b.Cy);
+            Blob? swap = null;
+            foreach (var c in cands)
+            {
+                if (row.Contains(c)) continue;
+                if (Math.Abs(c.Cx - expX) > EdgeRepairTolPx) continue;
+                if (Math.Max(kyMax, c.Cy) - Math.Min(kyMin, c.Cy) > RowBandPx) continue;
+                if (swap is null || c.Area > swap.Area) swap = c;
+            }
+            if (swap is null) continue;
+            DiagLog?.Invoke($"[에지 보정] 슬롯{slot + 1} ({row[slot].Cx:0},{row[slot].Cy:0})a{row[slot].Area} 간격 {edge:0} → "
+                + $"외삽 {expX:0}±{EdgeRepairTolPx}의 ({swap.Cx:0},{swap.Cy:0})a{swap.Area}로 교체");
+            row[slot] = swap;
+        }
     }
 
     /// <summary>밝고 채도 높은 픽셀 마스크. requireWarm = 웜톤/초록만 허용(파랑·청록 우세 배제).
