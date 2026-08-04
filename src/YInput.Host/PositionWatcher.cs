@@ -67,18 +67,23 @@ public sealed class PositionWatcher : IDisposable
     private const ushort KeyDownE0 = 0x02, KeyUpE0 = 0x03;
     private const ushort ScSpace = 0x39, ScV = 0x2F, ScLAlt = 0x38; // 일반 키(E0 아님) — Down=0x00/Up=0x01
     private const int SearchBandPx = 24;                  // 템플릿 탐색 Y 범위(저장 Y ± 이 값)
-    // 위치 보정의 Y(층) 허용오차는 X와 동일하게 MiniTolerancePx를 쓴다(사용자 지정) — 스팟은
-    // 그 발판 위에서 저장되므로 같은 층이면 점 Y가 저장값과 거의 그대로 나온다. 별도 완화 없음.
+    private const double CorrectTolY = 3.0;               // 위치 보정 층(Y) 일치 판정 — 같은 발판이면
+                                                          // 점 Y가 거의 고정, 층간 간격(보통 5px+)보다 작게
+    private const double FlashJumpMinDx = 20.0;           // 목표가 이보다 멀면 방향키+Alt '따닥' 더블점프로 도약
+    private const int FlashJumpTapMs = 45, FlashJumpGapMs = 80; // Alt 두 번 '따닥' 탭 길이·간격
+    private const int FlashJumpCooldownMs = 700;          // 도약 사이 최소 간격 — 착지·재가속 시간
+    private const double RuneIconYOffset = 4.0;           // 룬 다이아 아이콘 중심이 발판보다 위에 그려지는 몫(추정,
+                                                          // 기존 RuneTolY=6 근거) — 목표 Y를 이만큼 내려 발판을 겨냥
+    private const double RopeStuckDy = 3.0;               // 아래점프 후 이만큼도 못 내려갔으면 로프·사다리에 걸림
+    private const int RopeSlideRiseMs = 250, RopeSlideMaxMs = 4000; // 로프 회복(↓ 홀드) 착지 폴링
     private const double MinPatchStdDev = 8;              // 패치 대비 하한(단색·특징 부족 거부)
 
-    // 룬 사용 — 룬은 상호작용 범위가 넓어 위치 보정보다 허용오차를 느슨하게 잡는다.
-    private const double RuneTolX = 2.0;   // 미니맵 px
-    private const double RuneTolY = 6.0;   // 층(발판) 일치 — 다이아 아이콘 중심이 발판보다 몇 px 위에 그려진다
-    // 도착 판정 범위 — 내 노란 점이 룬 아이콘에 겹칠(가릴) 정도로 가까우면 도착.
-    // 룬 위치는 시작 시 1회만 측정하고 이후 갱신하지 않는다(룬은 능동적으로 움직이지 않는다) —
-    // 도착 순간 내 점이 아이콘을 가리거나 다른 보라 마커(정예 등)가 있어도 목표가 흔들리지 않는다
-    // (19:24 '아이콘 놓침' 실패, 19:48 목표 ±135px 널뜀 로그의 원인).
-    private const double OccludeNearX = 5.0, OccludeNearY = 9.0;
+    // 룬 사용 — 이동·도착 판정은 위치 보정과 같은 허용오차(X=MiniTolerancePx, Y=CorrectTolY)를 쓴다
+    // (사용자 지정 2026-08-04). 목표지점은 시작 시 1회만 측정해 고정하고 이후 갱신하지 않는다
+    // (룬은 능동적으로 움직이지 않는다) — 도착 순간 내 점이 아이콘을 가리거나 다른 보라 마커(정예 등)가
+    // 있어도 목표가 흔들리지 않는다(19:24 '아이콘 놓침' 실패, 19:48 목표 ±135px 널뜀 로그의 원인).
+    private const double RuneTolY = 6.0;   // '점프해도 층 불변' 예외 시에만 쓰는 Y 상한 —
+                                           // RuneIconYOffset 추정이 어긋난 경우의 무한 점프 방지용
     private const int RuneMaxMs = 30000;   // 수직 이동 포함 총 제한 — 위치 보정보다 길게
     private const int DownJumpRiseMs = 450;    // 아래점프 직후 낙하 진입 대기 — 이륙 전 '정지' 오판 방지
     private const int UpJumpRiseMs = 800;      // 윗점프(V) 상승+정점 통과 대기 — 정점의 순간 정지를 착지로 오판 방지
@@ -449,7 +454,7 @@ public sealed class PositionWatcher : IDisposable
                 if (walk.Result == Walk.Timeout) { Status("fail", $"보정 시간 초과(미니맵 이탈 {miniDx:+0.0;-0.0}px 남음)."); return; }
 
                 double miniDy = dotNow.Y - spot.DotY; // +: 캐릭터가 스팟보다 아래(위로 가야 함)
-                if (Math.Abs(miniDy) <= s.MiniTolerancePx) break; // X·Y 모두 일치 — 보정 완료
+                if (Math.Abs(miniDy) <= CorrectTolY) break; // X·Y 모두 일치 — 보정 완료
                 if (sw.ElapsedMilliseconds >= s.MaxCorrectionMs) { Status("fail", $"보정 시간 초과(층차 {miniDy:+0.0;-0.0}px 남음)."); return; }
                 if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 보정을 중단합니다."); return; }
 
@@ -465,7 +470,7 @@ public sealed class PositionWatcher : IDisposable
                 }
                 var landed = miniDy > 0
                     ? await WaitLandedAsync(s, mini, dotNow, UpJumpRiseMs, UpJumpSettleMaxMs, ct).ConfigureAwait(false)
-                    : await WaitLandedAsync(s, mini, dotNow, DownJumpRiseMs, DownJumpSettleMaxMs, ct).ConfigureAwait(false);
+                    : await WaitDownLandedAsync(s, mini, dotNow, "coarse", ct).ConfigureAwait(false);
                 if (landed is null) { Status("fail", "보정 중 미니맵 점을 놓쳤습니다."); return; }
                 dotNow = landed.Value; // 착지 중 X가 흐트러졌을 수 있어 루프 선두에서 다시 수평 정렬
             }
@@ -486,8 +491,9 @@ public sealed class PositionWatcher : IDisposable
     // ---------- 공용 수평 걷기 ----------
     private enum Walk { Arrived, Timeout, LostDot, NotForeground }
 
-    /// <summary>미니맵 X 목표까지 좌우 걷기 — 연속 홀드 + 홀드 중 폴링(도착 직전/지나침에 뗌) +
-    /// 감쇠 리바운드(220→132→79→50ms) + 뗀 뒤 SettleMs 대기 후 재측정. 위치 보정·룬 이동 공용.</summary>
+    /// <summary>미니맵 X 목표까지 좌우 이동 — 연속 홀드 + 홀드 중 폴링(도착 직전/지나침에 뗌) +
+    /// 멀면(>FlashJumpMinDx) Alt 따닥 더블점프 도약 + 감쇠 리바운드(220→132→79→50ms) +
+    /// 뗀 뒤 SettleMs 대기 후 재측정. 위치 보정·룬 이동 공용.</summary>
     private async Task<(Walk Result, PointF Dot)> WalkToXAsync(WatcherSettings s, Rectangle mini, PointF dot, double targetX,
         double tol, Stopwatch sw, long maxMs, string state, string label, CancellationToken ct)
     {
@@ -507,6 +513,7 @@ public sealed class PositionWatcher : IDisposable
             long holdCapMs = rebounds == 0 ? long.MaxValue
                                            : Math.Max(50, (long)(220 * Math.Pow(0.6, rebounds - 1)));
             var holdSw = Stopwatch.StartNew();
+            long lastFjAt = -FlashJumpCooldownMs; // 홀드 시작 즉시 1회 도약 가능
             _backend.Send(new KeyboardEvent { Code = key, State = KeyDownE0 });
             try
             {
@@ -523,6 +530,15 @@ public sealed class PositionWatcher : IDisposable
                     miniDx = dot.X - targetX;
                     if (Math.Sign(miniDx) != dirSign) break;      // 목표를 지나침
                     if (Math.Abs(miniDx) <= releaseEarly) break;  // 도착 직전(관성 감안)
+                    // 아직 멀면 방향키를 누른 채 Alt 두 번 '따닥' — 그 방향으로 더블점프 도약(사용자 지정).
+                    // 가까워지면 걷기만으로 미세 접근한다.
+                    if (Math.Abs(miniDx) > FlashJumpMinDx && holdSw.ElapsedMilliseconds - lastFjAt >= FlashJumpCooldownMs)
+                    {
+                        await TapAsync(ScLAlt, FlashJumpTapMs, ct, e0: false).ConfigureAwait(false);
+                        await PreciseDelay.WaitAsync(FlashJumpGapMs, ct).ConfigureAwait(false);
+                        await TapAsync(ScLAlt, FlashJumpTapMs, ct, e0: false).ConfigureAwait(false);
+                        lastFjAt = holdSw.ElapsedMilliseconds;
+                    }
                 }
             }
             finally { try { _backend.Send(new KeyboardEvent { Code = key, State = KeyUpE0 }); } catch { } }
@@ -586,6 +602,9 @@ public sealed class PositionWatcher : IDisposable
                 rune0 = MeasureRune(s, mini);
             }
             if (rune0 is not { } runeAt) { Status("skip", "미니맵에 룬 없음 — 이번 회차를 바로 종료합니다."); return; }
+            // 목표지점 지정(사용자 지정) — 아이콘은 발판보다 몇 px 위에 그려지므로 '아이콘보다 약간 아래'
+            // 즉 실제 발판 높이를 목표로 잡는다. 이후 이동·도착 판정은 전부 이 지점 기준.
+            runeAt.Y += (float)RuneIconYOffset;
             var sw = Stopwatch.StartNew();
 
             // ── 1단계: 내 캐릭터 점 식별(위치 보정과 동일 — 여러 개면 프로브 이동으로 확인) ──
@@ -609,17 +628,22 @@ public sealed class PositionWatcher : IDisposable
             async Task<int> MoveToRuneAsync(long maxMs)
             {
                 var swm = Stopwatch.StartNew();
+                bool vStuck = false; // 점프로도 층이 안 바뀜 — 수직 이동의 물리적 한계 도달(무한 점프 방지)
                 while (swm.ElapsedMilliseconds < maxMs)
                 {
                     ct.ThrowIfCancellationRequested();
                     if (!WindowLocator.IsForeground(s.Process)) return 1;
-                    if (Math.Abs(dot.X - runeAt.X) <= OccludeNearX && Math.Abs(dot.Y - runeAt.Y) <= OccludeNearY)
+                    // 허용오차는 위치 보정과 동일(사용자 지정): X=MiniTolerancePx, Y=CorrectTolY.
+                    // 단 룬 아이콘은 발판보다 몇 px 위에 그려져 점프로는 Y 잔차를 더 못 줄일 수 있다 —
+                    // '점프해도 층 불변'(vStuck) 확인 후에는 기존 룬 허용오차(RuneTolY)까지만 허용.
+                    double tolY = vStuck ? RuneTolY : CorrectTolY;
+                    if (Math.Abs(dot.X - runeAt.X) <= s.MiniTolerancePx && Math.Abs(dot.Y - runeAt.Y) <= tolY)
                         break; // 도착 — 시작 시 측정한 룬 위치 기준(아이콘이 내 점에 가려져도 무관)
                     var rune = runeAt;
 
-                    if (Math.Abs(dot.X - rune.X) > RuneTolX)
+                    if (Math.Abs(dot.X - rune.X) > s.MiniTolerancePx)
                     {
-                        var walk = await WalkToXAsync(s, mini, dot, rune.X, RuneTolX, swm, maxMs, "rune", "룬으로 이동 중", ct).ConfigureAwait(false);
+                        var walk = await WalkToXAsync(s, mini, dot, rune.X, s.MiniTolerancePx, swm, maxMs, "rune", "룬으로 이동 중", ct).ConfigureAwait(false);
                         if (walk.Result == Walk.NotForeground) return 1;
                         if (walk.Result == Walk.LostDot) return 2;
                         dot = walk.Dot;
@@ -628,7 +652,7 @@ public sealed class PositionWatcher : IDisposable
                     }
 
                     double dyOff = dot.Y - rune.Y; // +: 캐릭터가 룬보다 아래(위로 가야 함)
-                    if (Math.Abs(dyOff) <= RuneTolY) break; // 도착
+                    if (Math.Abs(dyOff) <= tolY) break; // 도착
 
                     if (dyOff > 0)
                     {
@@ -645,8 +669,15 @@ public sealed class PositionWatcher : IDisposable
                     // 미니맵 점이 연속 3표본 정지할 때까지 본 뒤에 다음 판단으로 넘어간다.
                     var landed = dyOff > 0
                         ? await WaitLandedAsync(s, mini, dot, UpJumpRiseMs, UpJumpSettleMaxMs, ct).ConfigureAwait(false)
-                        : await WaitLandedAsync(s, mini, dot, DownJumpRiseMs, DownJumpSettleMaxMs, ct).ConfigureAwait(false);
+                        : await WaitDownLandedAsync(s, mini, dot, "rune", ct).ConfigureAwait(false);
                     if (landed is null) return 2;
+                    // 점프했는데 Y가 그대로면 이 방향으로는 층 이동 불가(이미 룬 층이거나 맵 끝) —
+                    // 반복해봐야 무한 점프라, 남은 잔차는 RuneTolY 한도 안에서 인정하고 진행한다.
+                    if (Math.Abs(landed.Value.Y - dot.Y) < 1.0)
+                    {
+                        vStuck = true;
+                        Status("rune", $"점프해도 층이 안 바뀜 — 현재 층에서 진행(높이 잔차 {landed.Value.Y - rune.Y:+0.0;-0.0}px)");
+                    }
                     dot = landed.Value;
 
                     // 윗점프 후에는 거리 판단도 V로부터 최소 1.5초 뒤에(사용자 지정) — 점프 궤적 중
@@ -662,8 +693,8 @@ public sealed class PositionWatcher : IDisposable
                     }
                 }
 
-                // 최종 도착 확인 — 시작 시 측정한 룬 위치 기준(재측정 없음)
-                if (Math.Abs(dot.X - runeAt.X) > OccludeNearX || Math.Abs(dot.Y - runeAt.Y) > OccludeNearY)
+                // 최종 도착 확인 — 시작 시 지정한 목표지점 기준(재측정 없음), 위치 보정과 같은 허용오차
+                if (Math.Abs(dot.X - runeAt.X) > s.MiniTolerancePx || Math.Abs(dot.Y - runeAt.Y) > (vStuck ? RuneTolY : CorrectTolY))
                     return 3;
 
                 // 윗점프 직후 곧장 발동하지 않는다(사용자 지정) — 착지 반동까지 완전히 끝난 뒤
@@ -753,7 +784,7 @@ public sealed class PositionWatcher : IDisposable
                     if (dchk is { } dv)
                     {
                         dot = dv;
-                        if (Math.Abs(dot.X - runeAt.X) > OccludeNearX || Math.Abs(dot.Y - runeAt.Y) > OccludeNearY)
+                        if (Math.Abs(dot.X - runeAt.X) > s.MiniTolerancePx || Math.Abs(dot.Y - runeAt.Y) > CorrectTolY)
                         {
                             Status("rune", $"룬에서 밀려남(dx {dot.X - runeAt.X:+0.0;-0.0} · dy {dot.Y - runeAt.Y:+0.0;-0.0}px) — 다시 이동합니다");
                             switch (await MoveToRuneAsync(12000).ConfigureAwait(false))
@@ -1444,8 +1475,8 @@ public sealed class PositionWatcher : IDisposable
         return (m.X - spot.PatchX, m.Score); // 밴드는 창 X=0부터라 X는 창 상대 그대로
     }
 
-    /// <summary>아래점프(↓+Alt) — Alt 탭 후에도 ↓를 1초가량 유지(사용자 지정 2026-08-04): 낙하 중
-    /// 줄·사다리를 잡아버리면 이동이 막히는데, ↓를 계속 누르고 있으면 타고 내려가 회복된다.</summary>
+    /// <summary>아래점프 — ↓를 누른 채 Alt 한 번 탭(꾹 유지 없음, 사용자 지정 2026-08-04).
+    /// 낙하 중 로프·사다리를 잡아버리는 문제는 <see cref="WaitDownLandedAsync"/>의 예외처리가 맡는다.</summary>
     private async Task DownJumpAsync(CancellationToken ct)
     {
         _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyDownE0 });
@@ -1453,9 +1484,23 @@ public sealed class PositionWatcher : IDisposable
         {
             await PreciseDelay.WaitAsync(60, ct).ConfigureAwait(false);
             await TapAsync(ScLAlt, 90, ct, e0: false).ConfigureAwait(false);
-            await PreciseDelay.WaitAsync(1000, ct).ConfigureAwait(false);
         }
         finally { try { _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyUpE0 }); } catch { } }
+    }
+
+    /// <summary>아래점프 후 착지 대기 + 로프 예외처리 — 착지 Y가 출발과 거의 같으면 낙하 중
+    /// 로프·사다리를 잡은 것으로 보고, ↓를 꾹 눌러(이 예외에서만 홀드) 바닥까지 타고 내려간다.</summary>
+    private async Task<PointF?> WaitDownLandedAsync(WatcherSettings s, Rectangle mini, PointF from, string state, CancellationToken ct)
+    {
+        var landed = await WaitLandedAsync(s, mini, from, DownJumpRiseMs, DownJumpSettleMaxMs, ct).ConfigureAwait(false);
+        if (landed is { } p && p.Y - from.Y < RopeStuckDy)
+        {
+            Status(state, "아래점프가 로프·사다리에 걸린 듯 — ↓를 눌러 끝까지 타고 내려갑니다");
+            _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyDownE0 });
+            try { landed = await WaitLandedAsync(s, mini, p, RopeSlideRiseMs, RopeSlideMaxMs, ct).ConfigureAwait(false); }
+            finally { try { _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyUpE0 }); } catch { } }
+        }
+        return landed;
     }
 
     /// <summary>키 1회 탭(누르고 holdMs 뒤 뗌). e0=false면 일반 키(스페이스·V·Alt 등).</summary>
