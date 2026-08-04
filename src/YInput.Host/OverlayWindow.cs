@@ -63,6 +63,8 @@ internal sealed class OverlayWindow : Form
     private readonly HashSet<string> _black = new();
     private List<OverlayRow> _rows = new();
     private Bitmap? _bmp; private bool _bmpDirty = true; // 내용 바뀔 때만 재생성, 아니면 캐시 재사용(재배치용)
+    private int _bmpYOffset;   // 창 상단 기준 표시 y — 본문(필 행)이 세로 중앙에 오도록 빌드 시 계산
+    private int _bmpGh = -1;   // 빌드 당시 게임 창 높이 — 달라지면 하단 앵커가 틀어지므로 재빌드
     private uint _fgPidCache; private string _fgProcCache = "";
     private readonly System.Windows.Forms.Timer _poll;
 
@@ -156,11 +158,13 @@ internal sealed class OverlayWindow : Form
         int gh = r.bottom - r.top;
         if (r.right - r.left <= 0 || gh <= 0) return;
 
-        if (_bmpDirty || _bmp == null) { _bmp?.Dispose(); _bmp = BuildBitmap(); _bmpDirty = false; }
+        if (_bmpDirty || _bmp == null || _bmpGh != gh)
+        { _bmp?.Dispose(); _bmp = BuildBitmap(gh, out _bmpYOffset); _bmpDirty = false; _bmpGh = gh; }
         int x = r.left + LeftMargin;
-        // 왼쪽 아래 배치 — 룬 퍼즐 인식이 캡처하는 상단 영역(창 높이 ~60%)을 가리지 않게.
-        // (중앙 배치 시절 디버그 패널이 캡처에 찍혀 인식을 오염시켰다 — 00:45 실행)
-        int y = Math.Max(r.top + 8, r.bottom - _bmp.Height - 8);
+        // 본문(필 행)은 왼쪽 '중앙', 디버그 패널은 같은 비트맵 안에서 왼쪽 '하단'에 앵커된다.
+        // (디버그 패널을 중앙에 두면 룬 퍼즐 캡처 영역에 찍혀 인식을 오염시켰다 — 00:45 실행.
+        //  본문 몇 줄은 중앙(~50%H)이라 화살표 밴드(28~42%H) 밖이다.)
+        int y = r.top + _bmpYOffset;
         if (!Visible) Show();
         PushBitmap(_bmp, x, y);
     }
@@ -187,7 +191,9 @@ internal sealed class OverlayWindow : Form
     private const int RingD = 30, RingStroke = 3, InnerStroke = 3;
     private const int PadL = 6, PadR = 13, PadV = 6, Gap = 9, RowGap = 7;
 
-    private Bitmap BuildBitmap()
+    /// <summary>비트맵 구성 — 본문(필 행)은 상단에 그려 창 세로 중앙에 오도록 yOffset을 계산하고,
+    /// 디버그 패널은 비트맵 하단(= 창 하단 8px 위)에 앵커한다. gh = 게임 창 높이.</summary>
+    private Bitmap BuildBitmap(int gh, out int yOffset)
     {
         using var probe = new Bitmap(1, 1);
         using (var pg = Graphics.FromImage(probe)) { pg.TextRenderingHint = TextRenderingHint.AntiAlias; }
@@ -227,8 +233,16 @@ internal sealed class OverlayWindow : Form
         }
 
         int W = Math.Max(maxW, dbgW) + M * 2;
-        int H = _rows.Count * pillH + Math.Max(0, _rows.Count - 1) * RowGap
-                + (dbgH > 0 ? (_rows.Count > 0 ? RowGap : 0) + dbgH : 0) + M * 2;
+        int rowsBlockH = _rows.Count * pillH + Math.Max(0, _rows.Count - 1) * RowGap + M * 2;
+        // 본문이 창 세로 중앙에 오도록 표시 오프셋 계산 — 디버그가 있으면 비트맵을 창 하단까지 늘려
+        // 패널을 그 끝에 앵커한다(창이 작아 겹칠 상황이면 본문 바로 아래로 밀어낸다)
+        yOffset = Math.Max(8, (gh - rowsBlockH) / 2);
+        int H = rowsBlockH;
+        if (dbgH > 0)
+        {
+            int spanH = gh - 8 - yOffset; // 표시 시작점부터 창 하단(8px 여백)까지
+            H = Math.Max(spanH, rowsBlockH + RowGap + dbgH + M);
+        }
         W = Math.Max(W, 40); H = Math.Max(H, 40);
 
         var bmp = new Bitmap(W, H, PixelFormat.Format32bppArgb);
@@ -267,9 +281,10 @@ internal sealed class OverlayWindow : Form
             y += pillH + RowGap;
         }
 
-        // 디버그 섹션 — 진행 단계(위) + 최근 송출 키(아래), 각 목록은 위=과거·아래=최신
+        // 디버그 섹션 — 비트맵 하단 앵커(= 창 왼쪽 하단), 진행 단계(위) + 최근 송출 키(아래)
         if (dbgH > 0)
         {
+            y = Math.Max(y, H - dbgH - M);
             var panel = new Rectangle(M, y, Math.Max(maxW, dbgW), dbgH);
             using (var path = Rounded(panel, 10))
             {

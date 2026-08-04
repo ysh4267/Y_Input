@@ -82,8 +82,9 @@ public sealed class PositionWatcher : IDisposable
     private const int UpJumpRiseMs = 800;      // 윗점프(V) 상승+정점 통과 대기 — 정점의 순간 정지를 착지로 오판 방지
     private const int UpJumpSettleMaxMs = 2500;   // 윗점프 착지 폴링 상한 — 착지 순간 반동(튕김)이 있어 여유
     private const int DownJumpSettleMaxMs = 1800; // 아래점프 착지 폴링 상한
-    private const int PostUpJumpSpaceMs = 1500;   // 마지막 윗점프 → 스페이스 발동 최소 간격(사용자 지정 —
-                                                  // 착지 반동까지 완전히 끝난 뒤에만 발동)
+    private const int PostUpJumpMs = 1500;     // 윗점프(V) → 거리 판단·스페이스 발동 최소 간격(사용자 지정) —
+                                               // 점프 궤적 중 룬과 순간 가까워졌다 멀어질 수 있고, 착지
+                                               // 반동까지 끝난 '정착 후' 위치로만 판단·발동해야 한다
 
     private readonly string _statePath;
     private readonly string _spotsDir;
@@ -611,6 +612,18 @@ public sealed class PositionWatcher : IDisposable
                     : await WaitLandedAsync(s, mini, dot, DownJumpRiseMs, DownJumpSettleMaxMs, ct).ConfigureAwait(false);
                 if (landed is null) { Status("fail", "이동 중 미니맵 점을 놓쳤습니다."); return; }
                 dot = landed.Value;
+
+                // 윗점프 후에는 거리 판단도 V로부터 최소 1.5초 뒤에(사용자 지정) — 점프 궤적 중
+                // 룬과 순간 가까워졌다 다시 멀어질 수 있어, 시간이 찬 뒤 위치를 재측정해 판단한다.
+                if (dyOff > 0)
+                {
+                    long sinceV = sw.ElapsedMilliseconds - lastUpJumpAt;
+                    if (sinceV < PostUpJumpMs)
+                        await PreciseDelay.WaitAsync((int)(PostUpJumpMs - sinceV), ct).ConfigureAwait(false);
+                    var settled = MeasureDot(s, mini, dot);
+                    if (settled is null) { Status("fail", "이동 중 미니맵 점을 놓쳤습니다."); return; }
+                    dot = settled.Value;
+                }
             }
 
             // 최종 도착 확인 — 시작 시 측정한 룬 위치 기준(재측정 없음)
@@ -626,8 +639,8 @@ public sealed class PositionWatcher : IDisposable
             if (lastUpJumpAt >= 0)
             {
                 long sinceUpJump = sw.ElapsedMilliseconds - lastUpJumpAt;
-                if (sinceUpJump < PostUpJumpSpaceMs)
-                    await PreciseDelay.WaitAsync((int)(PostUpJumpSpaceMs - sinceUpJump), ct).ConfigureAwait(false);
+                if (sinceUpJump < PostUpJumpMs)
+                    await PreciseDelay.WaitAsync((int)(PostUpJumpMs - sinceUpJump), ct).ConfigureAwait(false);
             }
 
             // ── 3단계: 발동 + 방향키 퍼즐 ──
