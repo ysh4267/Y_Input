@@ -12,6 +12,8 @@ namespace YInput.Host.Services;
 /// gist 안의 단일 파일(<c>yinput-macros.json</c>)에 전체 매크로를 담고, <b>3-way 병합</b>(공통 조상 = 마지막 동기화
 /// 스냅샷 <c>sync-base.json</c>)으로 PC별 편집을 합친다. 충돌은 <see cref="Macro.ModifiedUtc"/> 기준 최신 우선,
 /// 삭제는 조상 대비 '부재'로 감지해 전파한다. 같은 토큰(계정)의 여러 PC는 파일명으로 같은 gist를 자동 공유한다.
+/// '위치 보정' 블록이 참조하는 스팟(<c>spots\{id}.json/png</c>)도 번들에 함께 실어 나른다 —
+/// 스팟은 생성 후 불변(재지정 = 새 id)이므로 병합 없이 '참조되는 id의 합집합'으로 충분하다.
 /// 트리거: 시작 시 1회, 로컬 편집 후 디바운스(3초), 주기(45초).
 /// </summary>
 public sealed class GitHubSync : IDisposable
@@ -26,8 +28,20 @@ public sealed class GitHubSync : IDisposable
 
     private sealed class Bundle
     {
-        public int Version { get; set; } = 1;
+        public int Version { get; set; } = 2;
         public List<Macro> Macros { get; set; } = new();
+        /// <summary>'위치 보정' 스팟 파일 묶음(v2). 구버전 번들에는 없음 — null 허용.</summary>
+        public List<SpotEntry>? Spots { get; set; }
+    }
+
+    /// <summary>스팟 파일 한 쌍을 그대로 실어 나른다(원문 보존 — 역직렬화/재직렬화로 바이트가 달라지지 않게).</summary>
+    private sealed class SpotEntry
+    {
+        public string Id { get; set; } = "";
+        /// <summary><c>spots\{id}.json</c> 원문.</summary>
+        public string Json { get; set; } = "";
+        /// <summary><c>spots\{id}.png</c> base64.</summary>
+        public string Png { get; set; } = "";
     }
 
     private const string GistFile = "yinput-macros.json";
@@ -37,6 +51,7 @@ public sealed class GitHubSync : IDisposable
     private readonly MacroService _service;
     private readonly string _configPath;
     private readonly string _basePath;
+    private readonly string _spotsDir;
     private readonly HttpClient _http;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
@@ -57,6 +72,7 @@ public sealed class GitHubSync : IDisposable
         _service = service;
         _configPath = System.IO.Path.Combine(dataRoot, "sync-config.json");
         _basePath = System.IO.Path.Combine(dataRoot, "sync-base.json");
+        _spotsDir = System.IO.Path.Combine(dataRoot, "spots"); // PositionWatcher와 같은 위치
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("YInput-Sync", "1.0"));
         _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
@@ -146,19 +162,22 @@ public sealed class GitHubSync : IDisposable
         try
         {
             var local = _library.LoadAll().ToDictionary(m => m.Id, m => m);
-            var (gistId, remoteJson, created) = await EnsureGistAsync(local);
+            var localSpots = LoadLocalSpots(ReferencedSpotIds(local.Values));
+            var (gistId, remoteJson, created) = await EnsureGistAsync(local, localSpots);
 
             Dictionary<string, Macro> merged;
+            Dictionary<string, SpotEntry> mergedSpots;
             bool changedLocal, changedRemote;
+            int gotSpots = 0;
             if (created)
             {
                 // 방금 로컬 내용으로 gist 생성 — 원격 = 로컬. 추가 변경 없음.
-                merged = local; changedLocal = false; changedRemote = false;
+                merged = local; mergedSpots = localSpots; changedLocal = false; changedRemote = false;
             }
             else if (remoteJson is null)
             {
                 // gist는 있는데 우리 파일이 비어/없음 — 로컬을 올린다(로컬 삭제 절대 안 함 = 데이터 보호).
-                merged = local; changedLocal = false; changedRemote = true;
+                merged = local; mergedSpots = localSpots; changedLocal = false; changedRemote = true;
             }
             else if (string.IsNullOrWhiteSpace(remoteJson))
             {
@@ -166,15 +185,29 @@ public sealed class GitHubSync : IDisposable
             }
             else
             {
-                var remote = ParseBundle(remoteJson); // 손상 JSON이면 예외 → 중단(로컬 대량 삭제 방지)
+                var (remote, remoteSpots) = ParseBundle(remoteJson); // 손상 JSON이면 예외 → 중단(로컬 대량 삭제 방지)
                 Dictionary<string, Macro> ancestor;
-                try { ancestor = ParseBundle(TryReadBase()); } catch { ancestor = new(); } // 조상 손상은 안전(삭제 판정은 조상-존재 필요)
+                try { ancestor = ParseBundle(TryReadBase()).Macros; } catch { ancestor = new(); } // 조상 손상은 안전(삭제 판정은 조상-존재 필요)
                 (merged, changedLocal, changedRemote) = Merge(ancestor, local, remote);
+
+                // 스팟은 불변이라 병합이 필요 없다 — 병합 결과 매크로가 참조하는 id만 로컬 우선으로 모은다
+                // (참조가 끊긴 원격 고아 스팟은 자연히 번들에서 빠진다).
+                mergedSpots = new Dictionary<string, SpotEntry>();
+                foreach (var id in ReferencedSpotIds(merged.Values))
+                {
+                    if (localSpots.TryGetValue(id, out var ls)) mergedSpots[id] = ls;
+                    else if (remoteSpots.TryGetValue(id, out var rs)) mergedSpots[id] = rs;
+                    // 양쪽 다 없으면 스킵 — 구버전이 올린 번들엔 스팟이 없어 파일이 아직 어느 PC에도 안 실렸을 수 있다.
+                }
+                gotSpots = ApplyLocalSpots(mergedSpots.Values.Where(e => !localSpots.ContainsKey(e.Id)));
+                // 원격 번들의 스팟 집합이 병합 결과와 다르면(누락·고아·구버전) 푸시로 맞춘다.
+                if (mergedSpots.Count != remoteSpots.Count || mergedSpots.Keys.Any(k => !remoteSpots.ContainsKey(k)))
+                    changedRemote = true;
             }
 
             if (changedLocal) ApplyLocal(merged, local);
 
-            var mergedJson = BuildBundle(merged);
+            var mergedJson = BuildBundle(merged, mergedSpots);
             bool pushed = false;
             if (changedRemote) { await PatchGistAsync(gistId, mergedJson); pushed = true; }
 
@@ -183,6 +216,8 @@ public sealed class GitHubSync : IDisposable
 
             LastSync = DateTimeOffset.UtcNow;
             LastResult = $"완료 · 매크로 {merged.Count}개"
+                + (mergedSpots.Count > 0 ? $" · 위치 {mergedSpots.Count}곳" : "")
+                + (gotSpots > 0 ? $" · 위치 {gotSpots}곳 내려받음" : "")
                 + (created ? " · gist 생성" : "") + (pushed ? " · 올림" : "") + (changedLocal ? " · 내려받음" : "");
             _service.Log("info", $"[동기화] {LastResult} ({reason})");
             return LastResult;
@@ -256,21 +291,84 @@ public sealed class GitHubSync : IDisposable
     }
 
     // 손상 JSON이면 예외를 던진다(호출측에서 원격=중단 / 조상=빈 집합으로 안전 처리).
-    private static Dictionary<string, Macro> ParseBundle(string? json)
+    private static (Dictionary<string, Macro> Macros, Dictionary<string, SpotEntry> Spots) ParseBundle(string? json)
     {
         var map = new Dictionary<string, Macro>();
-        if (string.IsNullOrWhiteSpace(json)) return map;
+        var spots = new Dictionary<string, SpotEntry>();
+        if (string.IsNullOrWhiteSpace(json)) return (map, spots);
         var bundle = JsonSerializer.Deserialize<Bundle>(json, MacroStore.Options);
         if (bundle?.Macros is { } list)
             foreach (var m in list)
                 if (!string.IsNullOrEmpty(m.Id)) map[m.Id] = m;
+        if (bundle?.Spots is { } slist) // 구버전(v1) 번들엔 없음
+            foreach (var s in slist)
+                if (IsValidSpotId(s.Id)) spots[s.Id] = s;
+        return (map, spots);
+    }
+
+    private static string BuildBundle(Dictionary<string, Macro> macros, Dictionary<string, SpotEntry> spots)
+    {
+        var ordered = macros.Values.OrderBy(m => m.Order).ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        var spotList = spots.Values.OrderBy(s => s.Id, StringComparer.Ordinal).ToList();
+        return JsonSerializer.Serialize(new Bundle { Version = 2, Macros = ordered, Spots = spotList }, MacroStore.Options);
+    }
+
+    // ---------- 스팟('위치 보정' 기준 위치) 파일 ----------
+    // PositionWatcher.IsValidId와 동일 규칙 — 원격 번들의 id가 경로로 쓰이므로 반드시 검증(경로 탈출 방지).
+    private static bool IsValidSpotId(string id) =>
+        id is { Length: >= 8 and <= 64 } && id.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
+
+    /// <summary>매크로들의 '위치 보정' 블록이 참조하는 스팟 id 집합.</summary>
+    private static HashSet<string> ReferencedSpotIds(IEnumerable<Macro> macros)
+    {
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var m in macros)
+            foreach (var s in m.Steps ?? [])
+                if (s.Event is PositionCorrectEvent pc && IsValidSpotId(pc.SpotId))
+                    ids.Add(pc.SpotId);
+        return ids;
+    }
+
+    /// <summary>로컬 스팟 파일(json+png 쌍이 온전한 것만)을 번들 항목으로 읽는다.</summary>
+    private Dictionary<string, SpotEntry> LoadLocalSpots(IEnumerable<string> ids)
+    {
+        var map = new Dictionary<string, SpotEntry>();
+        foreach (var id in ids)
+        {
+            try
+            {
+                var json = System.IO.Path.Combine(_spotsDir, id + ".json");
+                var png = System.IO.Path.Combine(_spotsDir, id + ".png");
+                if (!File.Exists(json) || !File.Exists(png)) continue; // 반쪽짜리는 원격 것으로 복구 대상
+                map[id] = new SpotEntry { Id = id, Json = File.ReadAllText(json), Png = Convert.ToBase64String(File.ReadAllBytes(png)) };
+            }
+            catch { /* 읽기 실패한 스팟은 이번 회차에서 제외 — 다음 주기에 재시도 */ }
+        }
         return map;
     }
 
-    private static string BuildBundle(Dictionary<string, Macro> macros)
+    /// <summary>원격에서 온 스팟을 로컬 파일로 쓴다(스팟은 불변이므로 온전한 쌍이 이미 있으면 건너뜀). 쓴 개수 반환.</summary>
+    private int ApplyLocalSpots(IEnumerable<SpotEntry> entries)
     {
-        var ordered = macros.Values.OrderBy(m => m.Order).ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase).ToList();
-        return JsonSerializer.Serialize(new Bundle { Version = 1, Macros = ordered }, MacroStore.Options);
+        int n = 0;
+        foreach (var e in entries)
+        {
+            try
+            {
+                if (!IsValidSpotId(e.Id) || string.IsNullOrWhiteSpace(e.Json) || string.IsNullOrEmpty(e.Png)) continue;
+                JsonSerializer.Deserialize<SpotData>(e.Json); // 손상 데이터 유입 차단(예외 → 스킵)
+                var png = Convert.FromBase64String(e.Png);
+                var jsonPath = System.IO.Path.Combine(_spotsDir, e.Id + ".json");
+                var pngPath = System.IO.Path.Combine(_spotsDir, e.Id + ".png");
+                if (File.Exists(jsonPath) && File.Exists(pngPath)) continue;
+                Directory.CreateDirectory(_spotsDir);
+                File.WriteAllText(jsonPath, e.Json);
+                File.WriteAllBytes(pngPath, png);
+                n++;
+            }
+            catch (Exception ex) { _service.Log("warn", $"[동기화] 위치 데이터({e.Id}) 저장 실패: {ex.Message}"); }
+        }
+        return n;
     }
 
     private string? TryReadBase() { try { return File.Exists(_basePath) ? File.ReadAllText(_basePath) : null; } catch { return null; } }
@@ -286,7 +384,8 @@ public sealed class GitHubSync : IDisposable
     }
 
     // 저장된 gist → 발견 → 생성 순으로 확보. 반환: (gistId, 우리 파일 내용 or null, 방금 생성했는지)
-    private async Task<(string gistId, string? remoteJson, bool created)> EnsureGistAsync(Dictionary<string, Macro> local)
+    private async Task<(string gistId, string? remoteJson, bool created)> EnsureGistAsync(
+        Dictionary<string, Macro> local, Dictionary<string, SpotEntry> localSpots)
     {
         if (!string.IsNullOrEmpty(_config.GistId))
         {
@@ -301,7 +400,7 @@ public sealed class GitHubSync : IDisposable
             var (_, json) = await TryGetGistFileAsync(found);
             return (found, json, false);
         }
-        var id = await CreateGistAsync(BuildBundle(local)); // 최초 — 로컬 내용으로 생성
+        var id = await CreateGistAsync(BuildBundle(local, localSpots)); // 최초 — 로컬 내용으로 생성
         _config.GistId = id; SaveConfig();
         _service.Log("info", "[동기화] 새 secret gist를 생성했습니다.");
         return (id, null, true);
