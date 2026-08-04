@@ -31,6 +31,21 @@ Start-Process "$env:LOCALAPPDATA\Programs\YInput\YInput.exe" -ArgumentList "--up
 Invoke-RestMethod -Uri "http://127.0.0.1:48710/api/app/version"   # current 확인
 ```
 
+## 룬 모듈 지도 (증상 → 열 파일, 2026-08-04 모듈화)
+
+| 증상/수정 대상 | 파일 |
+|---|---|
+| 줄 채택이 잘못됨(잡줄·밀린 줄·중심/y-밴드 게이트·에지 보정) | `src\YInput.Host\Vision\Rune\RuneArrowDetector.Row.cs` |
+| 화살표 추출·방향 분류·시그니처(채도·차분 마스크 체인 포함) | `Vision\Rune\RuneArrowDetector.cs` (+프리미티브는 `.Mask.cs`) |
+| 각도 시계열·머리 플립·회전 판정·반동 투표 | `Vision\Rune\RuneAngleTracker.cs` |
+| 잠금·재선출·재배치·확정(중복 관측·X순 입력) — 퍼즐 판정 전부 | `Vision\Rune\RunePuzzleSolver.cs` |
+| 룬 감지→이동→발동→입력→검증 흐름·증거 저장·캡처 스케줄 | `src\YInput.Host\PositionWatcher.Rune.cs` |
+| 오프라인 재현 CLI(--rune-analyze) | `Vision\Rune\RuneArrowDetector.Offline.cs` |
+| 미니맵 룬 아이콘 | `Vision\MinimapDetector.cs` |
+
+스트립 리플레이는 실전과 **같은 RunePuzzleSolver를 구동**한다(미러 없음) — 실전 판정 수정은
+오프라인 재현에 자동 반영된다. 솔버는 벽시계를 읽지 않으므로(시각 주입) 리플레이가 결정적이다.
+
 ## 룬 실패 진단 (추측 금지 — 증거 먼저)
 
 실행 증거는 설치 폴더 `logs\`에 남는다(시도마다 갱신): `rune-frame-0..3.png`(판정 버스트),
@@ -55,7 +70,15 @@ YInput.exe --rune-minimap-analyze rune-minimap.png    # → .rune.txt 후보·�
 
 ## 회귀 검증 (인식 로직 수정 시 필수)
 
-`tests\fixtures\` 의 세트 전부 리플레이해서 README 기대값과 대조:
+**한 명령으로 전 세트 자동 대조** — 룬 코드를 고쳤으면 무조건 이걸 돌린다(종료코드=실패 수):
+
+```powershell
+powershell -File tools\rune-regress.ps1        # 빌드 + 13세트 리플레이 + expected.txt 대조
+powershell -File tools\rune-regress.ps1 -NoBuild -Set *DDRD*   # 특정 세트만
+```
+
+세트별 기대값은 `tests\fixtures\<세트>\expected.txt`(지시자: run/out/re/forbid/dirs/xs/rowxs).
+새 실패 픽스처를 추가하면 expected.txt도 함께 만든다. 아래 표는 사람용 요약:
 
 | 세트 | 종류 | 기대 |
 |---|---|---|
