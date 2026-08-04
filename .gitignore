@@ -34,3 +34,5 @@ desktop.ini
 /macros/
 publish-local/
 publish/
+*.analysis.txt
+*.png.mask-*.png

@@ -67,6 +67,8 @@ public sealed class PositionWatcher : IDisposable
     private const ushort KeyDownE0 = 0x02, KeyUpE0 = 0x03;
     private const ushort ScSpace = 0x39, ScV = 0x2F, ScLAlt = 0x38; // 일반 키(E0 아님) — Down=0x00/Up=0x01
     private const int SearchBandPx = 24;                  // 템플릿 탐색 Y 범위(저장 Y ± 이 값)
+    // 위치 보정의 Y(층) 허용오차는 X와 동일하게 MiniTolerancePx를 쓴다(사용자 지정) — 스팟은
+    // 그 발판 위에서 저장되므로 같은 층이면 점 Y가 저장값과 거의 그대로 나온다. 별도 완화 없음.
     private const double MinPatchStdDev = 8;              // 패치 대비 하한(단색·특징 부족 거부)
 
     // 룬 사용 — 룬은 상호작용 범위가 넓어 위치 보정보다 허용오차를 느슨하게 잡는다.
@@ -432,12 +434,41 @@ public sealed class PositionWatcher : IDisposable
                 // 폴백도 저장 위치 근접이 아닌 크기 기반 — 근접 선택은 정지 블롭에 고정될 수 있다.
                 dot = IdentifyMovedLeft(dots0, dots1) ?? MinimapDetector.Pick(dots1).Center;
             }
-            var walk = await WalkToXAsync(s, mini, dot.Value, spot.DotX, s.MiniTolerancePx, sw, s.MaxCorrectionMs,
-                                          "coarse", "미니맵 보정 중", ct).ConfigureAwait(false);
-            if (walk.Result == Walk.NotForeground) { Status("skip", "게임 창이 전면에서 벗어나 보정을 중단합니다."); return; }
-            if (walk.Result == Walk.LostDot) { Status("fail", "보정 중 미니맵 점을 놓쳤습니다."); return; }
-            double miniDx = walk.Dot.X - spot.DotX;
-            if (walk.Result == Walk.Timeout) { Status("fail", $"보정 시간 초과(미니맵 이탈 {miniDx:+0.0;-0.0}px 남음)."); return; }
+            // ── 2단계: 수평(X) 걷기 → 수직(층, Y) 점프 반복 — 룬 이동과 같은 구조.
+            //           X만 맞추면 위/아래층의 같은 X에서 멈춰버린다 — 저장 스팟의 층까지 맞춘다. ──
+            var dotNow = dot.Value;
+            double miniDx;
+            while (true)
+            {
+                var walk = await WalkToXAsync(s, mini, dotNow, spot.DotX, s.MiniTolerancePx, sw, s.MaxCorrectionMs,
+                                              "coarse", "미니맵 보정 중", ct).ConfigureAwait(false);
+                if (walk.Result == Walk.NotForeground) { Status("skip", "게임 창이 전면에서 벗어나 보정을 중단합니다."); return; }
+                if (walk.Result == Walk.LostDot) { Status("fail", "보정 중 미니맵 점을 놓쳤습니다."); return; }
+                dotNow = walk.Dot;
+                miniDx = dotNow.X - spot.DotX;
+                if (walk.Result == Walk.Timeout) { Status("fail", $"보정 시간 초과(미니맵 이탈 {miniDx:+0.0;-0.0}px 남음)."); return; }
+
+                double miniDy = dotNow.Y - spot.DotY; // +: 캐릭터가 스팟보다 아래(위로 가야 함)
+                if (Math.Abs(miniDy) <= s.MiniTolerancePx) break; // X·Y 모두 일치 — 보정 완료
+                if (sw.ElapsedMilliseconds >= s.MaxCorrectionMs) { Status("fail", $"보정 시간 초과(층차 {miniDy:+0.0;-0.0}px 남음)."); return; }
+                if (!WindowLocator.IsForeground(s.Process)) { Status("skip", "게임 창이 전면에서 벗어나 보정을 중단합니다."); return; }
+
+                if (miniDy > 0)
+                {
+                    Status("coarse", $"윗점프(V)로 위층 이동 (높이차 {miniDy:+0.0;-0.0}px)");
+                    await TapAsync(ScV, 120, ct, e0: false).ConfigureAwait(false);
+                }
+                else
+                {
+                    Status("coarse", $"아래점프(↓+Alt)로 아래층 이동 (높이차 {miniDy:+0.0;-0.0}px)");
+                    await DownJumpAsync(ct).ConfigureAwait(false);
+                }
+                var landed = miniDy > 0
+                    ? await WaitLandedAsync(s, mini, dotNow, UpJumpRiseMs, UpJumpSettleMaxMs, ct).ConfigureAwait(false)
+                    : await WaitLandedAsync(s, mini, dotNow, DownJumpRiseMs, DownJumpSettleMaxMs, ct).ConfigureAwait(false);
+                if (landed is null) { Status("fail", "보정 중 미니맵 점을 놓쳤습니다."); return; }
+                dotNow = landed.Value; // 착지 중 X가 흐트러졌을 수 있어 루프 선두에서 다시 수평 정렬
+            }
 
             // 파인(화면 매칭) 이동은 쓰지 않는다 — 주변 유저·말풍선이 패치에 겹치거나 카메라
             // 레이지무브가 정착 중이면 매칭이 흔들려, 맞춰둔 자리를 오히려 이탈시켰다(18:05 실행 로그).
@@ -608,16 +639,7 @@ public sealed class PositionWatcher : IDisposable
                     else
                     {
                         Status("rune", $"아래점프(↓+Alt)로 아래층 이동 (높이차 {dyOff:+0.0;-0.0}px)");
-                        _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyDownE0 });
-                        try
-                        {
-                            await PreciseDelay.WaitAsync(60, ct).ConfigureAwait(false);
-                            await TapAsync(ScLAlt, 90, ct, e0: false).ConfigureAwait(false);
-                            // ↓를 1초가량 더 유지(사용자 지정 2026-08-04) — 낙하 중 줄·사다리를
-                            // 잡아버리면 이동이 막히는데, ↓를 계속 누르고 있으면 타고 내려가 회복된다
-                            await PreciseDelay.WaitAsync(1000, ct).ConfigureAwait(false);
-                        }
-                        finally { try { _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyUpE0 }); } catch { } }
+                        await DownJumpAsync(ct).ConfigureAwait(false);
                     }
                     // 착지·정지 폴링 — 윗점프(V)는 착지 순간 반동(튕김)이 있어 고정 대기로는 이르다.
                     // 미니맵 점이 연속 3표본 정지할 때까지 본 뒤에 다음 판단으로 넘어간다.
@@ -1420,6 +1442,20 @@ public sealed class PositionWatcher : IDisposable
         var search = new Rectangle(0, 0, gray.Width - patch.Width + 1, gray.Height - patch.Height + 1);
         var m = TemplateMatcher.Match(gray, patch, search);
         return (m.X - spot.PatchX, m.Score); // 밴드는 창 X=0부터라 X는 창 상대 그대로
+    }
+
+    /// <summary>아래점프(↓+Alt) — Alt 탭 후에도 ↓를 1초가량 유지(사용자 지정 2026-08-04): 낙하 중
+    /// 줄·사다리를 잡아버리면 이동이 막히는데, ↓를 계속 누르고 있으면 타고 내려가 회복된다.</summary>
+    private async Task DownJumpAsync(CancellationToken ct)
+    {
+        _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyDownE0 });
+        try
+        {
+            await PreciseDelay.WaitAsync(60, ct).ConfigureAwait(false);
+            await TapAsync(ScLAlt, 90, ct, e0: false).ConfigureAwait(false);
+            await PreciseDelay.WaitAsync(1000, ct).ConfigureAwait(false);
+        }
+        finally { try { _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyUpE0 }); } catch { } }
     }
 
     /// <summary>키 1회 탭(누르고 holdMs 뒤 뗌). e0=false면 일반 키(스페이스·V·Alt 등).</summary>
