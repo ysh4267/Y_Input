@@ -79,10 +79,12 @@ public sealed class PositionWatcher : IDisposable
     private const int RopeSlideRiseMs = 250, RopeSlideMaxMs = 4000; // 로프 회복(↓ 홀드) 착지 폴링
     private const double MinPatchStdDev = 8;              // 패치 대비 하한(단색·특징 부족 거부)
 
-    // 룬 사용 — 이동·도착 판정은 위치 보정과 같은 허용오차(X=MiniTolerancePx, Y=CorrectTolY)를 쓴다
+    // 룬 사용 — 도착 판정은 X=RuneTolX(룬 전용, 빡빡), Y=CorrectTolY(위치 보정과 동일)를 쓴다
     // (사용자 지정 2026-08-04). 목표지점은 시작 시 1회만 측정해 고정하고 이후 갱신하지 않는다
     // (룬은 능동적으로 움직이지 않는다) — 도착 순간 내 점이 아이콘을 가리거나 다른 보라 마커(정예 등)가
     // 있어도 목표가 흔들리지 않는다(19:24 '아이콘 놓침' 실패, 19:48 목표 ±135px 널뜀 로그의 원인).
+    private const double RuneTolX = 0.6;   // 룬 접근 X 허용오차 — 위치 보정(MiniTolerancePx=1.5)보다
+                                           // 빡빡하게 유지(사용자 지정 2026-08-04): 발동 정확도 우선
     private const double RuneTolY = 6.0;   // '점프해도 층 불변' 예외 시에만 쓰는 Y 상한 —
                                            // RuneIconYOffset 추정이 어긋난 경우의 무한 점프 방지용
     private const int RuneMaxMs = 30000;   // 수직 이동 포함 총 제한 — 위치 보정보다 길게
@@ -633,9 +635,9 @@ public sealed class PositionWatcher : IDisposable
 
                 // 수평(X) 정렬은 처음 한 번만 — 윗점프(V)·아래점프(↓+Alt)는 X를 옮기지 않으므로
                 // (사용자 지정) 이후에는 층(Y)이 맞을 때까지 수직 이동만 반복한다.
-                if (Math.Abs(dot.X - runeAt.X) > s.MiniTolerancePx)
+                if (Math.Abs(dot.X - runeAt.X) > RuneTolX)
                 {
-                    var walk = await WalkToXAsync(s, mini, dot, runeAt.X, s.MiniTolerancePx, swm, maxMs, "rune", "룬으로 이동 중", ct).ConfigureAwait(false);
+                    var walk = await WalkToXAsync(s, mini, dot, runeAt.X, RuneTolX, swm, maxMs, "rune", "룬으로 이동 중", ct).ConfigureAwait(false);
                     if (walk.Result == Walk.NotForeground) return 1;
                     if (walk.Result == Walk.LostDot) return 2;
                     dot = walk.Dot;
@@ -691,8 +693,8 @@ public sealed class PositionWatcher : IDisposable
                     }
                 }
 
-                // 최종 도착 확인 — 시작 시 지정한 목표지점 기준(재측정 없음), 위치 보정과 같은 허용오차
-                if (Math.Abs(dot.X - runeAt.X) > s.MiniTolerancePx || Math.Abs(dot.Y - runeAt.Y) > (vStuck ? RuneTolY : CorrectTolY))
+                // 최종 도착 확인 — 시작 시 지정한 목표지점 기준(재측정 없음). X는 룬 전용(빡빡), Y는 보정과 동일
+                if (Math.Abs(dot.X - runeAt.X) > RuneTolX || Math.Abs(dot.Y - runeAt.Y) > (vStuck ? RuneTolY : CorrectTolY))
                     return 3;
 
                 // 윗점프 직후 곧장 발동하지 않는다(사용자 지정) — 착지 반동까지 완전히 끝난 뒤
@@ -782,7 +784,7 @@ public sealed class PositionWatcher : IDisposable
                     if (dchk is { } dv)
                     {
                         dot = dv;
-                        if (Math.Abs(dot.X - runeAt.X) > s.MiniTolerancePx || Math.Abs(dot.Y - runeAt.Y) > CorrectTolY)
+                        if (Math.Abs(dot.X - runeAt.X) > RuneTolX || Math.Abs(dot.Y - runeAt.Y) > CorrectTolY)
                         {
                             Status("rune", $"룬에서 밀려남(dx {dot.X - runeAt.X:+0.0;-0.0} · dy {dot.Y - runeAt.Y:+0.0;-0.0}px) — 다시 이동합니다");
                             switch (await MoveToRuneAsync(12000).ConfigureAwait(false))
