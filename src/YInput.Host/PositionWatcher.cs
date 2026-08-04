@@ -78,7 +78,9 @@ public sealed class PositionWatcher : IDisposable
     // (19:24 '아이콘 놓침' 실패, 19:48 목표 ±135px 널뜀 로그의 원인).
     private const double OccludeNearX = 5.0, OccludeNearY = 9.0;
     private const int RuneMaxMs = 30000;   // 수직 이동 포함 총 제한 — 위치 보정보다 길게
-    private const int JumpSettleMs = 1000; // 점프(윗점프/아래점프) 후 착지·정지 대기
+    private const int JumpRiseMs = 450;        // 점프 직후 상승 구간 — 이륙 전 '정지' 오판 방지용 최소 대기
+    private const int UpJumpSettleMaxMs = 2500;   // 윗점프(V) 착지 폴링 상한 — 착지 순간 반동(튕김)이 있어 여유
+    private const int DownJumpSettleMaxMs = 1800; // 아래점프 착지 폴링 상한
 
     private readonly string _statePath;
     private readonly string _spotsDir;
@@ -597,13 +599,15 @@ public sealed class PositionWatcher : IDisposable
                     }
                     finally { try { _backend.Send(new KeyboardEvent { Code = ScDown, State = KeyUpE0 }); } catch { } }
                 }
-                await PreciseDelay.WaitAsync(JumpSettleMs, ct).ConfigureAwait(false); // 착지·정지 대기
-                var d = MeasureDot(s, mini, dot);
-                if (d is null) { Status("fail", "이동 중 미니맵 점을 놓쳤습니다."); return; }
-                dot = d.Value;
+                // 착지·정지 폴링 — 윗점프(V)는 착지 순간 반동(튕김)이 있어 고정 대기로는 이르다.
+                // 미니맵 점이 연속 3표본 정지할 때까지 본 뒤에 다음 판단으로 넘어간다.
+                var landed = await WaitLandedAsync(s, mini, dot, dyOff > 0 ? UpJumpSettleMaxMs : DownJumpSettleMaxMs, ct).ConfigureAwait(false);
+                if (landed is null) { Status("fail", "이동 중 미니맵 점을 놓쳤습니다."); return; }
+                dot = landed.Value;
             }
 
             // 최종 도착 확인 — 시작 시 측정한 룬 위치 기준(재측정 없음)
+            // (WaitLandedAsync가 각 점프 후 완전 착지를 보장하므로 여기서는 위치만 본다)
             if (Math.Abs(dot.X - runeAt.X) > OccludeNearX || Math.Abs(dot.Y - runeAt.Y) > OccludeNearY)
             {
                 Status("fail", $"룬 도달 시간 초과(잔여 dx {dot.X - runeAt.X:+0.0;-0.0}px · dy {dot.Y - runeAt.Y:+0.0;-0.0}px).");
@@ -1115,6 +1119,35 @@ public sealed class PositionWatcher : IDisposable
 
     /// <summary>프레임을 찍어 매크로의 미니맵 영역 안에서 플레이어 점(미니맵 상대, 서브픽셀)을 찾는다.
     /// 창/점 미탐지면 null. near = 직전(또는 저장) 위치(미니맵 상대) — 추적으로 다른 점으로 튀는 것을 막는다.</summary>
+    /// <summary>점프 후 착지·정지 폴링 — 상승 최소 대기(<see cref="JumpRiseMs"/>, 이륙 전 '정지'
+    /// 오판 방지) 후 미니맵 점이 연속 3표본(±1px, ~240ms) 움직이지 않으면 착지로 판정하고 그
+    /// 좌표를 돌려준다. 윗점프(V)는 착지 순간 반동으로 한 번 더 튀므로 고정 대기로는 이르다 —
+    /// 반동이 끝나 완전히 정지해야 통과된다. 상한까지 안정되지 않으면 마지막 측정값으로 진행.</summary>
+    private async Task<PointF?> WaitLandedAsync(WatcherSettings s, Rectangle mini, PointF last, int maxMs, CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        await PreciseDelay.WaitAsync(JumpRiseMs, ct).ConfigureAwait(false);
+        PointF? prev = null;
+        int stable = 0;
+        while (sw.ElapsedMilliseconds < maxMs)
+        {
+            ct.ThrowIfCancellationRequested();
+            var d = MeasureDot(s, mini, last);
+            if (d is not null)
+            {
+                if (prev is { } p && Math.Abs(d.Value.Y - p.Y) <= 1.0 && Math.Abs(d.Value.X - p.X) <= 1.5)
+                {
+                    if (++stable >= 2) return d; // 직전과 2연속 일치 = 3표본 정지
+                }
+                else stable = 0;
+                prev = d;
+                last = d.Value;
+            }
+            await PreciseDelay.WaitAsync(120, ct).ConfigureAwait(false);
+        }
+        return prev ?? MeasureDot(s, mini, last);
+    }
+
     private PointF? MeasureDot(WatcherSettings s, Rectangle mini, PointF? near = null)
     {
         var cands = MeasureDots(s, mini);
