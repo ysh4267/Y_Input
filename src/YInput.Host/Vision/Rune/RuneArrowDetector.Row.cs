@@ -56,11 +56,19 @@ internal static partial class RuneArrowDetector
         ThinFilter(mask, w, h);
         var (bandY0, bandY1, _) = BannerBand(w, h, (int)(h / (RegionY1 - RegionY0)));
         double rowY0 = bandY0 + RowFracLo * (bandY1 - bandY0), rowY1 = bandY0 + RowFracHi * (bandY1 - bandY0);
-        var cands = MergeNear(FindBlobs(mask, w, h)).Where(b =>
-            b.Area is >= MinArrowArea and <= MaxArrowArea &&
-            b.W is >= MinArrowBox and <= MaxArrowBox && b.H is >= MinArrowBox and <= MaxArrowBox &&
-            b.Cy >= rowY0 && b.Cy <= rowY1).OrderBy(b => b.Cx).ToList();
-        double gLo = frame.Width * GapFracLo, gHi = frame.Width * GapFracHi; // PickRow와 동일 상수
+        var cands = FilterCands(mask, w, h, rowY0, rowY1);
+        return PartialRowFromCands(cands, frame, beforeRef, region, w, frame.Width, verifyExtrap: false);
+    }
+
+    /// <summary>부분 줄 코어 — 후보 리스트에서 3개 조합 + 빠진 슬롯 외삽으로 위치 4개 복원.
+    /// verifyExtrap: true면 내부 중점 삽입을 포함한 <b>모든</b> 외삽 슬롯이 AnalyzeArrowAt 탐침으로
+    /// 글리프 실존을 확인해야 채택(소스 융합 폴백용 — 융합 풀은 단일 마스크보다 잡음이 많아
+    /// 무검증 외삽은 잡음 관측점을 만든다). false = 현행 TryPartialRow 동작(끝 슬롯만 탐침).</summary>
+    private static PointF[]? PartialRowFromCands(List<Blob> candsIn, Bitmap frame, Bitmap? beforeRef,
+        Rectangle region, int w, int frameW, bool verifyExtrap)
+    {
+        var cands = candsIn.OrderBy(b => b.Cx).ToList();
+        double gLo = frameW * GapFracLo, gHi = frameW * GapFracHi; // PickRow와 동일 상수
         List<Blob>? best = null; double bestScore = double.MinValue;
         for (int a = 0; a < cands.Count - 2; a++)
             for (int b2 = a + 1; b2 < cands.Count - 1; b2++)
@@ -81,32 +89,55 @@ internal static partial class RuneArrowDetector
         if (best is null) return null;
         double bg1 = best[1].Cx - best[0].Cx, bg2 = best[2].Cx - best[1].Cx;
         double yAvg = best.Average(x => x.Cy);
+        bool ProbeAt(double x) => AnalyzeArrowAt(frame, beforeRef, null,
+            new Rectangle(region.X + (int)x - 32, region.Y + (int)yAvg - 32, 64, 64)) is not null;
         var xs = new List<double> { best[0].Cx, best[1].Cx, best[2].Cx };
-        if (bg1 > gHi) xs.Insert(1, best[0].Cx + bg1 / 2);          // 내부 누락(왼쪽 간격이 2슬롯)
-        else if (bg2 > gHi) xs.Insert(2, best[1].Cx + bg2 / 2);     // 내부 누락(오른쪽 간격이 2슬롯)
+        if (bg1 > gHi)                                              // 내부 누락(왼쪽 간격이 2슬롯)
+        {
+            double mx = best[0].Cx + bg1 / 2;
+            if (verifyExtrap && !ProbeAt(mx)) return null;
+            xs.Insert(1, mx);
+        }
+        else if (bg2 > gHi)                                         // 내부 누락(오른쪽 간격이 2슬롯)
+        {
+            double mx = best[1].Cx + bg2 / 2;
+            if (verifyExtrap && !ProbeAt(mx)) return null;
+            xs.Insert(2, mx);
+        }
         else
         {
             // 끝 슬롯 누락 — 좌/우 외삽 중 로컬 글리프가 실제로 잡히는 쪽을 채택
             double gapAvg = (bg1 + bg2) / 2;
             double leftX = best[0].Cx - gapAvg, rightX = best[2].Cx + gapAvg;
             bool leftOk = leftX - 20 >= 0, rightOk = rightX + 20 < w;
-            bool leftHit = false, rightHit = false;
-            if (leftOk)
-                leftHit = AnalyzeArrowAt(frame, beforeRef, null,
-                    new Rectangle(region.X + (int)leftX - 32, region.Y + (int)yAvg - 32, 64, 64)) is not null;
-            if (rightOk)
-                rightHit = AnalyzeArrowAt(frame, beforeRef, null,
-                    new Rectangle(region.X + (int)rightX - 32, region.Y + (int)yAvg - 32, 64, 64)) is not null;
-            if (leftHit || (leftOk && !rightHit)) xs.Insert(0, leftX);
+            bool leftHit = leftOk && ProbeAt(leftX);
+            bool rightHit = rightOk && ProbeAt(rightX);
+            if (verifyExtrap)
+            {
+                // 융합 경로는 탐침 실증 없는 쪽을 '소거법'으로 채택하지 않는다
+                if (leftHit) xs.Insert(0, leftX);
+                else if (rightHit) xs.Add(rightX);
+                else return null;
+            }
+            else if (leftHit || (leftOk && !rightHit)) xs.Insert(0, leftX);
             else if (rightOk) xs.Add(rightX);
             else return null;
         }
         return xs.Select(x => new PointF((float)(region.X + x), (float)(region.Y + yAvg))).ToArray();
     }
 
+    /// <summary>줄 후보 공용 필터 — 병합 블롭에서 화살표 크기·박스·y밴드 조건을 만족하는 후보만.
+    /// (DetectRow·TryPartialRow가 같은 술어를 쓴다 — 게이트 수정 시 한 곳만 고치도록 통합)</summary>
+    private static List<Blob> FilterCands(bool[] mask, int w, int h, double rowY0, double rowY1)
+        => MergeNear(FindBlobs(mask, w, h)).Where(b =>
+            b.Area is >= MinArrowArea and <= MaxArrowArea &&
+            b.W is >= MinArrowBox and <= MaxArrowBox && b.H is >= MinArrowBox and <= MaxArrowBox &&
+            b.Cy >= rowY0 && b.Cy <= rowY1).ToList();
+
     /// <summary>마스크에서 '화살표 줄' 블롭 4개 선택(왼쪽부터). fullArea = 밴드·중심 제약 없이
-    /// 전 영역 탐색(진단 전용 — 밴드 기하가 틀리는 창 크기를 확인할 때). 실패 시 null.</summary>
-    private static List<Blob>? DetectRow(Bitmap frame, Bitmap? bannerRef, bool[] mask, Rectangle region, int w, int h, bool thinFilter, int fullFrameH, bool fullArea = false)
+    /// 전 영역 탐색(진단 전용 — 밴드 기하가 틀리는 창 크기를 확인할 때). candsOut = 게이트 통과
+    /// 후보의 수집 싱크(소스 융합용 — 줄 실패여도 후보는 남긴다). 실패 시 null.</summary>
+    private static List<Blob>? DetectRow(Bitmap frame, Bitmap? bannerRef, bool[] mask, Rectangle region, int w, int h, bool thinFilter, int fullFrameH, bool fullArea = false, List<Blob>? candsOut = null)
     {
         if (thinFilter) ThinFilter(mask, w, h);
         var (bandY0, bandY1, bannerCx) = fullArea ? (0, h - 1, -1.0) : BannerBand(w, h, fullFrameH);
@@ -115,10 +146,8 @@ internal static partial class RuneArrowDetector
         // 45% 하한이 진짜 화살표 4개를 전부 걸러내 줄 구성 원천 실패), 이전 맵들 36~62%.
         // 하한 20%는 밴드 상단 가장자리 잡블롭 줄(y 0~18% — 배너 하단 반짝이, 14:13 룬)만 차단한다.
         double rowY0 = bandY0 + RowFracLo * (bandY1 - bandY0), rowY1 = bandY0 + RowFracHi * (bandY1 - bandY0);
-        var cands = MergeNear(FindBlobs(mask, w, h)).Where(b =>
-            b.Area is >= MinArrowArea and <= MaxArrowArea &&
-            b.W is >= MinArrowBox and <= MaxArrowBox && b.H is >= MinArrowBox and <= MaxArrowBox &&
-            b.Cy >= rowY0 && b.Cy <= rowY1).ToList();
+        var cands = FilterCands(mask, w, h, rowY0, rowY1);
+        candsOut?.AddRange(cands);
         var row = PickRow(cands, bannerCx, frame.Width);
         if (DiagLog is not null)
         {
@@ -139,8 +168,9 @@ internal static partial class RuneArrowDetector
     /// '면적 합 − 박스 불균일 벌점 − 중심 이탈'이 최대인 것. 화살표 4개는 글리프 크기가 같아
     /// 바운딩 박스가 거의 동일(22~30px)하고, 불꽃 잔광·이펙트 블롭은 박스가 튄다(34x28, 49x57 —
     /// 01:16·00:45 실행에서 면적만으로는 정크가 진짜 화살표를 밀어냈다). 모양 비대칭은 판별자로
-    /// 못 쓴다 — 진짜 ←도 침식되면 |0.06|까지 떨어진다(00:45 sat80). 없으면 null.</summary>
-    private static List<Blob>? PickRow(List<Blob> cands, double bannerCx, int frameW)
+    /// 못 쓴다 — 진짜 ←도 침식되면 |0.06|까지 떨어진다(00:45 sat80). 없으면 null.
+    /// srcBonus = 블롭별 가산점 훅(소스 융합 전용 — 교차 확인 후보 우대). null이면 동작 불변.</summary>
+    private static List<Blob>? PickRow(List<Blob> cands, double bannerCx, int frameW, Func<Blob, double>? srcBonus = null)
     {
         if (cands.Count < 4) return null;
         // 상위 20개 — 불타는 맵은 노이즈 블롭이 커서 14개 컷으로는 작은 화살표가 밀려났다
@@ -198,6 +228,7 @@ internal static partial class RuneArrowDetector
                         // 파편 줄의 3배 이상이라 페널티를 감수하고도 이긴다.
                         double gapPenalty = areaSum * GapRatioSoftW * (gMax / gMin - 1);
                         double score = areaSum - centerPenalty - boxPenalty - gapPenalty;
+                        if (srcBonus is not null) score += combo.Sum(srcBonus);
                         if (score > bestScore) { bestScore = score; best = combo.ToList(); }
                     }
         if (best is not null) RepairEdgeSlot(best, cands);

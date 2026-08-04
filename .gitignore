@@ -38,3 +38,4 @@ publish/
 *.png.mask-*.png
 *.png.rune-mask.png
 *.png.rune.txt
+local-mask-*.png
