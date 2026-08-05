@@ -152,8 +152,9 @@ public sealed partial class PositionWatcher
                     }
                     dot = landed.Value;
 
-                    // 윗점프 후에는 거리 판단도 V로부터 최소 1.5초 뒤에(사용자 지정) — 점프 궤적 중
-                    // 룬과 순간 가까워졌다 다시 멀어질 수 있어, 시간이 찬 뒤 위치를 재측정해 판단한다.
+                    // 윗점프 후 거리 판단은 V로부터 최소 PostUpJumpMs 뒤에 — 점프 궤적 중 룬과 순간
+                    // 가까워졌다 다시 멀어질 수 있어, 시간이 찬 뒤 위치를 재측정해 판단한다.
+                    // (원 지정 1.5초 → 08-04 750ms → 08-05 500ms, 둘 다 사용자 지정 축소)
                     if (dyOff > 0)
                     {
                         long sinceV = sw.ElapsedMilliseconds - lastUpJumpAt;

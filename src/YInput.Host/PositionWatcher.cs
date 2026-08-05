@@ -76,14 +76,19 @@ public sealed partial class PositionWatcher : IDisposable
     private const int RopeSlideRiseMs = 250, RopeSlideMaxMs = 4000; // 로프 회복(↓ 홀드) 착지 폴링
     private const double MinPatchStdDev = 8;              // 패치 대비 하한(단색·특징 부족 거부)
 
-    // 점프 후 대기 일괄 절반 축소(사용자 지정 2026-08-04 "너무 기다린다") — 값은 이전의 1/2.
-    private const int DownJumpRiseMs = 225;    // 아래점프 직후 낙하 진입 대기 — 이륙 전 '정지' 오판 방지
-    private const int UpJumpRiseMs = 400;      // 윗점프(V) 상승+정점 통과 대기 — 정점의 순간 정지를 착지로 오판 방지
+    // 점프 후 대기 축소 이력: 2026-08-04 일괄 1/2 → 2026-08-05 윗·아래점프 고정 성분만 추가 축소
+    // (사용자 지정 "점프·하단점프 후 간격만 조금 더" — 걷기·설틀 상한·폴링 3표본은 그대로).
+    // 오판 방어는 고정 대기가 아니라 '연속 3표본 정지'(240ms 창)가 맡는다 — 정점·이륙 전
+    // 순간 정지는 1표본이라 통과 못 하고, 아래점프의 조기 착지 오판은 로프 예외(Y 불변 →
+    // ↓ 홀드 재폴링)가 자가 복구한다.
+    private const int DownJumpRiseMs = 150;    // 아래점프 직후 낙하 진입 대기 (225→150, 2026-08-05)
+    private const int UpJumpRiseMs = 300;      // 윗점프(V) 상승+정점 통과 대기 (400→300, 2026-08-05)
     private const int UpJumpSettleMaxMs = 1250;   // 윗점프 착지 폴링 상한 — 착지 순간 반동(튕김)이 있어 여유
     private const int DownJumpSettleMaxMs = 900;  // 아래점프 착지 폴링 상한
-    private const int PostUpJumpMs = 750;      // 윗점프(V) → 거리 판단·스페이스 발동 최소 간격 —
-                                               // 점프 궤적 중 룬과 순간 가까워졌다 멀어질 수 있고, 착지
-                                               // 반동까지 끝난 '정착 후' 위치로만 판단·발동해야 한다
+    private const int PostUpJumpMs = 500;      // 윗점프(V) → 거리 판단·스페이스 발동 최소 간격(750→500,
+                                               // 2026-08-05) — 착지 폴링 완료가 보통 V+600ms 이후라 이
+                                               // 바닥은 착지가 유난히 빨리 끝난 판에서만 남는다. 판단·발동은
+                                               // 여전히 착지 반동까지 끝난 '정착 후' 위치로만 한다
 
     private readonly string _statePath;
     private readonly string _spotsDir;
