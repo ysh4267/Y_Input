@@ -101,6 +101,7 @@ powershell -File tools\rune-regress.ps1 -NoBuild -Set *DDRD*   # 특정 세트�
 | `rune-frames-DDLR-pillhigh-20260804` | 정지형·필 상단 이탈(밴드 8.9%) | ④ ↓↓←→ · 위치 411/498/559/650 ±5 |
 | `rune-frames-LLDR-erosion-20260804` | 정지형·침식 소실+밀린 줄 | ⓪ 파편 419/a30 · ⑦ 481/582/663/765 (라이브: 슬롯 재배치) |
 | `rune-frames-LLUL-coolglow-20260805` | 한색 광류 병합·융합 첫 오답 | ④·⑦ 실패 · ⑦w 웜톤 줄 505/592/654/780 ±5 · ② ←←↑← |
+| `rune-frames-UUDL-coolglow2-20260805` | ④ 잡줄 채택·웜 교차 검증 근거 | ⑦w 396/500/595/689 ±5 · 스트립(pos=) 4/4 ↑↑↓← (침식 주축 회귀 감시) |
 | `rune-minimap\` | 아이콘 3장 | README 참조 |
 
 리플레이 산출물(`*.analysis.txt`, `*.png.mask-*.png`)은 gitignore됨 — 커밋하지 말 것.

@@ -1,0 +1,12 @@
+# 정답 ↑↑↓← · ④ 잡줄 채택 사건 — ⑦w 진짜 위치 + 스트립 4/4 잠금이 핵심 불변식 (README 참조)
+run: --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
+out: rune-frame-0.png.analysis.txt
+xs: ⑦w 웜톤 줄 = 396 500 595 689 ~5
+re: \(396,\d+\)a\d+U \(500,\d+\)a\d+U \(595,\d+\)a\d+D \(689,\d+\)a\d+L
+run: --rune-analyze rune-before.png rune-strip-*.png pos=396,226;500,240;595,237;689,231
+out: rune-before.png.analysis.txt
+re: 화살표1: .*확정 U
+re: 화살표2: .*확정 U
+re: 화살표3: .*확정 D
+re: 화살표4: .*확정 L
+re: 최종 입력\(X순\): ↑ ↑ ↓ ←
