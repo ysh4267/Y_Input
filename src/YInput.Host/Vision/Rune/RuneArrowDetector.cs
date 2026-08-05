@@ -7,8 +7,10 @@ namespace YInput.Host.Vision;
 internal readonly record struct RuneArrow(PointF Center, char Dir);
 
 /// <summary>한 프레임에서 분석한 화살표 하나 — 방향 + 모양 시그니처(회전 정지 판별용) + 블롭 면적
-/// (줄 재선출 비교용 — 잡줄은 파편이라 면적 합이 진짜 줄의 1/3 수준).</summary>
-internal readonly record struct ArrowSample(PointF Center, char Dir, bool[] Sig, int Area = 0);
+/// (줄 재선출 비교용 — 잡줄은 파편이라 면적 합이 진짜 줄의 1/3 수준).
+/// Margin = 방향 분류 마진 ||lScore|−|uScore||(승자축−패자축) — 3소스 합의 잠금의 신뢰도 축
+/// (2026-08-05 14:01 오답: ← 오분류의 마진이 0.03에 불과했다 — 저마진 판독 식별용).</summary>
+internal readonly record struct ArrowSample(PointF Center, char Dir, bool[] Sig, int Area = 0, double Margin = 0);
 
 /// <summary>
 /// 룬 발동(스페이스) 후 화면 상단 배너 아래에 뜨는 방향키 퍼즐(화살표 4개)을 인식한다.
@@ -251,8 +253,11 @@ internal static partial class RuneArrowDetector
         var result = new List<ArrowSample>(4);
         foreach (var b in row)
         {
-            var (dir, _, _, _, _) = ClassifyScores(b, w, frame, region);
-            result.Add(new ArrowSample(new PointF((float)(region.X + b.Cx), (float)(region.Y + b.Cy)), dir, Signature(b, w), b.Area));
+            // 마진 = 승자축−패자축(||left|−|up||). 그라데이션 보정은 dir만 바꾸고 점수는
+            // 불변이므로(같은 축 내 반전) 보정 여부와 무관하게 유효하다.
+            var (dir, up, _, left, _) = ClassifyScores(b, w, frame, region);
+            double margin = Math.Abs(Math.Abs(left) - Math.Abs(up));
+            result.Add(new ArrowSample(new PointF((float)(region.X + b.Cx), (float)(region.Y + b.Cy)), dir, Signature(b, w), b.Area, margin));
         }
         return result;
     }
@@ -261,8 +266,9 @@ internal static partial class RuneArrowDetector
     /// AngleDeg = 가리키는 각도(0=→, 90=↑, 반시계 양수; 회전 글리프 추적용), Area = 픽셀 수,
     /// Center = 블롭 중심(프레임 절대 좌표 — 회전 핵이 어긋난 위치 추정을 자기 보정하는 데 쓴다),
     /// MovingPx = 박스 안 '채도 높고 직전 프레임과 다른' 픽셀 수 — 회전 중 여부 판별용
-    /// (움직임 마스크의 블롭은 글리프가 아니라 '변화 영역' 조각이라 각도에는 절대 쓰지 않는다).</summary>
-    internal readonly record struct LocalArrow(char Dir, bool[] Sig, double AngleDeg, int Area, PointF Center, int MovingPx);
+    /// (움직임 마스크의 블롭은 글리프가 아니라 '변화 영역' 조각이라 각도에는 절대 쓰지 않는다).
+    /// Margin = 방향 분류 마진(ArrowSample.Margin과 동일 정의) — 합의 잠금 신뢰도 축.</summary>
+    internal readonly record struct LocalArrow(char Dir, bool[] Sig, double AngleDeg, int Area, PointF Center, int MovingPx, double Margin = 0);
 
     /// <summary>프레임의 지정 사각형(한 화살표 주변)만 분석.
     /// 글리프 = 초고채도(140→80→45 체인) ∧ 발동 전 차분 — 애니메이션 배경 장식(수정 반짝임,
@@ -347,7 +353,8 @@ internal static partial class RuneArrowDetector
             for (int i = 0; i < vv.Length; i++) if (vv[i] && mv[i]) movingPx++;
         }
 
-        var (dir, _, _, _, _) = ClassifyScores(b, w, frame, rect);
+        var (dir, upS, _, leftS, _) = ClassifyScores(b, w, frame, rect);
+        double dirMargin = Math.Abs(Math.Abs(leftS) - Math.Abs(upS)); // 승자축−패자축(ArrowSample.Margin 동일 정의)
         var sig = Signature(b, w);
 
         // 주축 각도 — 화면 y는 아래가 양수이므로 수학 좌표로 뒤집어 계산(0=→, 90=↑)
@@ -368,7 +375,7 @@ internal static partial class RuneArrowDetector
         double deg = phi * 180 / Math.PI;
         if (headNeg > headPos) deg += 180;
         deg = (deg % 360 + 360) % 360;
-        return new LocalArrow(dir, sig, deg, b.Area, new PointF((float)(rect.X + b.Cx), (float)(rect.Y + b.Cy)), movingPx);
+        return new LocalArrow(dir, sig, deg, b.Area, new PointF((float)(rect.X + b.Cx), (float)(rect.Y + b.Cy)), movingPx, dirMargin);
     }
 
     private static List<RuneArrow>? Detect(Bitmap frame, Bitmap? bannerRef, bool[] mask, Rectangle region, int w, int h, bool thinFilter, int fullFrameH)

@@ -146,14 +146,17 @@ internal static partial class RuneArrowDetector
     /// '정적·고채도·발동 전과 다름'의 세 술어를 전부 통과하며 화살표 4개를 한 블롭으로 병합시키는
     /// 맵 대비(2026-08-05 09:20 오답 실측: warm무시 마스크는 병합 블롭 562x201/a40958로 후보 전멸,
     /// warm 게이트만 켜면 같은 프레임에서 4개 블롭 22~25px/a310~406으로 분리돼 전 게이트 통과).
-    /// 방향은 절대 반환하지 않는다 — 웜 마스크가 글리프 일부(파랑 머리끝)를 잘라 방향 분류가
-    /// 뒤집힌다(실측: DLUU 735의 ↑이 →로 오분류 — ④ 정식 단계 편입을 기각한 근거). 방향·잠금은
-    /// 로컬 관찰(sat 체인)이 판정하므로 잘못된 줄은 잠금 실패로 귀결된다(fail-closed).
+    /// 반환 위치가 단독 근거고, 방향(slotDirs)은 <b>3소스 합의 잠금의 1표 전용</b> — 웜 마스크가
+    /// 글리프 일부(파랑 머리끝)를 잘라 방향 분류가 뒤집힐 수 있어(실측: DLUU 735의 ↑이 →로
+    /// 오분류 — ④ 정식 단계 편입을 기각한 근거) 단독 결정권을 절대 갖지 않는다. 잠금은 합의
+    /// (heavy·로컬·웜 중 2표 동의)가 판정하므로 잘못된 줄/방향은 잠금 실패로 귀결(fail-closed).
     /// pool = 융합 풀 수집 싱크(웜 후보를 DiffWarm 소스로 기여 — 이 줄 자체가 실패해도 ⑧이 쓴다).
-    /// areaSum = 채택 줄의 블롭 면적 합(④ 줄과의 교차 검증 비교용 — 실패 시 0).</summary>
-    internal static PointF[]? TryWarmRow(Bitmap frame, Bitmap? beforeRef, bool precropped, FusionPool? pool, out double areaSum)
+    /// areaSum = 채택 줄의 블롭 면적 합(④ 줄과의 교차 검증 비교용 — 실패 시 0).
+    /// slotDirs = 슬롯별 (방향, 마진) — 실패 시 null. 마진 정의는 ArrowSample.Margin과 동일.</summary>
+    internal static PointF[]? TryWarmRow(Bitmap frame, Bitmap? beforeRef, bool precropped, FusionPool? pool,
+        out double areaSum, out (char Dir, double Margin)[]? slotDirs)
     {
-        areaSum = 0;
+        areaSum = 0; slotDirs = null;
         if (!TryRegion(frame, precropped, out var region)) return null;
         if (beforeRef is null || beforeRef.Width != frame.Width || beforeRef.Height != frame.Height) return null;
         int w = region.Width, h = region.Height;
@@ -166,6 +169,11 @@ internal static partial class RuneArrowDetector
         if (cands is not null) pool!.Add(FuseSource.DiffWarm, cands);
         if (row is null) return null;
         areaSum = row.Sum(b => (double)b.Area);
+        slotDirs = row.Select(b =>
+        {
+            var (dir, up, _, left, _) = ClassifyScores(b, w, frame, region); // 그라데이션 보정 포함
+            return (dir, Math.Abs(Math.Abs(left) - Math.Abs(up)));
+        }).ToArray();
         return row.Select(b => new PointF((float)(region.X + b.Cx), (float)(region.Y + b.Cy))).ToArray();
     }
 

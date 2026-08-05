@@ -151,8 +151,11 @@ internal static partial class RuneArrowDetector
                         sb.AppendLine($"  ⑦ 부분 줄 보완(3개+외삽): {(pr is null ? "실패" : string.Join(" ", pr.Select(p => $"({p.X:0},{p.Y:0})")))}");
                         // ⑦w 웜톤 줄(위치 전용) — 실전에서는 ⑦ 실패 시 다음 폴백. 풀에 웜 후보도 기여.
                         stage = "⑦w|";
-                        var wr = TryWarmRow(frame, beforeRef, pre, fusePool, out _);
+                        var wr = TryWarmRow(frame, beforeRef, pre, fusePool, out _, out var wDirs);
                         sb.AppendLine($"  ⑦w 웜톤 줄(위치만): {(wr is null ? "실패" : string.Join(" ", wr.Select(p => $"({p.X:0},{p.Y:0})")))}");
+                        // 합의 잠금 캘리브레이션용 — 웜 방향·마진(문자만 사용: 화살표·괄호숫자 없음 → 지시자 계약 안전)
+                        if (wDirs is not null)
+                            sb.AppendLine($"      [⑦w|방향·마진 {string.Join(" ", wDirs.Select(d => $"{d.Dir}{d.Margin:0.00}"))}]");
                         // ⑧ 소스 융합 — 실전에서는 ④·⑦·⑦w가 모두 실패했을 때만 발동하는 최후 폴백.
                         // 여기서는 항상 찍어 융합 풀·게이트 동작을 관찰한다(캘리브레이션·회귀 창구).
                         sb.AppendLine($"      [{fusePool.Stats()}]");
@@ -202,7 +205,7 @@ internal static partial class RuneArrowDetector
                                         var rect = new Rectangle((int)(p.Center.X - box7 / 2.0), (int)(p.Center.Y - box7 / 2.0), box7, box7);
                                         var la = AnalyzeArrowAt(frames[fi], beforeRef, fi > 0 ? frames[fi - 1] : null, rect);
                                         parts.Add(la is { } a
-                                            ? $"{(a.MovingPx >= 40 ? "회" : "정")}{(a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })}{a.AngleDeg:000}°a{a.Area}"
+                                            ? $"{(a.MovingPx >= 40 ? "회" : "정")}{(a.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })}{a.AngleDeg:000}°a{a.Area}M{a.Margin:0.00}"
                                             : "×");
                                     }
                                     sb.AppendLine($"     f{fi}: {string.Join("  ", parts)}");
@@ -369,7 +372,7 @@ internal static partial class RuneArrowDetector
                 {
                     if (rd[j].WasLocked) { parts.Add($"[확정{rd[j].LockedDir}]"); continue; }
                     if (!rd[j].Analyzed) { parts.Add("×"); continue; }
-                    parts.Add($"{(rd[j].RotActive ? "회" : "정")}{(rd[j].Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })}{rd[j].AngleDeg:000}°a{rd[j].Area}m{rd[j].MovingPx}{(rd[j].NewlyLocked ? "★락" : "")}");
+                    parts.Add($"{(rd[j].RotActive ? "회" : "정")}{(rd[j].Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })}{rd[j].AngleDeg:000}°a{rd[j].Area}m{rd[j].MovingPx}M{rd[j].Margin:0.00}{(rd[j].NewlyLocked ? "★락" : "")}");
                 }
                 sb.AppendLine($"f{fi:00} {t,5:0}ms  {string.Join("  ", parts)}");
                 solver.TryRelocate(strips[fi].Bmp, (long)t); // 3잠금+1잡 슬롯 재배치(실전 동일 로직)

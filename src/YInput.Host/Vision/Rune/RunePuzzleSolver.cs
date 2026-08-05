@@ -30,10 +30,11 @@ internal sealed class RunePuzzleSolver
                                                  // 20:38 오답 입력 때 2·3번이 15px, 진짜 이웃 화살표는 ≥48px)
     internal const int PosBox = 64;              // 슬롯 로컬 관측 박스 한 변
 
-    /// <summary>StepLocal 한 회의 슬롯별 판독 — 오프라인 재현기의 f-라인 출력용(실전은 무시).</summary>
+    /// <summary>StepLocal 한 회의 슬롯별 판독 — 오프라인 재현기의 f-라인 출력용(실전은 무시).
+    /// Margin = 방향 분류 마진(합의 잠금 캘리브레이션 창구 — f-라인 M토큰).</summary>
     internal readonly record struct SlotReading(
         bool WasLocked, char LockedDir, bool Analyzed, char Dir, double AngleDeg, int Area, int MovingPx,
-        bool RotActive, bool NewlyLocked);
+        bool RotActive, bool NewlyLocked, double Margin = 0);
 
     private readonly Bitmap? _beforeRef;   // 발동 직전 기준 프레임(차분 배제용) — 수명은 호출자 소유
     private readonly bool _precropped;     // 입력이 이미 PuzzleRegion 크롭인가(실전 true)
@@ -88,6 +89,17 @@ internal sealed class RunePuzzleSolver
     private string? _posSource;
     private long _posAt = -1;
     private readonly long[] _lockedAt = new long[4];
+    // 3소스 합의 잠금용 판독 저장(2026-08-05 14:01 오답 입력 — ④ heavy가 ←를 R로 오분류해
+    // 단독 잠금한 사건의 재설계) — heavy(④줄)·로컬(sat체인)·웜(웜차분)의 슬롯별 최신
+    // (방향, 마진, 시각[, X]). 이 커밋(C1)은 수집 배관만, 판정 결합(ConsensusAllows)은 C3.
+    private readonly double[] _heavyMargin = new double[4];
+    private readonly char[] _localDir = new char[4];
+    private readonly long[] _localDirAt = [-9999, -9999, -9999, -9999];
+    private readonly double[] _localMargin = new double[4];
+    private readonly char[] _warmDir = new char[4];
+    private readonly long[] _warmDirAt = [-9999, -9999, -9999, -9999];
+    private readonly float[] _warmX = new float[4];
+    private readonly double[] _warmMargin = new double[4];
 
     internal RunePuzzleSolver(Bitmap? beforeRef, int initialBudgetMs, bool precropped,
                               Action<string>? note = null, Action<string>? diag = null)
@@ -149,9 +161,11 @@ internal sealed class RunePuzzleSolver
         // 위치가 다르면 아래 균일성 비교로 어느 쪽이 진짜인지 판별해 교체한다(위치 전용 —
         // 방향은 로컬 관찰). 정상 맵은 웜 줄과 ④ 줄이 같은 물체라 불일치가 없어 발동 안 함.
         if (row is not null && _pos is null
-            && RuneArrowDetector.TryWarmRow(frame, _beforeRef, _precropped, pool, out double warmArea)
+            && RuneArrowDetector.TryWarmRow(frame, _beforeRef, _precropped, pool, out double warmArea, out var warmDirs)
                is { Length: 4 } wcheck)
         {
+            for (int j = 0; j < 4; j++) // 합의용 웜 판독 저장 — 위치 대응은 소비 시점에 검사
+            { _warmDir[j] = warmDirs![j].Dir; _warmMargin[j] = warmDirs[j].Margin; _warmDirAt[j] = tMs; _warmX[j] = wcheck[j].X; }
             int mismatch = Enumerable.Range(0, 4).Count(j => Math.Abs(wcheck[j].X - row[j].Center.X) > MinSlotSepPx);
             double rowArea = row.Sum(r => (double)r.Area);
             double rowGapRatio = GapRatio(row.Select(r => r.Center.X));
@@ -200,6 +214,7 @@ internal sealed class RunePuzzleSolver
                 if (_pos is not null && Math.Abs(row[j].Center.X - _pos[j].X) > PosBox / 2.0) continue;
                 _centers[j] = row[j].Center;
                 _heavyDir[j] = row[j].Dir; _heavyDirAt[j] = tMs; _heavyX[j] = row[j].Center.X; // 로컬 잠금 충돌 보류 기준
+                _heavyMargin[j] = row[j].Margin;
                 if (_locked[j] is not null) continue;
                 // 정지 확정: '런 시작' 모양·방향이 계속 같아야 함
                 if (_runSig[j] is not null && _runDir[j] == row[j].Dir
@@ -230,10 +245,13 @@ internal sealed class RunePuzzleSolver
             // 웜톤 줄(위치만) — 한색 광류 병합으로 ④·⑦이 전멸하는 맵의 구제(2026-08-05 09:20
             // 오답 실전 원인). 방향은 로컬 관찰이 판정. 융합보다 앞: 단일 웜 마스크의 완전한
             // 4블롭 줄이 다소스 짜깁기보다 강한 기하 증거다.
-            else if (RuneArrowDetector.TryWarmRow(frame, _beforeRef, _precropped, pool, out _) is { Length: 4 } wp)
+            else if (RuneArrowDetector.TryWarmRow(frame, _beforeRef, _precropped, pool, out _, out var wpDirs) is { Length: 4 } wp)
             {
                 _pos = wp; _posAnchor = (PointF[])wp.Clone();
-                _posSource = "⑦w 웜톤 줄"; _posAt = clock();
+                long wpT = clock();
+                for (int j = 0; j < 4; j++) // 합의용 웜 판독 저장
+                { _warmDir[j] = wpDirs![j].Dir; _warmMargin[j] = wpDirs[j].Margin; _warmDirAt[j] = wpT; _warmX[j] = wp[j].X; }
+                _posSource = "⑦w 웜톤 줄"; _posAt = wpT;
                 _note?.Invoke($"위치 확보(⑦w 웜톤 줄·위치만) — 방향은 로컬 관찰: {string.Join(" ", wp.Select(p => $"({p.X:0},{p.Y:0})"))}");
             }
             // 소스 간 후보 융합 — 최후 폴백(④·⑦·웜톤 전부 실패한 프레임만). 단일 마스크가 4개를
@@ -287,6 +305,7 @@ internal sealed class RunePuzzleSolver
         {
             if (_pos is not null && Math.Abs(row[j].Center.X - _pos[j].X) > PosBox / 2.0) continue; // 슬롯 위치 대응 게이트
             _heavyDir[j] = row[j].Dir; _heavyDirAt[j] = tMs; _heavyX[j] = row[j].Center.X;
+            _heavyMargin[j] = row[j].Margin;
         }
         TryAdoptRow(row, clock);
     }
@@ -337,6 +356,8 @@ internal sealed class RunePuzzleSolver
             }
             else
             {
+                // 합의용 로컬 판독 저장 — 비회전 판독만(회전 중 방향 분류는 무의미라 투표 금지)
+                _localDir[j] = a.Dir; _localMargin[j] = a.Margin; _localDirAt[j] = tMs;
                 // 정지 확정 — 로컬 시그니처 런. 무거운 줄 경로와 상시 병행(독립 런 상태) —
                 // 줄 인식이 흔들리는 맵에서 정지 화살표가 굶는 것 방지(10:39 4정지 실패).
                 if (_lRunSig[j] is not null && _lRunDir[j] == a.Dir && RuneArrowDetector.SigSimilar(_lRunSig[j], a.Sig))
@@ -358,7 +379,7 @@ internal sealed class RunePuzzleSolver
             }
             if (_lockedCount > before) _lockedAt[j] = tMs; // 반동표·로컬 시그니처 잠금 공통 — 트레이스용
             readings[j] = new SlotReading(false, default, true, a.Dir, a.AngleDeg, a.Area, a.MovingPx,
-                rotActive, _lockedCount > before);
+                rotActive, _lockedCount > before, a.Margin);
         }
         return readings;
     }
@@ -453,6 +474,7 @@ internal sealed class RunePuzzleSolver
         _runSig[j] = null!; _runLen[j] = 0;
         if (alsoVotes) for (int c = 0; c < 4; c++) _votes[j, c] = 0;
         _lastRotAt[j] = -999;
+        _localDirAt[j] = -9999; _warmDirAt[j] = -9999; // 다른 지점의 합의 판독도 무효(heavy는 호출자 소관)
     }
 
     /// <summary>종료 판정 — 실패 사유/사용자 노트 문구까지 확정해 돌려준다(저장·방송은 호출자).
