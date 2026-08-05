@@ -1,0 +1,6 @@
+# 정답 ←↓↑↑ · ④ 잡줄 채택(중심 68px 이탈·간격 54/78/47) — ⑦w·⑧ 진짜 위치 + ② 방향이 핵심 불변식 (README 참조)
+run: --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
+out: rune-frame-0.png.analysis.txt
+xs: ⑦w 웜톤 줄 = 459 558 654 733 ~5
+xs: ⑧ 소스 융합 = 459 558 654 733 ~5
+re: \(459,\d+\)a\d+L \(558,\d+\)a\d+D \(654,\d+\)a\d+U \(733,\d+\)a\d+U

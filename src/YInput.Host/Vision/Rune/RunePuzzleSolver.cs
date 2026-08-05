@@ -111,6 +111,16 @@ internal sealed class RunePuzzleSolver
     private static bool SigStable(List<bool[]> hist) => hist.Count >= 3
         && RuneArrowDetector.SigSimilar(hist[^1], hist[^2]) && RuneArrowDetector.SigSimilar(hist[^2], hist[^3]);
 
+    /// <summary>간격 균일비 — X 정렬 후 이웃 간격 최대/최소. 진짜 화살표 줄이 잡줄보다 균일하다는
+    /// 실측(2026-08-05: 진짜 1.11~1.49, 잡 1.63~1.79)이 웜 교차 검증의 판별 근거.</summary>
+    private static double GapRatio(IEnumerable<float> xs)
+    {
+        var s = xs.OrderBy(x => x).ToArray();
+        double mx = 0, mn = double.MaxValue;
+        for (int i = 1; i < s.Length; i++) { double g = s[i] - s[i - 1]; mx = Math.Max(mx, g); mn = Math.Min(mn, g); }
+        return mn <= 0 ? double.MaxValue : mx / mn;
+    }
+
     /// <summary>오프라인 재현기 전용 — 위치 획득/pos= 인자 결과를 관측 위치로 시드한다.</summary>
     internal void AdoptPositions(PointF[] pos)
     {
@@ -136,7 +146,7 @@ internal sealed class RunePuzzleSolver
         // 파편화되면 잡 4조합이 게이트를 전부 통과해 ④가 잡줄을 "성공" 채택한다(2026-08-05
         // 10:32 실전: ⓑ 잡줄 면적 1039 채택·초반 오잠금으로 재선출 봉쇄 → 정답을 아는 웜 줄
         // (면적 1737)이 폴백이라 돌 기회가 없어 2/4 실패). 웜 줄이 존재하고 ④ 줄과 2슬롯 이상
-        // 위치가 다르며 면적 합이 재선출 문턱(1.4×)만큼 우세하면 웜 위치를 채택한다(위치 전용 —
+        // 위치가 다르면 아래 균일성 비교로 어느 쪽이 진짜인지 판별해 교체한다(위치 전용 —
         // 방향은 로컬 관찰). 정상 맵은 웜 줄과 ④ 줄이 같은 물체라 불일치가 없어 발동 안 함.
         if (row is not null && _pos is null
             && RuneArrowDetector.TryWarmRow(frame, _beforeRef, _precropped, pool, out double warmArea)
@@ -144,11 +154,21 @@ internal sealed class RunePuzzleSolver
         {
             int mismatch = Enumerable.Range(0, 4).Count(j => Math.Abs(wcheck[j].X - row[j].Center.X) > MinSlotSepPx);
             double rowArea = row.Sum(r => (double)r.Area);
-            if (mismatch >= 2 && warmArea >= rowArea * 1.4)
+            double rowGapRatio = GapRatio(row.Select(r => r.Center.X));
+            double warmGapRatio = GapRatio(wcheck.Select(p => p.X));
+            // 전체 교체 판별자 = 간격 균일성 비교(2026-08-05 12:16 재설계, 사용자 검수).
+            // 기각된 판별자(실측): 면적 우세(구 1.4×) — 12:16 진짜 웜이 1.16×라 미달(3/4 실패),
+            // pillhigh는 잡 웜이 1.65×로 통과해 진짜 줄을 뺏을 위험(방향이 반대로도 나옴).
+            // 중심 근접 — pillhigh 잡 웜 이탈 25px < 진짜 ④ 46px(역전). 균일성 비교는 실측 전
+            // 케이스 정답: 12:16 웜 1.25 vs ④ 1.66, 10:32 웜 1.11 vs ④ 1.79 → 교체 / pillhigh
+            // 웜 1.63 vs ④ 1.49 → 차단. 마진 0.15는 pillhigh 역차 0.14 배제의 최소값. 면적 0.8×
+            // 하한은 파편 웜 줄의 탈취 방지(UUUR 웜 0.75×). 웜이 틀려도 위치가 틀리면 잠금
+            // 실패 → 안전 종료(fail-closed)라 오답 위험은 없다.
+            if (mismatch >= 2 && warmArea >= rowArea * 0.8 && warmGapRatio <= rowGapRatio - 0.15)
             {
                 _pos = wcheck; _posAnchor = (PointF[])wcheck.Clone(); _adoptedRowArea = warmArea;
                 _posSource = "④→⑦w 교체(웜 교차 검증)"; _posAt = tMs;
-                _note?.Invoke($"위치 교체(④→⑦w 웜 교차 검증) — ④ 줄(면적 {rowArea:0})과 {mismatch}슬롯 불일치, 웜 줄(면적 {warmArea:0}) 채택: "
+                _note?.Invoke($"위치 교체(④→⑦w 웜 교차 검증) — {mismatch}슬롯 불일치, 간격 균일비 웜 {warmGapRatio:0.00} vs ④ {rowGapRatio:0.00}, 면적 {warmArea:0}/{rowArea:0}, 웜 채택: "
                               + string.Join(" ", wcheck.Select(p => $"({p.X:0},{p.Y:0})")));
             }
             // 슬롯 단위 보정 — 3슬롯 일치 + 1슬롯 불일치면 일치한 3개가 두 줄의 정렬을 상호

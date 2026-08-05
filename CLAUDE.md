@@ -98,7 +98,7 @@ YInput.exe --rune-minimap-analyze rune-minimap.png    # → .rune.txt 후보·�
 **한 명령으로 전 세트 자동 대조** — 룬 코드를 고쳤으면 무조건 이걸 돌린다(종료코드=실패 수):
 
 ```powershell
-powershell -File tools\rune-regress.ps1        # 빌드 + 16세트 리플레이 + expected.txt 대조
+powershell -File tools\rune-regress.ps1        # 빌드 + 17세트 리플레이 + expected.txt 대조
 powershell -File tools\rune-regress.ps1 -NoBuild -Set *DDRD*   # 특정 세트만
 ```
 
@@ -122,6 +122,7 @@ powershell -File tools\rune-regress.ps1 -NoBuild -Set *DDRD*   # 특정 세트�
 | `rune-frames-LLUL-coolglow-20260805` | 한색 광류 병합·융합 첫 오답 | ④·⑦ 실패 · ⑦w 웜톤 줄 505/592/654/780 ±5 · ② ←←↑← |
 | `rune-frames-UUDL-coolglow2-20260805` | ④ 잡줄 채택·웜 교차 검증 근거 | ⑦w 396/500/595/689 ±5 · 스트립(pos=) 4/4 ↑↑↓← (침식 주축 회귀 감시) |
 | `rune-frames-LUUR-coolglow3-20260805` | ④ 1슬롯 잡 교체·웜 슬롯 보정 근거 | ⑦w 458/588/674/730 ±5 · ② L U U R |
+| `rune-frames-LDUU-rowshift-20260805` | ④ 잡줄 채택(중심 68px 이탈)·웜 균일성 교체 근거 | ⑦w·⑧ 459/558/654/733 ±5 · ② L D U U |
 | `rune-minimap\` | 아이콘 3장 | README 참조 |
 
 리플레이 산출물(`*.analysis.txt`, `*.png.mask-*.png`)은 gitignore됨 — 커밋하지 말 것.
