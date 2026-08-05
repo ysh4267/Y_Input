@@ -1,0 +1,14 @@
+# 정답 ←↑↑↓ · ④가 버섯 발광·몹 발광 등간격 잡줄 채택, 웜 교차 검증 면적·균일 게이트 모두 역전 기각 → 오답 ←↓←← — 방향 협응(4/4) 판별자 재설계 근거 (README 참조)
+run: --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
+out: rune-frame-0.png.analysis.txt
+xs: ⑦w 웜톤 줄 = 459 547 642 769 ~5
+rowxs: ②|밴드 = 459 547 642 769 ~5
+re: \(459,\d+\)a\d+L \(547,\d+\)a\d+U \(642,\d+\)a\d+U \(769,\d+\)a\d+D
+re: ⑦w\|로컬협응 La\d+ Ua\d+ Ua\d+ Da\d+ 일치 4/4
+run: --rune-analyze rune-before.png rune-strip-*.png pos=459,237;547,228;642,234;769,219
+out: rune-before.png.analysis.txt
+re: 화살표1: .*확정 L
+re: 화살표2: .*확정 U
+re: 화살표3: .*확정 U
+re: 화살표4: .*확정 D
+re: 최종 입력\(X순\): ← ↑ ↑ ↓

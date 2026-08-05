@@ -254,6 +254,32 @@ internal sealed class RunePuzzleSolver
                 _note?.Invoke($"위치 교체(④→⑦w 웜 교차 검증) — {mismatch}슬롯 불일치, 간격 균일비 웜 {warmGapRatio:0.00} vs ④ {rowGapRatio:0.00}, 면적 {warmArea:0}/{rowArea:0}, 웜 채택: "
                               + string.Join(" ", wcheck.Select(p => $"({p.X:0},{p.Y:0})")));
             }
+            // 방향 협응 판별자(2026-08-05 16:33 오답 재설계, 사용자 검수 A안) — 균일성·면적이 모두
+            // 역전된 잡줄의 교체 창구. 16:33 실전: ④가 버섯 발광·몹 발광의 등간격 잡줄(2530,
+            // 균일비 1.18)을 채택했고 진짜 웜 줄(1603, 균일비 1.44)이 두 게이트에서 기각 →
+            // 오답 ←↓←← 입력. 판별 원리: 마스크가 전혀 다른 두 소스(웜차분 vs 로컬 sat체인)가
+            // 4슬롯 전부 같은 방향을 읽으면 그 줄이 진짜 글리프다. 임계는 4/4 만장일치 —
+            // 코퍼스 실측(픽스처 12종 로컬협응 라인): 진짜 웜 줄은 전부 4/4(16:33·UUDL·LDUU·
+            // LLUL), 잡 웜 줄 최고는 3/4(pillhigh — ≥3이면 진짜 ④를 뺏겼다. 면적 0.8× 게이트도
+            // 여기선 무력이라 만장일치가 유일 방어). 웜 단독 결정권 없음 원칙 유지 — 방향을
+            // 입력하는 게 아니라 위치 교체 판단이며, 방향·잠금은 이후 로컬 관찰·합의가 정한다.
+            else if (mismatch >= 2)
+            {
+                int agree = 0;
+                for (int j = 0; j < 4; j++)
+                {
+                    var prect = new Rectangle((int)(wcheck[j].X - PosBox / 2.0), (int)(wcheck[j].Y - PosBox / 2.0), PosBox, PosBox);
+                    if (RuneArrowDetector.AnalyzeArrowAt(frame, _beforeRef, null, prect) is { } pa
+                        && pa.Area >= 60 && pa.Dir == warmDirs![j].Dir) agree++;
+                }
+                if (agree == 4)
+                {
+                    _pos = wcheck; _posAnchor = (PointF[])wcheck.Clone(); _adoptedRowArea = warmArea;
+                    _posSource = "④→⑦w 교체(방향 협응)"; _posAt = tMs;
+                    _note?.Invoke($"위치 교체(④→⑦w 방향 협응) — {mismatch}슬롯 불일치, 웜·로컬 방향 4/4 일치(균일비 웜 {warmGapRatio:0.00} vs ④ {rowGapRatio:0.00}), 웜 채택: "
+                                  + string.Join(" ", wcheck.Select(p => $"({p.X:0},{p.Y:0})")));
+                }
+            }
             // 슬롯 단위 보정 — 3슬롯 일치 + 1슬롯 불일치면 일치한 3개가 두 줄의 정렬을 상호
             // 검증하므로, 불일치 슬롯만 웜 위치로 교체한다(면적 조건 불필요 — 2026-08-05 10:47
             // 실전: ④ 교집합이 진짜 1번(458← a368) 대신 잡블롭(533 a266)을 끼웠는데 불일치가
