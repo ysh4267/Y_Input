@@ -153,7 +153,8 @@ internal static partial class RuneArrowDetector
             mask[i] = mask[i] && hRun[i] >= MinThick && vRun[i] >= MinThick;
     }
 
-    private sealed record Blob(double Cx, double Cy, int Area, int MinX, int MinY, int MaxX, int MaxY, List<int> Pixels)
+    // internal: FusionPool(중첩 클래스)의 멤버 타입으로 노출되어야 함 — private이면 CS0052
+    internal sealed record Blob(double Cx, double Cy, int Area, int MinX, int MinY, int MaxX, int MaxY, List<int> Pixels)
     {
         public int W => MaxX - MinX + 1;
         public int H => MaxY - MinY + 1;

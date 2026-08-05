@@ -157,14 +157,18 @@ internal static partial class RuneArrowDetector
     ///  ⓐ 채도 + '발동 전과 다름' + '직전 프레임과 정지' — 교집합이 실패한 경우(프레임 부족 등)
     ///  ⓑ 채도 + '발동 전과 다름' — 회전 중 화살표(정지 조건에 안 걸림) 대비
     ///  ⓒ 채도 단독 — 기준 프레임이 오염된 경우 최후 수단
-    /// 회전형은 호출자가 연속 샘플링해 시그니처·방향이 유지되는 구간(멈춤)에서 확정한다.</summary>
-    public static List<ArrowSample>? AnalyzeFrame(Bitmap frame, IReadOnlyList<Bitmap> recent, Bitmap? bannerRef, bool precropped = false)
+    /// 회전형은 호출자가 연속 샘플링해 시그니처·방향이 유지되는 구간(멈춤)에서 확정한다.
+    /// pool = 소스 융합용 후보 수집 싱크(옵션) — 각 단계의 게이트 통과 후보를 소스 태깅해 담고,
+    /// 전 단계 실패 시 ⓓ 애니메이션 연속차분 후보를 추가로 수집한다. <b>반환값에는 관여하지
+    /// 않는다</b>(④의 성공/실패 의미는 회귀 계약 — DLUU 픽스처 're: ⑦ 위치 없음'이 감시).</summary>
+    public static List<ArrowSample>? AnalyzeFrame(Bitmap frame, IReadOnlyList<Bitmap> recent, Bitmap? bannerRef, bool precropped = false, FusionPool? pool = null)
     {
         if (!TryRegion(frame, precropped, out var region)) return null;
         var prevs = recent.Where(p => p.Width == frame.Width && p.Height == frame.Height).ToList();
         if (bannerRef is not null && (bannerRef.Width != frame.Width || bannerRef.Height != frame.Height)) bannerRef = null;
         int w = region.Width, h = region.Height;
         int fullH = FullFrameH(frame, precropped);
+        pool?.SetGeometry(region, frame.Width, BannerBand(w, h, fullH).CenterX);
 
         var vivid = VividMask(frame, region, w, h, requireWarm: false);
         bool[]? diffBefore = null;
@@ -190,7 +194,9 @@ internal static partial class RuneArrowDetector
                     for (int i = 0; i < mi.Length; i++) mi[i] &= vp[i];
                 }
                 for (int i = 0; i < mi.Length; i++) mi[i] &= diffBefore[i];
-                var r = DetectRow(frame, bannerRef, mi, region, w, h, thinFilter: true, fullH);
+                var c0 = pool is null ? null : new List<Blob>();
+                var r = DetectRow(frame, bannerRef, mi, region, w, h, thinFilter: true, fullH, candsOut: c0);
+                if (c0 is not null) pool!.Add(sat == VividSatStrict ? FuseSource.Inter80 : FuseSource.Inter45, c0);
                 if (r is null) continue;
                 double ratio = (double)r.Max(b => b.Area) / r.Min(b => b.Area);
                 int area = r.Sum(b => b.Area);
@@ -205,15 +211,38 @@ internal static partial class RuneArrowDetector
             AccumulateDiff(prevs[^1], frame, region, w, h, AnimDiffMin, moving);
             var maskA = new bool[w * h];
             for (int i = 0; i < maskA.Length; i++) maskA[i] = vivid[i] && diffBefore[i] && !moving[i];
-            row = DetectRow(frame, bannerRef, maskA, region, w, h, thinFilter: true, fullH);
+            var cA = pool is null ? null : new List<Blob>();
+            row = DetectRow(frame, bannerRef, maskA, region, w, h, thinFilter: true, fullH, candsOut: cA);
+            if (cA is not null) pool!.Add(FuseSource.DiffStill, cA);
         }
         if (row is null && diffBefore is not null)
         {
             var maskB = new bool[w * h];
             for (int i = 0; i < maskB.Length; i++) maskB[i] = vivid[i] && diffBefore[i];
-            row = DetectRow(frame, bannerRef, maskB, region, w, h, thinFilter: true, fullH);
+            var cB = pool is null ? null : new List<Blob>();
+            row = DetectRow(frame, bannerRef, maskB, region, w, h, thinFilter: true, fullH, candsOut: cB);
+            if (cB is not null) pool!.Add(FuseSource.DiffBefore, cB);
         }
-        row ??= DetectRow(frame, bannerRef, (bool[])vivid.Clone(), region, w, h, thinFilter: true, fullH);
+        if (row is null)
+        {
+            var cC = pool is null ? null : new List<Blob>();
+            row = DetectRow(frame, bannerRef, (bool[])vivid.Clone(), region, w, h, thinFilter: true, fullH, candsOut: cC);
+            if (cC is not null) pool!.Add(FuseSource.VividOnly, cC);
+        }
+        if (row is null && pool is not null && prevs.Count >= 1)
+        {
+            // ⓓ 애니메이션 연속차분 — FindArrowsAnimated와 동일 마스크(연속쌍 차분 합집합 ∧ 채도),
+            // 두께 필터 없음(침식 코어 보존 — FindArrowsAnimated:60의 20:24 교훈 승계).
+            // 줄 선택은 하지 않고 융합 풀에 후보만 기여한다(④ 반환 의미 동결).
+            var animChanged = new bool[w * h];
+            var seq = new List<Bitmap>(prevs) { frame };
+            for (int k = 1; k < seq.Count; k++)
+                AccumulateDiff(seq[k - 1], seq[k], region, w, h, AnimDiffMin, animChanged);
+            for (int i = 0; i < animChanged.Length; i++) animChanged[i] &= vivid[i];
+            var (bY0, bY1, _) = BannerBand(w, h, fullH);
+            double rY0 = bY0 + RowFracLo * (bY1 - bY0), rY1 = bY0 + RowFracHi * (bY1 - bY0);
+            pool.Add(FuseSource.Anim, FilterCands(animChanged, w, h, rY0, rY1));
+        }
         if (row is null) return null;
 
         var result = new List<ArrowSample>(4);

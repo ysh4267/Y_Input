@@ -129,10 +129,17 @@ internal static partial class RuneArrowDetector
                         sb.AppendLine($"  ① 애니메이션 차분: {(frames.Count >= 2 ? Dirs(FindArrowsAnimated(frames, beforeRef, pre)) : "프레임 부족")}");
                         sb.AppendLine($"  ② 발동 전 차분:   {Dirs(FindArrows(frame, beforeRef, beforeRef, pre))}");
                         sb.AppendLine($"  ③ 채도 단독:      {Dirs(FindArrows(frame, null, beforeRef, pre))}");
-                        var af = AnalyzeFrame(frame, frames.GetRange(0, frames.Count - 1), beforeRef, pre);
+                        var fusePool = new FusionPool(); // ④와 같은 호출에서 수집 — 실전(StepFrame)과 동일 경로
+                        var af = AnalyzeFrame(frame, frames.GetRange(0, frames.Count - 1), beforeRef, pre, fusePool);
                         sb.AppendLine($"  ④ 프레임 분석(교집합→정지 게이트, 실전 경로): {(af is null ? "실패" : string.Join(" ", af.Select(x => x.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })))}");
                         var pr = TryPartialRow(frame, beforeRef, pre);
                         sb.AppendLine($"  ⑦ 부분 줄 보완(3개+외삽): {(pr is null ? "실패" : string.Join(" ", pr.Select(p => $"({p.X:0},{p.Y:0})")))}");
+                        // ⑧ 소스 융합 — 실전에서는 ④·⑦이 모두 실패했을 때만 발동하는 최후 폴백.
+                        // 여기서는 항상 찍어 융합 풀·게이트 동작을 관찰한다(캘리브레이션·회귀 창구).
+                        sb.AppendLine($"      [{fusePool.Stats()}]");
+                        var fused = TryFusedRow(fusePool, frame, beforeRef, out var fusedContrib);
+                        sb.AppendLine($"  ⑧ 소스 융합: {(fused is null ? "실패" : string.Join(" ", fused.Select(p => $"({p.X:0},{p.Y:0})")))}");
+                        sb.AppendLine($"      [융합 기여 {fusedContrib}]");
                         // ⑤ 실험: 채도 교집합 — 모든 프레임에서 '계속 채도 높음'(정적 UI) && 발동 전과 다름.
                         //    흔들리는 불꽃은 프레임마다 위치가 바뀌어 교집합에서 탈락한다.
                         if (frames.Count >= 2)

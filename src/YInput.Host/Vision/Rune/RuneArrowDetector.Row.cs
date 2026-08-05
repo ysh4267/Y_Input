@@ -57,16 +57,18 @@ internal static partial class RuneArrowDetector
         var (bandY0, bandY1, _) = BannerBand(w, h, (int)(h / (RegionY1 - RegionY0)));
         double rowY0 = bandY0 + RowFracLo * (bandY1 - bandY0), rowY1 = bandY0 + RowFracHi * (bandY1 - bandY0);
         var cands = FilterCands(mask, w, h, rowY0, rowY1);
-        return PartialRowFromCands(cands, frame, beforeRef, region, w, frame.Width, verifyExtrap: false);
+        return PartialRowFromCands(cands, frame, beforeRef, region, w, frame.Width, verifyExtrap: false, out _);
     }
 
     /// <summary>부분 줄 코어 — 후보 리스트에서 3개 조합 + 빠진 슬롯 외삽으로 위치 4개 복원.
     /// verifyExtrap: true면 내부 중점 삽입을 포함한 <b>모든</b> 외삽 슬롯이 AnalyzeArrowAt 탐침으로
     /// 글리프 실존을 확인해야 채택(소스 융합 폴백용 — 융합 풀은 단일 마스크보다 잡음이 많아
-    /// 무검증 외삽은 잡음 관측점을 만든다). false = 현행 TryPartialRow 동작(끝 슬롯만 탐침).</summary>
+    /// 무검증 외삽은 잡음 관측점을 만든다). false = 현행 TryPartialRow 동작(끝 슬롯만 탐침).
+    /// chosen = 채택된 실블롭 3개(융합 경로의 교차 확인 게이트용 — 반환이 null이 아닐 때만 유효).</summary>
     private static PointF[]? PartialRowFromCands(List<Blob> candsIn, Bitmap frame, Bitmap? beforeRef,
-        Rectangle region, int w, int frameW, bool verifyExtrap)
+        Rectangle region, int w, int frameW, bool verifyExtrap, out List<Blob>? chosen)
     {
+        chosen = null;
         var cands = candsIn.OrderBy(b => b.Cx).ToList();
         double gLo = frameW * GapFracLo, gHi = frameW * GapFracHi; // PickRow와 동일 상수
         List<Blob>? best = null; double bestScore = double.MinValue;
@@ -87,6 +89,7 @@ internal static partial class RuneArrowDetector
                     if (score > bestScore) { bestScore = score; best = t3.ToList(); }
                 }
         if (best is null) return null;
+        chosen = best;
         double bg1 = best[1].Cx - best[0].Cx, bg2 = best[2].Cx - best[1].Cx;
         double yAvg = best.Average(x => x.Cy);
         bool ProbeAt(double x) => AnalyzeArrowAt(frame, beforeRef, null,
