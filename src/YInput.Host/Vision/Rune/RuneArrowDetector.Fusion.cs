@@ -72,6 +72,7 @@ internal static partial class RuneArrowDetector
     /// ⓪만 돈 풀이 소스 수 기준으로 전부 '확인'돼 무의미했다). 진짜 화살표는 마스크가 정상일 때
     /// 정지=INT+DIFF, 회전=DIFF+ANIM으로 자연히 2클래스가 된다.</summary>
     private const int FuseMinCrossConfirmed = 2;
+    private const int FuseUnconfirmedAreaCap = 500; // 무확인(클래스<2) 군집 유효 면적 상한 — 안전창 411~677의 중앙(Bonus 주석 참조)
 
     /// <summary>군집 하나 — 대표 블롭 + 증거 메타. Rep = 멤버 면적 중앙값(짝수면 큰 쪽):
     /// 최대 면적은 병합 비대 블롭, 최소 면적은 침식 조각이라 양극단을 회피한다.</summary>
@@ -142,8 +143,16 @@ internal static partial class RuneArrowDetector
         string baseStat = $"군집 {clusters.Count}(게이트 후 {reps.Count})";
         if (reps.Count < 3) { contribution = $"{baseStat} — 후보 부족"; return null; }
 
+        // 무확인 면적 캡(2026-08-05 밴드 확장 상시화 캘리브레이션) — 교차확인 없는(클래스 <2)
+        // 군집의 유효 면적을 FuseUnconfirmedAreaCap으로 클램프(초과분을 음수 보너스로 상쇄).
+        // LDUU 실측: 교80 단독 잡 a1929(마진 0.01 무방향)가 면적 지배로 진짜 조합(전원 교차확인,
+        // 4위 −361.4)을 눌러 ⑧이 0좌표로 무너졌다. 캡 안전창은 산술 도출 411~677 — 단일클래스
+        // 진짜 슬롯 실측 최대 a411(LDUU 654 웜 단독)은 무손상, 잡 a832·a1929는 상쇄되어 진짜가
+        // 9% 마진으로 복원된다. 하드 제거가 아니라 점수 클램프라 군집·게이트·박스벌점은 원값.
         double Bonus(Blob b) => meta.TryGetValue(b, out var m)
-            ? b.Area * FuseSrcBonusFrac * Math.Clamp(m.ClassCount - 1, 0, 2) : 0;
+            ? b.Area * FuseSrcBonusFrac * Math.Clamp(m.ClassCount - 1, 0, 2)
+              - (m.ClassCount < 2 ? Math.Max(0, b.Area - FuseUnconfirmedAreaCap) : 0)
+            : 0;
         var region = pool.Region;
 
         // ① 4개 융합 줄 — 기존 PickRow 게이트(y밴드·간격·중심·면적비) 전부 동일 적용

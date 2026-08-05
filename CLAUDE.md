@@ -122,7 +122,7 @@ powershell -File tools\rune-regress.ps1 -NoBuild -Set *DDRD*   # 특정 세트�
 | `rune-strips-DDLR-fliplock-20260804` | 회전2·머리 플립 고착 | 1:D 2:D 3:L 4:R (pos= 고정, 리셋 발생) |
 | `rune-frames-DLRD-pilloffset-20260804` | 정지형·필 중심 이탈 67px | ②③ 줄 492/608/697/771 ±5 (④ 실패 허용) |
 | `rune-frames-DDLR-pillhigh-20260804` | 정지형·필 상단 이탈(밴드 8.9%) | ④ ↓↓←→ · 위치 411/498/559/650 ±5 |
-| `rune-frames-LLDR-erosion-20260804` | 정지형·침식 소실+밀린 줄 | ⓪ 파편 419/a30 · ⑨ 로컬 관찰 481/582/663/765 (라이브: 슬롯 재배치) |
+| `rune-frames-LLDR-erosion-20260804` | 정지형·침식 소실(구 밀린 줄 — 밴드 확장으로 ④ 직접 채택) | ⓪ 파편 419/a30 · ⑨ 로컬 관찰 407/481/582/663 · f0 정← |
 | `rune-frames-LLUL-coolglow-20260805` | 한색 광류 병합·융합 첫 오답 | ④·⑦ 실패 · ⑦w 웜톤 줄 505/592/654/780 ±5 · ② ←←↑← |
 | `rune-frames-UUDL-coolglow2-20260805` | ④ 잡줄 채택·웜 교차 검증 근거 | ⑦w 396/500/595/689 ±5 · 스트립(pos=) 4/4 ↑↑↓← (침식 주축 회귀 감시) |
 | `rune-frames-LUUR-coolglow3-20260805` | ④ 1슬롯 잡 교체·웜 슬롯 보정 근거 | ⑦w 458/588/674/730 ±5 · ② L U U R |
@@ -130,7 +130,7 @@ powershell -File tools\rune-regress.ps1 -NoBuild -Set *DDRD*   # 특정 세트�
 | `rune-frames-LLRR-dirflip-20260805` | ④ 방향 오분류 오답 입력·3소스 합의 잠금 근거 | ② 447/515/617/696 = L L R R · ⑨ f0/f1 슬롯1 정← |
 | `rune-strips-RDRL-solomargin-20260805` | 로컬 조기 단독 오독 잠금(m0.01)·단독 마진 하한 근거 | 스트립(pos=) 1·3 미확정 · 2:D 4:L · ⑦w 슬롯1 R |
 | `rune-frames-LUUD-mushroom-20260805` | 등간격 잡줄 채택(균일·면적 동시 역전)·방향 협응 4/4 근거 | ⑦w·② 459/547/642/769 = L U U D · 협응 4/4 · 스트립(pos=) ←↑↑↓ |
-| `rune-frames-DURD-highpill-20260805` | 높은 필(화살표 27.6%) 밴드 컷 전 소스 줄 실패·밴드 확장 2패스 근거 | ②·⑦w 확장 2패스 495/581/659/754 = D U R D · 협응 4/4 |
+| `rune-frames-DURD-highpill-20260805` | 높은 필(화살표 27.6%) 밴드 컷 전 소스 줄 실패·밴드 상시 확장 근거 | ②·⑦w 495/581/659/754 = D U R D · 협응 4/4 |
 | `rune-minimap\` | 아이콘 3장 | README 참조 |
 
 리플레이 산출물(`*.analysis.txt`, `*.png.mask-*.png`)은 gitignore됨 — 커밋하지 말 것.

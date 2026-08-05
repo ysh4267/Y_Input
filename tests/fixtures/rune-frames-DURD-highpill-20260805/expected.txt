@@ -1,7 +1,6 @@
-# 정답 ↓↑→↓ · 높은 필 — 화살표 중심 y205~221(창높이 27.6%)이 구 밴드 상단 컷(28%)에 걸려 전 소스 줄 실패 → 밴드 확장(21%)+2패스 재설계 근거 (README 참조)
+# 정답 ↓↑→↓ · 높은 필 — 화살표 중심 y205~221(창높이 27.6%)이 구 밴드 상단 컷(28%)에 걸려 전 소스 줄 실패 → 밴드 확장(21% 상시) 재설계 근거 (README 참조)
 run: --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
 out: rune-frame-0.png.analysis.txt
-re: 확장 2패스
 xs: ⑦w 웜톤 줄 = 495 581 659 754 ~5
 rowxs: ②|밴드 = 495 581 659 754 ~5
 re: \(495,\d+\)a\d+D \(581,\d+\)a\d+U \(659,\d+\)a\d+R \(754,\d+\)a\d+D
