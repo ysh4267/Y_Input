@@ -35,7 +35,7 @@ internal static partial class RuneArrowDetector
             }
             // 크기가 다른 프레임(다른 실행의 잔재)은 차분에 못 쓴다 — 첫 프레임 크기 기준으로 필터
             int skipped = frames.RemoveAll(f => f.Width != frames[0].Width || f.Height != frames[0].Height);
-            if (skipped > 0) sb.AppendLine($"크기 불일치 프레임 {skipped}개 제외");
+            if (skipped > 0) sb.AppendLine($"크기 불일치 프레임 {skipped}개 제외(기준: 첫 프레임 {frames[0].Width}x{frames[0].Height} — 첫 프레임이 낡은 실행의 잔재면 기준 자체가 문제일 수 있음)");
             var frame = frames[^1];
             // 작은 이미지(퍼즐 영역 크롭·화살표 크롭)는 전체를 분석, 전체 창 캡처는 비율 영역 적용
             var region = frame.Width < 700 || frame.Height < 500
@@ -73,10 +73,10 @@ internal static partial class RuneArrowDetector
                     b.W is >= MinArrowBox and <= MaxArrowBox && b.H is >= MinArrowBox and <= MaxArrowBox).ToList();
                 sb.AppendLine($"후보 {cands.Count}개");
                 var row = PickRow(cands, -1, frame.Width);
-                if (row is null) sb.AppendLine("선택된 줄 없음(조건 만족 조합 없음)");
+                if (row is null) sb.AppendLine("선택된 줄 없음(조건 만족 조합 없음 — ⓪ 진단 픽·중심 게이트 꺼짐, 실전 판정은 ④)");
                 else
                 {
-                    sb.AppendLine("선택된 줄:");
+                    sb.AppendLine("선택된 줄(⓪ 진단 픽 — 실전 판정은 ④, 방향은 그라데이션 보정 없음):");
                     foreach (var b in row)
                     {
                         var (dir, up, down, left, right) = ClassifyScores(b, w);
@@ -123,23 +123,40 @@ internal static partial class RuneArrowDetector
                         sb.AppendLine($"배너 텍스트 신호 = {PresentPixelCount(frames[^2], frames[^1], beforeRef, pre)}px (임계 {PresentMinPx} — PuzzlePresent)");
                     var band = BannerBand(w, h, FullFrameH(frame, pre));
                     sb.AppendLine($"— 실전 경로 재현 (배너 밴드 y {region.Y + band.Y0}..{region.Y + band.Y1}, 중심X {(band.CenterX >= 0 ? (region.X + band.CenterX).ToString("0") : "미탐지")}) —");
-                    DiagLog = s => sb.AppendLine($"      [{s}]");
+                    // 진단 단계 태그(2026-08-05 로그 개편) — 모든 진단([밴드/후보/에지 보정/
+                    // 그라데이션/로컬])에 소속 단계(①~⑨)를 접두로 박는다. 과거엔 전부 같은 래퍼라
+                    // 어느 단계 것인지 구분 불가였고, ①~③은 라벨 보간 구멍 안에서 검출기를 호출해
+                    // 진단이 라벨 라인 '안에' 끼어드는 인터리브까지 있었다(rowxs가 그 기형에 의존) —
+                    // 호출을 라벨 밖 별도 문장으로 빼 제거(픽스처 rowxs 앵커는 "②|밴드"로 동시 이행).
+                    // (주의) 그라데이션 보정 진단은 인자 선평가 탓에 소속 밴드 라인보다 위에 찍힌다.
+                    string stage = "";
+                    DiagLog = s => sb.AppendLine($"      [{stage}{s}]");
                     try
                     {
-                        sb.AppendLine($"  ① 애니메이션 차분: {(frames.Count >= 2 ? Dirs(FindArrowsAnimated(frames, beforeRef, pre)) : "프레임 부족")}");
-                        sb.AppendLine($"  ② 발동 전 차분:   {Dirs(FindArrows(frame, beforeRef, beforeRef, pre))}");
-                        sb.AppendLine($"  ③ 채도 단독:      {Dirs(FindArrows(frame, null, beforeRef, pre))}");
+                        stage = "①|";
+                        var r1 = frames.Count >= 2 ? FindArrowsAnimated(frames, beforeRef, pre) : null;
+                        sb.AppendLine($"  ① 애니메이션 차분: {(frames.Count >= 2 ? Dirs(r1) : "프레임 부족")}");
+                        stage = "②|";
+                        var r2 = FindArrows(frame, beforeRef, beforeRef, pre);
+                        sb.AppendLine($"  ② 발동 전 차분:   {Dirs(r2)}");
+                        stage = "③|";
+                        var r3 = FindArrows(frame, null, beforeRef, pre);
+                        sb.AppendLine($"  ③ 채도 단독:      {Dirs(r3)}");
                         var fusePool = new FusionPool(); // ④와 같은 호출에서 수집 — 실전(StepFrame)과 동일 경로
+                        stage = "④|";
                         var af = AnalyzeFrame(frame, frames.GetRange(0, frames.Count - 1), beforeRef, pre, fusePool);
                         sb.AppendLine($"  ④ 프레임 분석(교집합→정지 게이트, 실전 경로): {(af is null ? "실패" : string.Join(" ", af.Select(x => x.Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })))}");
+                        stage = "⑦|";
                         var pr = TryPartialRow(frame, beforeRef, pre);
                         sb.AppendLine($"  ⑦ 부분 줄 보완(3개+외삽): {(pr is null ? "실패" : string.Join(" ", pr.Select(p => $"({p.X:0},{p.Y:0})")))}");
                         // ⑦w 웜톤 줄(위치 전용) — 실전에서는 ⑦ 실패 시 다음 폴백. 풀에 웜 후보도 기여.
+                        stage = "⑦w|";
                         var wr = TryWarmRow(frame, beforeRef, pre, fusePool, out _);
                         sb.AppendLine($"  ⑦w 웜톤 줄(위치만): {(wr is null ? "실패" : string.Join(" ", wr.Select(p => $"({p.X:0},{p.Y:0})")))}");
                         // ⑧ 소스 융합 — 실전에서는 ④·⑦·⑦w가 모두 실패했을 때만 발동하는 최후 폴백.
                         // 여기서는 항상 찍어 융합 풀·게이트 동작을 관찰한다(캘리브레이션·회귀 창구).
                         sb.AppendLine($"      [{fusePool.Stats()}]");
+                        stage = "⑧|";
                         var fused = TryFusedRow(fusePool, frame, beforeRef, out var fusedContrib);
                         sb.AppendLine($"  ⑧ 소스 융합: {(fused is null ? "실패" : string.Join(" ", fused.Select(p => $"({p.X:0},{p.Y:0})")))}");
                         sb.AppendLine($"      [융합 기여 {fusedContrib}]");
@@ -160,17 +177,22 @@ internal static partial class RuneArrowDetector
                                 for (int i = 0; i < mi.Length; i++) mi[i] &= chI[i];
                                 ThinFilter(mi, w, h);
                                 SaveMaskPng(mi, w, h, pngPaths[0] + $".mask-vivid-and-{sat}.png");
+                                stage = "⑤|";
                                 var r5 = DetectRow(frame, beforeRef, mi, region, w, h, thinFilter: false, FullFrameH(frame, pre));
-                                sb.AppendLine($"  ⑤ 채도 교집합(sat{sat}): {(r5 is null ? "실패" : string.Join(" ", r5.Select(b => ClassifyScores(b, w).Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })))}");
+                                sb.AppendLine($"  ⑤ 채도 교집합(sat{sat}·실전 미사용·그라데이션 보정 없음): {(r5 is null ? "실패" : string.Join(" ", r5.Select(b => ClassifyScores(b, w).Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })))}");
                                 // ⑥ 같은 마스크를 배너 밴드 없이 전 영역에서 — 밴드 기하가 틀리는 창 크기 대비
+                                stage = "⑥|";
                                 var r6 = DetectRow(frame, beforeRef, mi, region, w, h, thinFilter: false, FullFrameH(frame, pre), fullArea: true);
-                                sb.AppendLine($"  ⑥ 교집합 전영역(sat{sat}): {(r6 is null ? "실패" : string.Join(" ", r6.Select(b => ClassifyScores(b, w).Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })))}");
+                                sb.AppendLine($"  ⑥ 교집합 전영역(sat{sat}·실전 미사용·그라데이션 보정 없음): {(r6 is null ? "실패" : string.Join(" ", r6.Select(b => ClassifyScores(b, w).Dir switch { 'L' => '←', 'R' => '→', 'U' => '↑', _ => '↓' })))}");
                             }
-                            // ⑦ ④의 줄 위치를 기준으로 프레임별 로컬 방향·각도 — 회전 변형(반동 추적) 재현
-                            if (af is null) sb.AppendLine("  ⑦ 위치 없음(④ 줄 실패)");
+                            // ⑨ ④의 줄 위치를 기준으로 프레임별 로컬 방향·각도 — 회전 변형(반동 추적) 재현.
+                            // 구 라벨 "⑦ 위치"는 위의 '⑦ 부분 줄 보완'과 번호가 충돌해 개명(2026-08-05,
+                            // 픽스처 xs/re 앵커도 동시 이행 — DLUU의 ④ 성공/실패 계약 감시 라인).
+                            stage = "⑨|";
+                            if (af is null) sb.AppendLine("  ⑨ 로컬 관찰 — 위치 없음(④ 줄 실패)");
                             else
                             {
-                                sb.AppendLine("  ⑦ 위치: " + string.Join(" ", af.Select(p => $"({p.Center.X:0},{p.Center.Y:0})")));
+                                sb.AppendLine("  ⑨ 로컬 관찰 위치(④ 줄 기준): " + string.Join(" ", af.Select(p => $"({p.Center.X:0},{p.Center.Y:0})")));
                                 const int box7 = 64;
                                 for (int fi = 0; fi < frames.Count; fi++)
                                 {
@@ -224,7 +246,7 @@ internal static partial class RuneArrowDetector
             var bandRect = ArrowBandRect(before.Width, before.Height);
             beforeStrip = before.Clone(bandRect, before.PixelFormat);
             int skipped = strips.RemoveAll(s => s.Bmp.Width != beforeStrip.Width || s.Bmp.Height != beforeStrip.Height);
-            if (skipped > 0) sb.AppendLine($"크기 불일치 스트립 {skipped}장 제외");
+            if (skipped > 0) sb.AppendLine($"크기 불일치 스트립 {skipped}장 제외(기준: rune-before 밴드 {beforeStrip.Width}x{beforeStrip.Height} — before가 다른 실행 것이면 정상 스트립이 전부 제외된다)");
             if (strips.Count == 0) { sb.AppendLine("스트립 없음"); return; }
             int w = beforeStrip.Width, h = beforeStrip.Height;
             var region = new Rectangle(0, 0, w, h);
@@ -325,6 +347,7 @@ internal static partial class RuneArrowDetector
             }
             if (pos is null) { sb.AppendLine("위치 획득 실패 — 어떤 스트립에서도 줄을 못 찾음"); return; }
             var posAnchor = (PointF[])pos.Clone(); // EMA 클램프 기준
+            sb.AppendLine("  (범례) t=명목 50ms 간격(실전 시계보다 ~0.4초 이르다) · 회/정=회전 판정 · ★락=이 표본에서 잠금 · [확정X]=이미 잠금된 슬롯 · 여기 스트립 위치 획득은 분석기 전용 — 실전 줄 채택 검증은 프레임 ④로");
 
             // 실전과 같은 솔버를 스트립 시퀀스로 구동(2026-08-04 모듈화) — 이전의 LocalPass
             // 손복제 미러(~90줄)를 제거. 반동표·플립 리셋은 diag, 재선출·재배치 노트는 note로

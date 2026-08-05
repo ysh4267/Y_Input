@@ -2,4 +2,4 @@
 run: --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
 out: rune-frame-0.png.analysis.txt
 xs: ⑦ 부분 줄 보완 = 455 548 633 735 ~5
-re: ⑦ 위치 없음
+re: ⑨ 로컬 관찰 — 위치 없음

@@ -1,4 +1,4 @@
 # 정답 →→↓↓ · 이펙트 병합 잡줄 — ② 진짜 줄 채택이 핵심 불변식, 잡줄이 ②에서 이기면 회귀 (README 참조)
 run: --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
 out: rune-frame-0.png.analysis.txt
-rowxs: ② 발동 전 차분 = 475 598 682 749 ~5
+rowxs: ②|밴드 = 475 598 682 749 ~5

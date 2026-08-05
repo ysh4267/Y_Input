@@ -163,7 +163,7 @@ internal static partial class RuneArrowDetector
     /// 회전형은 호출자가 연속 샘플링해 시그니처·방향이 유지되는 구간(멈춤)에서 확정한다.
     /// pool = 소스 융합용 후보 수집 싱크(옵션) — 각 단계의 게이트 통과 후보를 소스 태깅해 담고,
     /// 전 단계 실패 시 ⓓ 애니메이션 연속차분 후보를 추가로 수집한다. <b>반환값에는 관여하지
-    /// 않는다</b>(④의 성공/실패 의미는 회귀 계약 — DLUU 픽스처 're: ⑦ 위치 없음'이 감시).</summary>
+    /// 않는다</b>(④의 성공/실패 의미는 회귀 계약 — DLUU 픽스처 're: ⑨ 로컬 관찰 — 위치 없음'이 감시).</summary>
     public static List<ArrowSample>? AnalyzeFrame(Bitmap frame, IReadOnlyList<Bitmap> recent, Bitmap? bannerRef, bool precropped = false, FusionPool? pool = null)
     {
         if (!TryRegion(frame, precropped, out var region)) return null;

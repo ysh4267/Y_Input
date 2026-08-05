@@ -13,5 +13,5 @@
 재현: `YInput.exe --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png`
 
 기대 결과:
-- **④ 실전 경로: ↑ ↑ ↑ → · ⑦ 위치 (358,238) (470,228) (537,226) (646,230) ±5**
+- **④ 실전 경로: ↑ ↑ ↑ → · ⑨ 로컬 관찰 위치 (358,238) (470,228) (537,226) (646,230) ±5**
 - 위치가 y246 아래(몹 몸통 줄)로 잡히면 회귀 실패

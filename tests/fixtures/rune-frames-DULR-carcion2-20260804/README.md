@@ -16,4 +16,4 @@
 재현: `YInput.exe --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png`
 
 기대 결과:
-- **④ 실전 경로: ↓ ↑ ← → · ⑦ 위치 (389,243) (486,241) (622,245) (671,238) ±5**
+- **④ 실전 경로: ↓ ↑ ← → · ⑨ 로컬 관찰 위치 (389,243) (486,241) (622,245) (671,238) ±5**

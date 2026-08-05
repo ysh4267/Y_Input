@@ -1,4 +1,4 @@
 # 슬롯 어긋남 — 줄 채택 검증은 프레임 리플레이로(README 지시)
 run: --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
 out: rune-frame-0.png.analysis.txt
-xs: ⑦ 위치 = 442 550 639 729 ~6
+xs: ⑨ 로컬 관찰 위치 = 442 550 639 729 ~6
