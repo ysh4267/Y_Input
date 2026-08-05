@@ -1,0 +1,9 @@
+# 정답 ←←↑← · 한색 광류 병합 — ④·⑦ 실패 후 ⑦w 웜톤 줄(위치만)이 복원 (README 참조)
+run: --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
+out: rune-frame-0.png.analysis.txt
+re: ④ 프레임 분석.*: 실패
+re: ⑦ 부분 줄 보완\(3개\+외삽\): 실패
+xs: ⑦w 웜톤 줄 = 505 592 654 780 ~5
+xs: ⑧ 소스 융합 = 505 592 654 780 ~5
+rowxs: ② 발동 전 차분 = 505 592 654 780 ~5
+re: \(505,\d+\)a\d+L \(592,\d+\)a\d+L \(654,\d+\)a\d+U \(780,\d+\)a\d+L

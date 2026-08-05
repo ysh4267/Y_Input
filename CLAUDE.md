@@ -35,11 +35,11 @@ Invoke-RestMethod -Uri "http://127.0.0.1:48710/api/app/version"   # current 확�
 
 | 증상/수정 대상 | 파일 |
 |---|---|
-| 줄 채택이 잘못됨(잡줄·밀린 줄·중심/y-밴드 게이트·에지 보정) | `src\YInput.Host\Vision\Rune\RuneArrowDetector.Row.cs` |
+| 줄 채택이 잘못됨(잡줄·밀린 줄·중심/y-밴드 게이트·에지 보정·부분/웜톤 줄) | `src\YInput.Host\Vision\Rune\RuneArrowDetector.Row.cs` |
 | 화살표 추출·방향 분류·시그니처(채도·차분 마스크 체인 포함) | `Vision\Rune\RuneArrowDetector.cs` (+프리미티브는 `.Mask.cs`) |
 | 각도 시계열·머리 플립·회전 판정·반동 투표 | `Vision\Rune\RuneAngleTracker.cs` |
 | 잠금·재선출·재배치·확정(중복 관측·X순 입력) — 퍼즐 판정 전부 | `Vision\Rune\RunePuzzleSolver.cs` |
-| 소스 간 후보 융합(④·⑦ 실패 시 최후 위치 폴백 — 군집·교차확인 게이트) | `Vision\Rune\RuneArrowDetector.Fusion.cs` |
+| 소스 간 후보 융합(④·⑦·⑦w 실패 시 최후 위치 폴백 — 군집·교차확인 게이트) | `Vision\Rune\RuneArrowDetector.Fusion.cs` |
 | 룬 감지→이동→발동→입력→검증 흐름·증거 저장·캡처 스케줄 | `src\YInput.Host\PositionWatcher.Rune.cs` |
 | 오프라인 재현 CLI(--rune-analyze) | `Vision\Rune\RuneArrowDetector.Offline.cs` |
 | 미니맵 룬 아이콘 | `Vision\MinimapDetector.cs` |
@@ -58,9 +58,11 @@ Invoke-RestMethod -Uri "http://127.0.0.1:48710/api/app/version"   # current 확�
 
 ```powershell
 # 퍼즐 인식 재현(프레임): 실전 경로는 ④ — 줄 채택 위치·방향이 여기서 나온다.
-# ⑧ 소스 융합 = ④·⑦ 실패 시 실전 최후 폴백(2026-08-05) — 풀 통계·기여·기각 사유가 같이 찍힌다.
+# 위치 폴백 사슬(위치만, 방향은 로컬 관찰): ⑦ 부분 줄 → ⑦w 웜톤 줄 → ⑧ 소스 융합.
 # 실전에서 융합이 발동했으면 rune-solve.txt 말미에 "융합: …" 라인이 남는다 → 그 케이스는
-# 픽스처(rune-frames-*-fusion-*)로 보존할 것(아직 발동 실측 0건이라 융합 픽스처 없음).
+# 픽스처로 보존할 것. 첫 발동(2026-08-05 09:20)은 중심 게이트 부재로 오답 입력을 냈고
+# LLUL-coolglow 픽스처가 그 사건이다. 입력까지 간 시도는 rune-attempt-일시\로 전부 보존됨
+# (오답 입력은 퍼즐이 닫혀 rune-fail 스냅샷이 안 남는다 — attempt 폴더가 유일한 증거).
 YInput.exe --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
 
 # 회전 반동 재현(스트립): 파일명에 rune-strip 포함 시 스트립 모드. pos=로 관찰좌표 고정 가능
@@ -98,6 +100,7 @@ powershell -File tools\rune-regress.ps1 -NoBuild -Set *DDRD*   # 특정 세트�
 | `rune-frames-DLRD-pilloffset-20260804` | 정지형·필 중심 이탈 67px | ②③ 줄 492/608/697/771 ±5 (④ 실패 허용) |
 | `rune-frames-DDLR-pillhigh-20260804` | 정지형·필 상단 이탈(밴드 8.9%) | ④ ↓↓←→ · 위치 411/498/559/650 ±5 |
 | `rune-frames-LLDR-erosion-20260804` | 정지형·침식 소실+밀린 줄 | ⓪ 파편 419/a30 · ⑦ 481/582/663/765 (라이브: 슬롯 재배치) |
+| `rune-frames-LLUL-coolglow-20260805` | 한색 광류 병합·융합 첫 오답 | ④·⑦ 실패 · ⑦w 웜톤 줄 505/592/654/780 ±5 · ② ←←↑← |
 | `rune-minimap\` | 아이콘 3장 | README 참조 |
 
 리플레이 산출물(`*.analysis.txt`, `*.png.mask-*.png`)은 gitignore됨 — 커밋하지 말 것.
