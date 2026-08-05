@@ -11,8 +11,9 @@ internal static partial class RuneArrowDetector
 {
     /// <summary>후보 출처 태그. 독립 증거 클래스: 교집합(Inter*)=시간 안정성, 차분(Diff*)=발동 전과
     /// 다름, 애니(Anim)=하이라이트 스윕. VividOnly는 클래스 0 — 모든 소스가 채도(∧vivid)를
-    /// 공유하므로 채도는 독립 증거가 아니다(ⓑ⊂ⓒ 포함관계: ⓒ 동시출현을 확인으로 세면 무의미).</summary>
-    internal enum FuseSource { Inter80, Inter45, DiffStill, DiffBefore, VividOnly, Anim }
+    /// 공유하므로 채도는 독립 증거가 아니다(ⓑ⊂ⓒ 포함관계: ⓒ 동시출현을 확인으로 세면 무의미).
+    /// DiffWarm(ⓑw)은 차분 클래스에 속한다(웜 게이트는 분리 수단이지 독립 증거 축이 아님).</summary>
+    internal enum FuseSource { Inter80, Inter45, DiffStill, DiffBefore, VividOnly, Anim, DiffWarm }
 
     /// <summary>한 프레임의 단계별 줄 후보 풀 — 호출자가 프레임마다 새로 만들고 폐기한다
     /// (프레임 간 누적 금지 — 카메라 이동 시 위치가 어긋난 후보가 섞인다).
@@ -41,7 +42,7 @@ internal static partial class RuneArrowDetector
         {
             int C(FuseSource s) => Entries.Count(e => e.Src == s);
             return $"융합 풀 교80 {C(FuseSource.Inter80)}·교45 {C(FuseSource.Inter45)}·정지 {C(FuseSource.DiffStill)}"
-                 + $"·차분 {C(FuseSource.DiffBefore)}·채도 {C(FuseSource.VividOnly)}·애니 {C(FuseSource.Anim)}";
+                 + $"·차분 {C(FuseSource.DiffBefore)}·웜차분 {C(FuseSource.DiffWarm)}·채도 {C(FuseSource.VividOnly)}·애니 {C(FuseSource.Anim)}";
         }
     }
 
@@ -82,7 +83,7 @@ internal static partial class RuneArrowDetector
         {
             string t = "";
             if (Has(FuseSource.Inter80) || Has(FuseSource.Inter45)) t += "교";
-            if (Has(FuseSource.DiffStill) || Has(FuseSource.DiffBefore)) t += "차";
+            if (Has(FuseSource.DiffStill) || Has(FuseSource.DiffBefore) || Has(FuseSource.DiffWarm)) t += "차";
             if (Has(FuseSource.Anim)) t += "애";
             if (Has(FuseSource.VividOnly)) t += "채";
             return t;
@@ -114,7 +115,8 @@ internal static partial class RuneArrowDetector
             foreach (var m in members) srcMask |= 1 << (int)m.Src;
             int classCount = 0;
             if ((srcMask & ((1 << (int)FuseSource.Inter80) | (1 << (int)FuseSource.Inter45))) != 0) classCount++;
-            if ((srcMask & ((1 << (int)FuseSource.DiffStill) | (1 << (int)FuseSource.DiffBefore))) != 0) classCount++;
+            if ((srcMask & ((1 << (int)FuseSource.DiffStill) | (1 << (int)FuseSource.DiffBefore)
+                            | (1 << (int)FuseSource.DiffWarm))) != 0) classCount++;
             if ((srcMask & (1 << (int)FuseSource.Anim)) != 0) classCount++;
             int srcCount = System.Numerics.BitOperations.PopCount((uint)srcMask);
             result.Add(new FusedCand(rep, srcMask, classCount, srcCount));
@@ -159,9 +161,10 @@ internal static partial class RuneArrowDetector
         }
         else contribution = $"{baseStat} — 4조합 없음";
 
-        // ② 부분 줄(3개+외삽) — 모든 외삽 슬롯이 탐침(글리프 실존)을 통과해야 채택
+        // ② 부분 줄(3개+외삽) — 모든 외삽 슬롯이 탐침(글리프 실존)을 통과해야 하고, 재구성
+        // 4슬롯 평균이 필 중심 게이트(±RowCenterTolFrac)를 통과해야 채택(2026-08-05 09:20 오답 재발 방지)
         var pp = PartialRowFromCands(reps, frame, beforeRef, region, pool.RegionW, pool.FrameW,
-            verifyExtrap: true, out var chosen);
+            pool.BannerCx, verifyExtrap: true, out var chosen);
         if (pp is null || chosen is null) { contribution += " · 부분 실패"; return null; }
         int confirmed3 = chosen.Count(b => meta.TryGetValue(b, out var m) && m.ClassCount >= 2);
         if (confirmed3 < FuseMinCrossConfirmed)

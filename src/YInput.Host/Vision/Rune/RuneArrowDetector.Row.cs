@@ -36,6 +36,10 @@ internal static partial class RuneArrowDetector
     private const double EdgeGapSuspectMin = 1.5; // 에지 간격 ≥ 내부 균일 간격 평균 × 이 값 → 의심(실측 161/94.5=1.70)
     private const double EdgeGapUniformMax = 1.3; // '나머지 두 간격 균일' 상한 — 카르시온2 97/49(비 1.98)는 미발동
     private const int EdgeRepairTolPx = 25;       // 외삽 위치 허용 오차(실측: 후보 711 vs 외삽 722.5 = 11.5px)
+    // 줄 중심의 필 중심 정렬 허용(창폭 비례) — PickRow·부분 줄(⑦·융합) 공용. 근거 실측은
+    // PickRow 사용처 주석(진짜 최대 이탈 0.058W < 0.065W < 잡줄 0.075W~) + 2026-08-05 09:20
+    // 오답 실전(부분 경로에 이 게이트가 없어 0.26W 이탈 잡줄 채택 → R D L D 오답 입력).
+    private const double RowCenterTolFrac = 0.065;
 
     /// <summary>부분 줄 보완 — 화살표 하나가 배경(몬스터 발광 등)과 병합되어 후보에서 사라지면
     /// 4개 줄이 영영 안 잡힌다(2026-08-04 14:46 보라맵: ↓화살표가 병합 소실 → 3회 시도 전부
@@ -54,19 +58,20 @@ internal static partial class RuneArrowDetector
             for (int i = 0; i < mask.Length; i++) mask[i] &= fresh[i];
         }
         ThinFilter(mask, w, h);
-        var (bandY0, bandY1, _) = BannerBand(w, h, (int)(h / (RegionY1 - RegionY0)));
+        var (bandY0, bandY1, bannerCx) = BannerBand(w, h, (int)(h / (RegionY1 - RegionY0)));
         double rowY0 = bandY0 + RowFracLo * (bandY1 - bandY0), rowY1 = bandY0 + RowFracHi * (bandY1 - bandY0);
         var cands = FilterCands(mask, w, h, rowY0, rowY1);
-        return PartialRowFromCands(cands, frame, beforeRef, region, w, frame.Width, verifyExtrap: false, out _);
+        return PartialRowFromCands(cands, frame, beforeRef, region, w, frame.Width, bannerCx, verifyExtrap: false, out _);
     }
 
     /// <summary>부분 줄 코어 — 후보 리스트에서 3개 조합 + 빠진 슬롯 외삽으로 위치 4개 복원.
     /// verifyExtrap: true면 내부 중점 삽입을 포함한 <b>모든</b> 외삽 슬롯이 AnalyzeArrowAt 탐침으로
     /// 글리프 실존을 확인해야 채택(소스 융합 폴백용 — 융합 풀은 단일 마스크보다 잡음이 많아
     /// 무검증 외삽은 잡음 관측점을 만든다). false = 현행 TryPartialRow 동작(끝 슬롯만 탐침).
-    /// chosen = 채택된 실블롭 3개(융합 경로의 교차 확인 게이트용 — 반환이 null이 아닐 때만 유효).</summary>
+    /// chosen = 채택된 실블롭 3개(융합 경로의 교차 확인 게이트용 — 반환이 null이 아닐 때만 유효).
+    /// bannerCx = 필 중심(영역 상대, 음수면 게이트 생략) — 재구성 4슬롯 평균이 ±RowCenterTolFrac 안이어야 채택.</summary>
     private static PointF[]? PartialRowFromCands(List<Blob> candsIn, Bitmap frame, Bitmap? beforeRef,
-        Rectangle region, int w, int frameW, bool verifyExtrap, out List<Blob>? chosen)
+        Rectangle region, int w, int frameW, double bannerCx, bool verifyExtrap, out List<Blob>? chosen)
     {
         chosen = null;
         var cands = candsIn.OrderBy(b => b.Cx).ToList();
@@ -126,7 +131,38 @@ internal static partial class RuneArrowDetector
             else if (rightOk) xs.Add(rightX);
             else return null;
         }
+        // 중심 정렬 게이트 — 부분 줄도 재구성 4슬롯 평균이 필 중심에 정렬되어야 한다(PickRow와
+        // 동일 기준). 2026-08-05 09:20 오답 실전: 이 게이트가 없어 융합 부분 경로가 필 중심에서
+        // 0.26W 이탈한 우측 잡신호 군집(잎사귀·UI 보드·림라이트)을 채택 → 정지 잡음이 잠금
+        // 게이트를 전부 통과 → R D L D 오답 입력. 같은 프레임 리플레이의 ⑦ 잡줄(0.16W 이탈)도
+        // 차단. 진짜 줄 최대 이탈 실측 0.058W(22:08 필 이탈 맵)·DLUU 부분 줄 0.051W는 통과.
+        // 트리오 평균이 아니라 외삽 포함 4슬롯 평균인 이유: 끝 슬롯 누락 시 트리오 평균은
+        // 간격/4(~0.02W)만큼 치우쳐 진짜 줄이 억울하게 죽을 수 있다.
+        if (bannerCx >= 0 && Math.Abs(xs.Average() - bannerCx) > frameW * RowCenterTolFrac) return null;
         return xs.Select(x => new PointF((float)(region.X + x), (float)(region.Y + yAvg))).ToArray();
+    }
+
+    /// <summary>웜톤 줄 — <b>위치 전용</b> 폴백(⑦ 부분 줄과 같은 계약). 한색(파랑·청록) 광류가
+    /// '정적·고채도·발동 전과 다름'의 세 술어를 전부 통과하며 화살표 4개를 한 블롭으로 병합시키는
+    /// 맵 대비(2026-08-05 09:20 오답 실측: warm무시 마스크는 병합 블롭 562x201/a40958로 후보 전멸,
+    /// warm 게이트만 켜면 같은 프레임에서 4개 블롭 22~25px/a310~406으로 분리돼 전 게이트 통과).
+    /// 방향은 절대 반환하지 않는다 — 웜 마스크가 글리프 일부(파랑 머리끝)를 잘라 방향 분류가
+    /// 뒤집힌다(실측: DLUU 735의 ↑이 →로 오분류 — ④ 정식 단계 편입을 기각한 근거). 방향·잠금은
+    /// 로컬 관찰(sat 체인)이 판정하므로 잘못된 줄은 잠금 실패로 귀결된다(fail-closed).
+    /// pool = 융합 풀 수집 싱크(웜 후보를 DiffWarm 소스로 기여 — 이 줄 자체가 실패해도 ⑧이 쓴다).</summary>
+    internal static PointF[]? TryWarmRow(Bitmap frame, Bitmap? beforeRef, bool precropped, FusionPool? pool = null)
+    {
+        if (!TryRegion(frame, precropped, out var region)) return null;
+        if (beforeRef is null || beforeRef.Width != frame.Width || beforeRef.Height != frame.Height) return null;
+        int w = region.Width, h = region.Height;
+        var mask = VividMask(frame, region, w, h); // requireWarm 기본 true — 한색 광류 절단이 목적
+        var fresh = new bool[w * h];
+        AccumulateDiff(beforeRef, frame, region, w, h, DiffMin, fresh);
+        for (int i = 0; i < mask.Length; i++) mask[i] &= fresh[i];
+        var cands = pool is null ? null : new List<Blob>();
+        var row = DetectRow(frame, beforeRef, mask, region, w, h, thinFilter: true, FullFrameH(frame, precropped), candsOut: cands);
+        if (cands is not null) pool!.Add(FuseSource.DiffWarm, cands);
+        return row?.Select(b => new PointF((float)(region.X + b.Cx), (float)(region.Y + b.Cy))).ToArray();
     }
 
     /// <summary>줄 후보 공용 필터 — 병합 블롭에서 화살표 크기·박스·y밴드 조건을 만족하는 후보만.
@@ -218,7 +254,7 @@ internal static partial class RuneArrowDetector
                             // 0.075W를 시도했더니 DLUU 잡줄이 0.45px 차로 통과해 ④가 잡줄을 채택하는
                             // 회귀가 났다(부분 줄 보완 경로가 영영 안 돎). 중앙 근접 선호(이탈×2
                             // 페널티)는 계속 유지.
-                            if (off > frameW * 0.065) continue;
+                            if (off > frameW * RowCenterTolFrac) continue;
                             centerPenalty = off * 2;
                         }
                         double wRatio = combo.Max(x => x.W) / (double)combo.Min(x => x.W);

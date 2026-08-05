@@ -159,7 +159,15 @@ internal sealed class RunePuzzleSolver
                 _pos = pp; _posAnchor = (PointF[])pp.Clone();
                 _note?.Invoke($"부분 줄 보완 — 3개+외삽으로 위치 확보: {string.Join(" ", pp.Select(p => $"({p.X:0},{p.Y:0})"))}");
             }
-            // 소스 간 후보 융합 — 최후 폴백(④·⑦ 전부 실패한 프레임만). 단일 마스크가 4개를
+            // 웜톤 줄(위치만) — 한색 광류 병합으로 ④·⑦이 전멸하는 맵의 구제(2026-08-05 09:20
+            // 오답 실전 원인). 방향은 로컬 관찰이 판정. 융합보다 앞: 단일 웜 마스크의 완전한
+            // 4블롭 줄이 다소스 짜깁기보다 강한 기하 증거다.
+            else if (RuneArrowDetector.TryWarmRow(frame, _beforeRef, _precropped, pool) is { Length: 4 } wp)
+            {
+                _pos = wp; _posAnchor = (PointF[])wp.Clone();
+                _note?.Invoke($"웜톤 줄 채택 — 위치 확보(방향은 로컬 관찰): {string.Join(" ", wp.Select(p => $"({p.X:0},{p.Y:0})"))}");
+            }
+            // 소스 간 후보 융합 — 최후 폴백(④·⑦·웜톤 전부 실패한 프레임만). 단일 마스크가 4개를
             // 못 채워도 여러 마스크가 각자 본 후보를 슬롯 병합해 위치를 복원한다. 부분 줄이
             // 정답이고 융합이 잡줄인 케이스가 실측돼(DLUU 리플레이) 순서는 ⑦ 우선 고정.
             else if (pool is not null
