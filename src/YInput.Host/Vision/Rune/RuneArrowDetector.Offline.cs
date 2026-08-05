@@ -135,7 +135,7 @@ internal static partial class RuneArrowDetector
                         var pr = TryPartialRow(frame, beforeRef, pre);
                         sb.AppendLine($"  ⑦ 부분 줄 보완(3개+외삽): {(pr is null ? "실패" : string.Join(" ", pr.Select(p => $"({p.X:0},{p.Y:0})")))}");
                         // ⑦w 웜톤 줄(위치 전용) — 실전에서는 ⑦ 실패 시 다음 폴백. 풀에 웜 후보도 기여.
-                        var wr = TryWarmRow(frame, beforeRef, pre, fusePool);
+                        var wr = TryWarmRow(frame, beforeRef, pre, fusePool, out _);
                         sb.AppendLine($"  ⑦w 웜톤 줄(위치만): {(wr is null ? "실패" : string.Join(" ", wr.Select(p => $"({p.X:0},{p.Y:0})")))}");
                         // ⑧ 소스 융합 — 실전에서는 ④·⑦·⑦w가 모두 실패했을 때만 발동하는 최후 폴백.
                         // 여기서는 항상 찍어 융합 풀·게이트 동작을 관찰한다(캘리브레이션·회귀 창구).

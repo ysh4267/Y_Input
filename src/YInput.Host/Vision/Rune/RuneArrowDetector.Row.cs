@@ -149,9 +149,11 @@ internal static partial class RuneArrowDetector
     /// 방향은 절대 반환하지 않는다 — 웜 마스크가 글리프 일부(파랑 머리끝)를 잘라 방향 분류가
     /// 뒤집힌다(실측: DLUU 735의 ↑이 →로 오분류 — ④ 정식 단계 편입을 기각한 근거). 방향·잠금은
     /// 로컬 관찰(sat 체인)이 판정하므로 잘못된 줄은 잠금 실패로 귀결된다(fail-closed).
-    /// pool = 융합 풀 수집 싱크(웜 후보를 DiffWarm 소스로 기여 — 이 줄 자체가 실패해도 ⑧이 쓴다).</summary>
-    internal static PointF[]? TryWarmRow(Bitmap frame, Bitmap? beforeRef, bool precropped, FusionPool? pool = null)
+    /// pool = 융합 풀 수집 싱크(웜 후보를 DiffWarm 소스로 기여 — 이 줄 자체가 실패해도 ⑧이 쓴다).
+    /// areaSum = 채택 줄의 블롭 면적 합(④ 줄과의 교차 검증 비교용 — 실패 시 0).</summary>
+    internal static PointF[]? TryWarmRow(Bitmap frame, Bitmap? beforeRef, bool precropped, FusionPool? pool, out double areaSum)
     {
+        areaSum = 0;
         if (!TryRegion(frame, precropped, out var region)) return null;
         if (beforeRef is null || beforeRef.Width != frame.Width || beforeRef.Height != frame.Height) return null;
         int w = region.Width, h = region.Height;
@@ -162,7 +164,9 @@ internal static partial class RuneArrowDetector
         var cands = pool is null ? null : new List<Blob>();
         var row = DetectRow(frame, beforeRef, mask, region, w, h, thinFilter: true, FullFrameH(frame, precropped), candsOut: cands);
         if (cands is not null) pool!.Add(FuseSource.DiffWarm, cands);
-        return row?.Select(b => new PointF((float)(region.X + b.Cx), (float)(region.Y + b.Cy))).ToArray();
+        if (row is null) return null;
+        areaSum = row.Sum(b => (double)b.Area);
+        return row.Select(b => new PointF((float)(region.X + b.Cx), (float)(region.Y + b.Cy))).ToArray();
     }
 
     /// <summary>줄 후보 공용 필터 — 병합 블롭에서 화살표 크기·박스·y밴드 조건을 만족하는 후보만.

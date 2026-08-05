@@ -126,11 +126,36 @@ internal sealed class RunePuzzleSolver
         var row = RuneArrowDetector.AnalyzeFrame(frame, recent, _beforeRef, _precropped, pool);
         long tMs = clock(); // 분석 소요 시간 반영 — 각속도 정규화·시간 게이트의 기준 시각
 
+        // ④ 줄 최초 채택 전 웜 줄 교차 검증 — 한색 광류 부류 맵에서 no-warm 마스크의 진짜 줄이
+        // 파편화되면 잡 4조합이 게이트를 전부 통과해 ④가 잡줄을 "성공" 채택한다(2026-08-05
+        // 10:32 실전: ⓑ 잡줄 면적 1039 채택·초반 오잠금으로 재선출 봉쇄 → 정답을 아는 웜 줄
+        // (면적 1737)이 폴백이라 돌 기회가 없어 2/4 실패). 웜 줄이 존재하고 ④ 줄과 2슬롯 이상
+        // 위치가 다르며 면적 합이 재선출 문턱(1.4×)만큼 우세하면 웜 위치를 채택한다(위치 전용 —
+        // 방향은 로컬 관찰). 정상 맵은 웜 줄과 ④ 줄이 같은 물체라 불일치가 없어 발동 안 함.
+        if (row is not null && _pos is null
+            && RuneArrowDetector.TryWarmRow(frame, _beforeRef, _precropped, pool, out double warmArea)
+               is { Length: 4 } wcheck)
+        {
+            int mismatch = Enumerable.Range(0, 4).Count(j => Math.Abs(wcheck[j].X - row[j].Center.X) > MinSlotSepPx);
+            double rowArea = row.Sum(r => (double)r.Area);
+            if (mismatch >= 2 && warmArea >= rowArea * 1.4)
+            {
+                _pos = wcheck; _posAnchor = (PointF[])wcheck.Clone(); _adoptedRowArea = warmArea;
+                _note?.Invoke($"웜 교차 검증 — ④ 줄(면적 {rowArea:0})과 {mismatch}슬롯 불일치, 웜 줄(면적 {warmArea:0}) 위치 채택: "
+                              + string.Join(" ", wcheck.Select(p => $"({p.X:0},{p.Y:0})")));
+            }
+        }
+
         if (row is not null)
         {
             _rowSeen = true;
             for (int j = 0; j < 4; j++)
             {
+                // 슬롯 위치 대응 게이트 — ④ 줄의 j번 블롭이 현재 관측점과 크게 어긋나면 다른
+                // 물체를 읽은 것이라 heavy 판독 갱신·잠금을 보류한다(웜 교차 채택 시 잡줄이
+                // 슬롯 인덱스로 방향을 오염시키는 것 방지 — 2026-08-05 10:32). 정상 흐름은
+                // 줄에서 채택한 위치 + EMA 클램프 ±22px라 이 게이트(±32px)에 안 걸린다.
+                if (_pos is not null && Math.Abs(row[j].Center.X - _pos[j].X) > PosBox / 2.0) continue;
                 _centers[j] = row[j].Center;
                 _heavyDir[j] = row[j].Dir; _heavyDirAt[j] = tMs; _heavyX[j] = row[j].Center.X; // 로컬 잠금 충돌 보류 기준
                 if (_locked[j] is not null) continue;
@@ -162,7 +187,7 @@ internal sealed class RunePuzzleSolver
             // 웜톤 줄(위치만) — 한색 광류 병합으로 ④·⑦이 전멸하는 맵의 구제(2026-08-05 09:20
             // 오답 실전 원인). 방향은 로컬 관찰이 판정. 융합보다 앞: 단일 웜 마스크의 완전한
             // 4블롭 줄이 다소스 짜깁기보다 강한 기하 증거다.
-            else if (RuneArrowDetector.TryWarmRow(frame, _beforeRef, _precropped, pool) is { Length: 4 } wp)
+            else if (RuneArrowDetector.TryWarmRow(frame, _beforeRef, _precropped, pool, out _) is { Length: 4 } wp)
             {
                 _pos = wp; _posAnchor = (PointF[])wp.Clone();
                 _note?.Invoke($"웜톤 줄 채택 — 위치 확보(방향은 로컬 관찰): {string.Join(" ", wp.Select(p => $"({p.X:0},{p.Y:0})"))}");
@@ -259,6 +284,11 @@ internal sealed class RunePuzzleSolver
                 if (_lRunSig[j] is not null && _lRunDir[j] == a.Dir && RuneArrowDetector.SigSimilar(_lRunSig[j], a.Sig))
                 {
                     _lRunLen[j]++;
+                    // '방향-주축 일치' 게이트는 시도 후 기각(2026-08-05) — 잡블롭의 안정된 오독
+                    // (10:32 주축 318°에 D 잠금)을 막으려 했으나, 침식된 진짜 ↑/↓ 글리프는 가로
+                    // 파편만 남아 주축이 2°/359°로 재면서도 방향 분류는 정확했다(같은 날 스트립
+                    // 실측 — 게이트가 정답 잠금 2개를 막아 2/4 실패). 잡음 잠금은 웜 교차 검증·
+                    // 슬롯 위치 대응 게이트(StepFrame)가 위치 단계에서 차단한다.
                     if (_lRunLen[j] >= LockRun && tMs - _lRunStart[j] >= LockSpanMs && RuneAngleTracker.AxisStable(_angleV[j])
                         // 경로 충돌 보류 — 무거운 줄 경로의 신선한(≤600ms)·같은 글리프(±24px)
                         // 판독과 방향이 다르면 이 프레임엔 잠그지 않는다. 일치하거나 무거운
