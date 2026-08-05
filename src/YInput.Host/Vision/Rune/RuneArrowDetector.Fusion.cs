@@ -6,7 +6,7 @@ namespace YInput.Host.Vision;
 /// 단계(교집합·차분·채도·애니 차분)가 각자 본 후보를 슬롯별로 합쳐 줄 위치를 복원한다.
 /// 발동 조건은 호출자(StepFrame) 소관 — 기존 전 단계(④·⑦)가 실패한 최후 폴백 전용.
 /// 반환은 '위치만'(PointF[4]) — 방향·잠금은 로컬 관찰(StepLocal)이 해결하므로, 잘못된 융합
-/// 줄은 잠금 실패→"반동 미관측" 실패로 귀결된다(fail-closed 유지, 2026-08-05 설계).</summary>
+/// 줄은 잠금 실패→"잠금 미달" 안전 종료로 귀결된다(fail-closed 유지, 2026-08-05 설계).</summary>
 internal static partial class RuneArrowDetector
 {
     /// <summary>후보 출처 태그. 독립 증거 클래스: 교집합(Inter*)=시간 안정성, 차분(Diff*)=발동 전과

@@ -83,6 +83,11 @@ internal sealed class RunePuzzleSolver
     private bool _relocated;
     private double _adoptedRowArea;
     private string? _fusedContrib; // 융합 줄 채택 시 소스 기여 요약 — BuildTrace 말미에 기록
+    // 로그 자기설명용 추적(판정에는 미사용) — 2026-08-05 로그 개편: 위치가 어느 경로(④/⑦/⑦w/⑧·
+    // 교체/보정/재선출/재배치)로 언제 확보됐는지, 슬롯이 언제 잠겼는지 트레이스에 남긴다.
+    private string? _posSource;
+    private long _posAt = -1;
+    private readonly long[] _lockedAt = new long[4];
 
     internal RunePuzzleSolver(Bitmap? beforeRef, int initialBudgetMs, bool precropped,
                               Action<string>? note = null, Action<string>? diag = null)
@@ -111,6 +116,7 @@ internal sealed class RunePuzzleSolver
     {
         _pos = (PointF[])pos.Clone();
         _posAnchor = (PointF[])pos.Clone();
+        _posSource = "시드(오프라인/pos=)"; _posAt = 0;
     }
 
     /// <summary>일반 모드 한 프레임 전체 판정 — 무거운 줄 인식→heavy 시그니처 런→줄 채택/재선출
@@ -141,7 +147,8 @@ internal sealed class RunePuzzleSolver
             if (mismatch >= 2 && warmArea >= rowArea * 1.4)
             {
                 _pos = wcheck; _posAnchor = (PointF[])wcheck.Clone(); _adoptedRowArea = warmArea;
-                _note?.Invoke($"웜 교차 검증 — ④ 줄(면적 {rowArea:0})과 {mismatch}슬롯 불일치, 웜 줄(면적 {warmArea:0}) 위치 채택: "
+                _posSource = "④→⑦w 교체(웜 교차 검증)"; _posAt = tMs;
+                _note?.Invoke($"위치 교체(④→⑦w 웜 교차 검증) — ④ 줄(면적 {rowArea:0})과 {mismatch}슬롯 불일치, 웜 줄(면적 {warmArea:0}) 채택: "
                               + string.Join(" ", wcheck.Select(p => $"({p.X:0},{p.Y:0})")));
             }
             // 슬롯 단위 보정 — 3슬롯 일치 + 1슬롯 불일치면 일치한 3개가 두 줄의 정렬을 상호
@@ -156,7 +163,8 @@ internal sealed class RunePuzzleSolver
                 fixedPos[bad] = wcheck[bad];
                 _pos = fixedPos; _posAnchor = (PointF[])fixedPos.Clone();
                 _adoptedRowArea = rowArea; // ④ 줄 기준 유지 — 더 강한 진짜 줄의 재선출 여지는 남긴다
-                _note?.Invoke($"웜 슬롯 보정 — ④ 줄의 {bad + 1}번 슬롯(x{row[bad].Center.X:0})을 웜 줄 위치({wcheck[bad].X:0},{wcheck[bad].Y:0})로 교체");
+                _posSource = $"④+⑦w 보정(슬롯{bad + 1} 교체)"; _posAt = tMs;
+                _note?.Invoke($"위치 보정(④+⑦w 웜 슬롯 보정) — ④ 줄의 슬롯{bad + 1}(x{row[bad].Center.X:0})을 웜 위치({wcheck[bad].X:0},{wcheck[bad].Y:0})로 교체(나머지 3슬롯 일치)");
             }
         }
 
@@ -178,7 +186,7 @@ internal sealed class RunePuzzleSolver
                     && RuneArrowDetector.SigSimilar(_runSig[j], row[j].Sig))
                 {
                     _runLen[j]++;
-                    if (_runLen[j] >= LockRun && tMs - _runStart[j] >= LockSpanMs) { _locked[j] = _runDir[j]; _lockedCount++; }
+                    if (_runLen[j] >= LockRun && tMs - _runStart[j] >= LockSpanMs) { _locked[j] = _runDir[j]; _lockedCount++; _lockedAt[j] = tMs; }
                 }
                 else { _runSig[j] = row[j].Sig; _runDir[j] = row[j].Dir; _runLen[j] = 1; _runStart[j] = tMs; }
             }
@@ -196,7 +204,8 @@ internal sealed class RunePuzzleSolver
             if (pp is { Length: 4 })
             {
                 _pos = pp; _posAnchor = (PointF[])pp.Clone();
-                _note?.Invoke($"부분 줄 보완 — 3개+외삽으로 위치 확보: {string.Join(" ", pp.Select(p => $"({p.X:0},{p.Y:0})"))}");
+                _posSource = "⑦ 부분 줄(3개+외삽)"; _posAt = clock();
+                _note?.Invoke($"위치 확보(⑦ 부분 줄 3개+외삽) — 방향은 로컬 관찰: {string.Join(" ", pp.Select(p => $"({p.X:0},{p.Y:0})"))}");
             }
             // 웜톤 줄(위치만) — 한색 광류 병합으로 ④·⑦이 전멸하는 맵의 구제(2026-08-05 09:20
             // 오답 실전 원인). 방향은 로컬 관찰이 판정. 융합보다 앞: 단일 웜 마스크의 완전한
@@ -204,7 +213,8 @@ internal sealed class RunePuzzleSolver
             else if (RuneArrowDetector.TryWarmRow(frame, _beforeRef, _precropped, pool, out _) is { Length: 4 } wp)
             {
                 _pos = wp; _posAnchor = (PointF[])wp.Clone();
-                _note?.Invoke($"웜톤 줄 채택 — 위치 확보(방향은 로컬 관찰): {string.Join(" ", wp.Select(p => $"({p.X:0},{p.Y:0})"))}");
+                _posSource = "⑦w 웜톤 줄"; _posAt = clock();
+                _note?.Invoke($"위치 확보(⑦w 웜톤 줄·위치만) — 방향은 로컬 관찰: {string.Join(" ", wp.Select(p => $"({p.X:0},{p.Y:0})"))}");
             }
             // 소스 간 후보 융합 — 최후 폴백(④·⑦·웜톤 전부 실패한 프레임만). 단일 마스크가 4개를
             // 못 채워도 여러 마스크가 각자 본 후보를 슬롯 병합해 위치를 복원한다. 부분 줄이
@@ -213,7 +223,8 @@ internal sealed class RunePuzzleSolver
                      && RuneArrowDetector.TryFusedRow(pool, frame, _beforeRef, out var contrib) is { Length: 4 } fp)
             {
                 _pos = fp; _posAnchor = (PointF[])fp.Clone(); _fusedContrib = contrib;
-                _note?.Invoke($"융합 줄 채택 — 소스 간 후보 병합으로 위치 확보: {string.Join(" ", fp.Select(p => $"({p.X:0},{p.Y:0})"))}");
+                _posSource = "⑧ 소스 융합"; _posAt = clock();
+                _note?.Invoke($"위치 확보(⑧ 소스 융합·최후 폴백) — 방향은 로컬 관찰: {string.Join(" ", fp.Select(p => $"({p.X:0},{p.Y:0})"))}");
             }
         }
 
@@ -227,14 +238,16 @@ internal sealed class RunePuzzleSolver
         {
             _fastMode = true; _spinNoted = true;
             BudgetMs = Math.Max(BudgetMs, RotatingBudgetMs);
-            _note?.Invoke($"회전 감지 — {FastTickMs}ms 간격 고속 관찰로 반동을 추적합니다(최대 4초)");
+            _note?.Invoke($"회전 관측 — 각도 진행 감지, {FastTickMs}ms 간격 고속 관찰로 반동 추적(예산 {BudgetMs}ms)");
         }
         else if (!_spinNoted && clock() > 800 && _lockedCount < 4)
         {
             _spinNoted = true;
-            // 각도 기반 판정이 못 잡았어도(위치 미확보 등) 확정이 늦으면 예산은 늘린다
+            // 회전 관측이 없어도(위치 미확보·느린 잠금 등) 확정이 늦으면 예산만 연장한다.
+            // 옛 문구 "화살표 회전 감지"는 정지 퍼즐의 지연 확정까지 회전으로 읽히게 해 폐기
+            // (2026-08-05 11:30 실전 오독) — 회전의 진실은 _rotatingSeen(트레이스 헤더 회전관측=).
             BudgetMs = Math.Max(BudgetMs, RotatingBudgetMs);
-            _note?.Invoke("화살표 회전 감지 — 반동(격발) 방향을 관찰합니다(최대 4초)");
+            _note?.Invoke($"확정 지연 — 0.8초 경과 잠금 {_lockedCount}/4, 관찰 예산 {BudgetMs}ms로 연장(회전 관측과 무관)");
         }
     }
 
@@ -323,6 +336,7 @@ internal sealed class RunePuzzleSolver
                 }
                 else { _lRunSig[j] = a.Sig; _lRunDir[j] = a.Dir; _lRunLen[j] = 1; _lRunStart[j] = tMs; }
             }
+            if (_lockedCount > before) _lockedAt[j] = tMs; // 반동표·로컬 시그니처 잠금 공통 — 트레이스용
             readings[j] = new SlotReading(false, default, true, a.Dir, a.AngleDeg, a.Area, a.MovingPx,
                 rotActive, _lockedCount > before);
         }
@@ -359,7 +373,8 @@ internal sealed class RunePuzzleSolver
         var left = Probe(lx[0] - m); var right = Probe(lx[2] + m);
         var pick = left.Area >= right.Area ? left : right;
         if (pick.Area < 40) return; // 침식 조각(실측 a30)도 로컬 추출로는 이보다 크게 잡힌다
-        _note?.Invoke($"슬롯 재배치 — 미확정 관측점({_pos[starved].X:F0},{_pos[starved].Y:F0})을 잠긴 줄 외삽 위치({pick.P.X:F0},{pick.P.Y:F0})로 이동해 재관찰");
+        _note?.Invoke($"위치 재배치(3잠금 외삽) — 슬롯{starved + 1} 관측점({_pos[starved].X:F0},{_pos[starved].Y:F0})을 잠긴 줄 외삽 위치({pick.P.X:F0},{pick.P.Y:F0})로 이동해 재관찰");
+        _posSource = $"{_posSource ?? "?"} → 재배치(슬롯{starved + 1})"; _posAt = tMs;
         _pos[starved] = pick.P; _posAnchor![starved] = pick.P;
         ResetSlot(starved, alsoVotes: false); // 투표는 위 가드로 항상 0 — 리셋 불요(원 코드와 동일)
         _heavyDirAt[starved] = -9999;
@@ -381,6 +396,10 @@ internal sealed class RunePuzzleSolver
         {
             _pos = row.Select(x => x.Center).ToArray(); _posAnchor = (PointF[])_pos.Clone();
             _adoptedRowArea = area;
+            // 최초 채택도 노트를 남긴다(2026-08-05 로그 개편) — 이전엔 무음이라 시도마다
+            // 위치를 어느 경로가 잡았는지 앱로그만으로는 알 수 없었다(폴백만 노트가 있었음).
+            _posSource = "④ 줄 채택"; _posAt = clock();
+            _note?.Invoke($"위치 확보(④ 줄 채택, 면적 {area:0}): {string.Join(" ", row.Select(p => $"({p.Center.X:0},{p.Center.Y:0})"))}");
             return;
         }
         // 잠금 보호 — 이미 잠긴 슬롯이 생겼으면 관측 위치를 옮기지 않는다(사용자 검수 2026-08-04).
@@ -397,11 +416,12 @@ internal sealed class RunePuzzleSolver
             bool moved = Moved(j);
             _pos![j] = row[j].Center; _posAnchor![j] = row[j].Center;
             if (!moved) continue;
-            if (_locked[j] is not null) { _locked[j] = null; _lockedCount--; }
+            if (_locked[j] is not null) { _locked[j] = null; _lockedCount--; _lockedAt[j] = 0; }
             ResetSlot(j, alsoVotes: true);
         }
         _adoptedRowArea = area;
-        _note?.Invoke($"줄 재선출 — 더 강한 화살표 줄로 관측 위치 교체: {string.Join(" ", row.Select(p => $"({p.Center.X:0},{p.Center.Y:0})"))}");
+        _posSource = $"{_posSource ?? "?"} → 재선출"; _posAt = clock();
+        _note?.Invoke($"위치 재선출 — 더 강한 줄(면적 {area:0} ≥1.4×)로 관측점 교체: {string.Join(" ", row.Select(p => $"({p.Center.X:0},{p.Center.Y:0})"))}");
     }
 
     /// <summary>슬롯 관측 상태 리셋 — 재선출/재배치로 관측 지점이 바뀌면 다른 지점의 기록은 무효.
@@ -417,17 +437,22 @@ internal sealed class RunePuzzleSolver
 
     /// <summary>종료 판정 — 실패 사유/사용자 노트 문구까지 확정해 돌려준다(저장·방송은 호출자).
     /// 4개 전부 확정될 때만 입력한다 — 회전 중 표본의 다수결은 추측이라 오답이 된다
-    /// (00:41 실행: 멈춤 3/4 + 다수결 1 → ↑ ↑ ↑ ← 오답 입력). 미달이면 재발동으로 재관찰.</summary>
+    /// (00:41 실행: 멈춤 3/4 + 다수결 1 → ↑ ↑ ↑ ← 오답 입력). 미달이면 입력 없이 안전 종료
+    /// (재발동 없음 — 사용자 지정 2026-08-04; 옛 문구 "재발동 대기"는 폐지된 정책의 잔재라 제거).</summary>
     internal List<RuneArrow>? Confirm(out string traceWhy, out string noteMsg)
     {
         if (!_rowSeen && _pos is null)
         {
-            traceWhy = "줄 미인식"; noteMsg = "퍼즐 인식 실패 — 화살표 줄을 찾지 못함";
+            traceWhy = "줄 미인식"; noteMsg = "퍼즐 인식 실패 — 화살표 줄·위치 미확보(④·⑦·⑦w·⑧ 전부 실패)";
             return null;
         }
         if (_lockedCount < 4)
         {
-            traceWhy = "반동 미관측"; noteMsg = $"퍼즐 확정 실패 — {_lockedCount}/4뿐(반동 미관측), 재발동 대기";
+            // 옛 사유 "반동 미관측"은 정지형 시그니처 실패·경로 충돌 보류 등 모든 미잠금을
+            // 회전 반동 문제로 읽히게 했다 — 사실 그대로 '잠금 미달'로 기록(2026-08-05 개편).
+            string open = string.Join("·", Enumerable.Range(0, 4).Where(j => _locked[j] is null).Select(j => $"슬롯{j + 1}"));
+            traceWhy = $"잠금 미달 {_lockedCount}/4";
+            noteMsg = $"퍼즐 확정 실패 — 잠금 {_lockedCount}/4({open} 미잠금), 오답 방지 안전 종료(재발동 없음)";
             return null;
         }
 
@@ -451,20 +476,26 @@ internal sealed class RunePuzzleSolver
         var result = new List<RuneArrow>(4);
         foreach (int j in order) result.Add(new RuneArrow(_centers[j], _locked[j]!.Value));
         traceWhy = "확정 4/4"; // 성공 판정도 트레이스를 남긴다 — 오확정 사후 분석용(사용자 지시 2026-08-04)
-        noteMsg = $"퍼즐 확정 — 4/4{(_spinNoted ? " (회전 포함)" : "")}";
+        // 회전 꼬리표는 실제 관측(_rotatingSeen)만 본다 — 옛 _spinNoted는 '0.8초 지연' 예산연장
+        // 플래그라 정지 퍼즐에도 "(회전 포함)"이 붙었다(2026-08-05 11:30 실전 오독으로 교체).
+        noteMsg = $"퍼즐 확정 — 4/4{(_rotatingSeen ? " (회전 관측 포함)" : " (전원 정지)")}";
         return result;
     }
 
-    /// <summary>판정 트레이스 — 화살표별 잠금·반동 투표·각도 시계열 문자열(저장은 호출자:
-    /// 실전은 logs\rune-solve.txt). 스트립 이미지 없이도 '반동 미관측'의 원인 — 투표 분산·
-    /// 각도 노이즈·표본 공백 — 을 즉시 판독.</summary>
+    /// <summary>판정 트레이스(logs\rune-solve.txt, 저장은 호출자) — 헤더·위치 확보 경로·슬롯별
+    /// 잠금 시각/반동표/각도 시계열·범례. 스트립 이미지 없이도 '잠금 미달'의 원인 — 투표 분산·
+    /// 각도 노이즈·표본 공백 — 을 즉시 판독. 아무 도구도 이 파일을 파싱하지 않는다(사람 전용) —
+    /// 2026-08-05 개편: 슬롯 1기반 통일(앱로그와 동일), 위치 경로 라인·범례 추가.</summary>
     internal string BuildTrace(string why, long tMs)
     {
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine($"{DateTime.Now:HH:mm:ss.fff} 퍼즐 판정({why}) t={tMs}ms lock={_lockedCount}/4 회전관측={_rotatingSeen} 고속={_fastMode} pos={(_pos is null ? "미확보" : "고정")}");
+        sb.AppendLine($"{DateTime.Now:HH:mm:ss.fff} 퍼즐 판정({why}) t={tMs}ms lock={_lockedCount}/4 회전관측={_rotatingSeen} 고속={_fastMode}");
+        sb.AppendLine(_pos is null
+            ? "위치: 미확보 — ④ 줄·⑦ 부분·⑦w 웜톤·⑧ 융합 전부 실패"
+            : $"위치: {_posSource ?? "?"} @{_posAt}ms → {string.Join(" ", _pos.Select(p => $"({p.X:F0},{p.Y:F0})"))}");
         for (int j = 0; j < 4; j++)
         {
-            sb.Append($"[{j}] lock={_locked[j]?.ToString() ?? "?"} 투표 R:{_votes[j, 0]} U:{_votes[j, 1]} L:{_votes[j, 2]} D:{_votes[j, 3]}");
+            sb.Append($"[슬롯{j + 1}] lock={(_locked[j] is { } d ? $"{d}@{_lockedAt[j]}ms" : "미잠금")} 반동표 R:{_votes[j, 0]} U:{_votes[j, 1]} L:{_votes[j, 2]} D:{_votes[j, 3]}");
             if (_pos is not null) sb.Append($" pos=({_pos[j].X:F0},{_pos[j].Y:F0})");
             sb.AppendLine();
             var t = _angleT[j]; var v = _angleV[j];
@@ -472,7 +503,9 @@ internal sealed class RunePuzzleSolver
             for (int k = Math.Max(0, v.Count - 60); k < v.Count; k++) sb.Append($"{t[k]:F0}:{v[k]:F0}° ");
             sb.AppendLine();
         }
-        if (_fusedContrib is not null) sb.AppendLine($"융합: {_fusedContrib}"); // 말미 전용 — 기존 라인 포맷 불변
+        if (_fusedContrib is not null) sb.AppendLine($"융합: {_fusedContrib}");
+        sb.AppendLine("(범례) 슬롯=좌→우 1기반 · 반동표=회전 격발 투표(정지형은 전부 0이 정상) · 잠금 근거: 정지=시그니처 연속, 회전=반동표 다수결");
+        sb.AppendLine("(범례) 각도열 t:주축각° = 참고용 — 방향 분류와 별개(언랩·최근 60표본·리셋 시 비움) · 회전 유무의 진실은 헤더 회전관측=");
         return sb.ToString();
     }
 }

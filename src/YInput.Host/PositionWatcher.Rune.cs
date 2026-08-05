@@ -76,7 +76,7 @@ public sealed partial class PositionWatcher
                 else { runeCand = null; runeHits = 0; }               // 검출 끊김 — 오탐/이펙트로 보고 리셋
             }
             if (runeHits < 3 || runeCand is not { } runeAt)
-            { Status("skip", $"미니맵에 룬 없음(연속 검출 {runeHits}/3) — 이번 회차를 바로 종료합니다."); return; }
+            { Status("skip", $"미니맵 룬 안정 검출 실패({runeHits}/3연속·±2px) — 룬 부재 또는 가림·이펙트로 보고 이번 회차를 종료합니다."); return; }
             // 목표지점 지정(사용자 지정) — 아이콘은 발판보다 몇 px 위에 그려지므로 '아이콘보다 약간 아래'
             // 즉 실제 발판 높이를 목표로 잡는다. 이후 이동·도착 판정은 전부 이 지점 기준.
             runeAt.Y += (float)RuneIconYOffset;
@@ -84,7 +84,7 @@ public sealed partial class PositionWatcher
 
             // ── 1단계: 내 캐릭터 점 식별(위치 보정과 동일 — 여러 개면 프로브 이동으로 확인) ──
             var dots0 = MeasureDots(s, mini);
-            if (dots0 is null || dots0.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 룬 사용을 포기합니다."); return; }
+            if (dots0 is null || dots0.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 룬 사용을 포기합니다(첫 측정)."); return; }
             PointF dot;
             if (dots0.Count == 1) dot = dots0[0].Center;
             else
@@ -93,7 +93,7 @@ public sealed partial class PositionWatcher
                 await TapAsync(ScLeft, 90, ct).ConfigureAwait(false);
                 await PreciseDelay.WaitAsync(s.SettleMs, ct).ConfigureAwait(false);
                 var dots1 = MeasureDots(s, mini);
-                if (dots1 is null || dots1.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 룬 사용을 포기합니다."); return; }
+                if (dots1 is null || dots1.Count == 0) { Status("fail", "미니맵에서 플레이어 점을 찾지 못해 룬 사용을 포기합니다(프로브 이동 후 재측정)."); return; }
                 dot = IdentifyMovedLeft(dots0, dots1) ?? MinimapDetector.Pick(dots1).Center;
             }
 
@@ -208,7 +208,9 @@ public sealed partial class PositionWatcher
             }
             try
             {
-                if (screenCrop.Width < 100) { Status("fail", "게임 창을 찾지 못해 룬 발동을 중단합니다."); return; }
+                // 옛 문구 "게임 창을 찾지 못해"는 창은 찾았는데 크롭이 극소인 경우까지 뭉뚱그렸다 —
+                // 실측 폭을 박아 원인(창 미탐지/최소화/잘림)을 구분 가능하게(2026-08-05 로그 개편).
+                if (screenCrop.Width < 100) { Status("fail", $"퍼즐 영역 확보 실패(크롭 폭 {screenCrop.Width}px < 100 — 창 미탐지·최소화·잘림) — 룬 발동을 중단합니다."); return; }
                 // 발동은 스페이스 딱 한 번, 재발동·재시도 없음(사용자 지정 2026-08-04 18:13) —
                 // 열린 퍼즐에 스페이스는 '오답 입력'이라 어떤 재발동도 퍼즐을 날릴 위험이 있다
                 // (18:05 실행: 닫힘 오판 → 재발동 스페이스가 오답으로 들어가 1차 퍼즐 소실).
@@ -228,8 +230,8 @@ public sealed partial class PositionWatcher
                 if (arrows is null)
                 {
                     SaveRuneShots(beforeCrop, includeStrips: true); // 실패 증거 — 재시도 대신 이걸로 인식을 고친다
-                    FileLog.SnapshotRune(); // 다음 시도(성공 포함)가 고정 이름을 덮어써도 실패 증거는 폴더로 남긴다
-                    Status("fail", "룬 퍼즐 인식 실패 — 직접 입력해 주세요(logs\\rune-fail-* 폴더 확인). 이번 회차를 종료합니다.");
+                    var failDir = FileLog.SnapshotRune(); // 다음 시도(성공 포함)가 고정 이름을 덮어써도 실패 증거는 폴더로 남긴다
+                    Status("fail", $"룬 퍼즐 인식 실패 — 직접 입력해 주세요(증거 logs\\{failDir ?? "rune-fail-*"}). 이번 회차를 종료합니다.");
                     return;
                 }
 
@@ -258,7 +260,7 @@ public sealed partial class PositionWatcher
                 // 입력까지 간 시도는 결과 무관하게 폴더로도 보존 — 오답 입력은 퍼즐이 닫혀 아래
                 // 잔존 감지가 성공으로 오판하므로(2026-08-05 09:20 실전: R D L D 오답, 스냅샷 없음
                 // → 다음 시도가 증거를 덮을 뻔) 고정 이름만으로는 증거가 못 산다. 14일 자동 정리.
-                FileLog.SnapshotRune("rune-attempt-");
+                var attemptDir = FileLog.SnapshotRune("rune-attempt-");
 
                 // 입력 후 퍼즐(배너)이 사라졌는지 확인 — 화살표 재탐지는 룬 해제 이펙트를 오인할 수 있어
                 // 배너 잔존 여부로 판정한다(23:48 실행: 성공인데 이펙트를 화살표로 재탐지해 실패 경고).
@@ -283,11 +285,13 @@ public sealed partial class PositionWatcher
                 }
                 if (stillOpen)
                 {
-                    FileLog.SnapshotRune(); // 오답 의심 증거도 폴더로 보존 — 다음 시도가 고정 이름을 덮어쓴다
-                    Status("fail", "퍼즐 입력 후에도 퍼즐이 남아 있습니다 — 인식이 틀렸을 수 있어요(logs\\rune-fail-* 폴더 확인).");
+                    var failDir = FileLog.SnapshotRune(); // 오답 의심 증거도 폴더로 보존 — 다음 시도가 고정 이름을 덮어쓴다
+                    Status("fail", $"퍼즐 입력 후에도 배너+화살표가 남아 있습니다 — 인식이 틀렸을 수 있어요(증거 logs\\{failDir ?? "rune-fail-*"}).");
                 }
                 else
-                    Status("done", $"룬 사용 완료 (퍼즐 {seq})");
+                    // '완료'는 '퍼즐 닫힘 확인'일 뿐 정답 보증이 아니다 — 오답 입력도 퍼즐이 닫힌다
+                    // (2026-08-05 09:20 실전). 증거 폴더를 로그가 직접 안내한다(로그 개편).
+                    Status("done", $"룬 사용 완료 — 입력 {seq} 후 퍼즐 닫힘 확인(오답도 닫히므로 정답 보증은 아님 · 증거 logs\\{attemptDir ?? "rune-attempt-*"})");
             }
             catch (OperationCanceledException)
             {
@@ -355,6 +359,9 @@ public sealed partial class PositionWatcher
     {
         var sw = Stopwatch.StartNew();
         var solver = new RunePuzzleSolver(beforeCrop, budgetMs, precropped: true, note: Note);
+        // 시계 앵커 — 이 라인의 앱로그 시각이 rune-solve.txt의 t=0. 이후 솔버 노트·트레이스의
+        // t(ms)를 앱로그 타임스탬프와 바로 대조할 수 있다(2026-08-05 로그 개편).
+        Note($"퍼즐 관찰 시작 — 기본 예산 {budgetMs}ms, 이 시각이 판정 t=0");
         var win = new List<Bitmap>(4); // 직전 프레임 창(최대 3장, 오래된 순) — 채도 교집합·정지 게이트 기준
         Bitmap? prevFast = null;       // 고속 모드의 직전 틱 프레임(진단 MovingPx용)
         int fastTick = 0;              // 고속 모드 틱 카운터 — 주기적 줄 재선출 체크용

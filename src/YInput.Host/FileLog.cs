@@ -72,18 +72,21 @@ public static class FileLog
     /// 이 스냅샷으로만 가능하다. prefix 기본 "rune-fail-"(인식 실패·잔존 의심), "rune-attempt-"는
     /// 입력까지 간 모든 시도 — 오답 입력은 퍼즐이 닫혀 성공으로 오판되므로(2026-08-05 09:20 실전:
     /// R D L D 오답 후 스냅샷 없음 → 수동 보존) 시도 자체를 남겨야 증거가 산다.
-    /// 14일 지난 폴더는 시작 시 정리(Cleanup).</summary>
-    public static void SnapshotRune(string prefix = "rune-fail-")
+    /// 14일 지난 폴더는 시작 시 정리(Cleanup). 반환: 생성한 폴더명(로그에 증거 경로를 박아
+    /// 분석 진입점을 바로 안내하기 위함, 2026-08-05 로그 개편) — 실패 시 null.</summary>
+    public static string? SnapshotRune(string prefix = "rune-fail-")
     {
-        if (_dir.Length == 0) return;
+        if (_dir.Length == 0) return null;
         try
         {
-            var dst = Path.Combine(_dir, $"{prefix}{DateTime.Now:yyyyMMdd-HHmmss}");
+            var name = $"{prefix}{DateTime.Now:yyyyMMdd-HHmmss}";
+            var dst = Path.Combine(_dir, name);
             Directory.CreateDirectory(dst);
             foreach (var f in Directory.EnumerateFiles(_dir, "rune-*"))
                 try { File.Copy(f, Path.Combine(dst, Path.GetFileName(f)), true); } catch { /* 잠김 등 무시 */ }
+            return name;
         }
-        catch { /* 진단 보존 실패 무시 */ }
+        catch { return null; /* 진단 보존 실패 무시 */ }
     }
 
     /// <summary>prefix로 시작하는 진단 PNG 삭제 — 이전 실행 잔재가 재현 분석에 섞이지 않게.</summary>
