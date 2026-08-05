@@ -1,0 +1,5 @@
+# 정답 ←↑↑→ · ④ 1슬롯 잡 교체 — ⑦w 진짜 위치 + ② L U U R이 핵심 불변식 (README 참조)
+run: --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
+out: rune-frame-0.png.analysis.txt
+xs: ⑦w 웜톤 줄 = 458 588 674 730 ~5
+re: \(458,\d+\)a\d+L \(588,\d+\)a\d+U \(674,\d+\)a\d+U \(730,\d+\)a\d+R
