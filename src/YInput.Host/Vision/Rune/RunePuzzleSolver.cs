@@ -144,6 +144,20 @@ internal sealed class RunePuzzleSolver
                 _note?.Invoke($"웜 교차 검증 — ④ 줄(면적 {rowArea:0})과 {mismatch}슬롯 불일치, 웜 줄(면적 {warmArea:0}) 위치 채택: "
                               + string.Join(" ", wcheck.Select(p => $"({p.X:0},{p.Y:0})")));
             }
+            // 슬롯 단위 보정 — 3슬롯 일치 + 1슬롯 불일치면 일치한 3개가 두 줄의 정렬을 상호
+            // 검증하므로, 불일치 슬롯만 웜 위치로 교체한다(면적 조건 불필요 — 2026-08-05 10:47
+            // 실전: ④ 교집합이 진짜 1번(458← a368) 대신 잡블롭(533 a266)을 끼웠는데 불일치가
+            // 1슬롯·면적비 1.13이라 전체 교체 게이트 미발동 → 그 슬롯만 굶주려 3/4 실패.
+            // 웜이 틀린 최악의 경우에도 해당 슬롯이 잠기지 못해 3/4 안전 실패 — 더 나빠질 수 없다).
+            else if (mismatch == 1)
+            {
+                int bad = Enumerable.Range(0, 4).First(j => Math.Abs(wcheck[j].X - row[j].Center.X) > MinSlotSepPx);
+                var fixedPos = row.Select(r => r.Center).ToArray();
+                fixedPos[bad] = wcheck[bad];
+                _pos = fixedPos; _posAnchor = (PointF[])fixedPos.Clone();
+                _adoptedRowArea = rowArea; // ④ 줄 기준 유지 — 더 강한 진짜 줄의 재선출 여지는 남긴다
+                _note?.Invoke($"웜 슬롯 보정 — ④ 줄의 {bad + 1}번 슬롯(x{row[bad].Center.X:0})을 웜 줄 위치({wcheck[bad].X:0},{wcheck[bad].Y:0})로 교체");
+            }
         }
 
         if (row is not null)
@@ -230,7 +244,18 @@ internal sealed class RunePuzzleSolver
     internal void StepHeavyRow(Bitmap frame, IReadOnlyList<Bitmap> recent, Func<long> clock)
     {
         var row = RuneArrowDetector.AnalyzeFrame(frame, recent, _beforeRef, _precropped);
-        if (row is not null) TryAdoptRow(row, clock);
+        if (row is null) return;
+        long tMs = clock();
+        // 고속 모드에서도 heavy 판독은 갱신한다 — 로컬 안정 오독(10:47 실전: 730의 → 글리프를
+        // 로컬 고채도 파편이 처음부터 끝까지 ←로 읽음)의 잠금을 막는 '경로 충돌 보류' 가드가
+        // 600ms 신선도를 요구하는데, 이 갱신이 없으면 고속 전환 직후 만료돼 무력화된다
+        // (10:47: 가드 만료 시점 t≈1301에 L 오잠금). 잠금은 추가하지 않는다(회전 퍼즐 최소 변경).
+        for (int j = 0; j < 4; j++)
+        {
+            if (_pos is not null && Math.Abs(row[j].Center.X - _pos[j].X) > PosBox / 2.0) continue; // 슬롯 위치 대응 게이트
+            _heavyDir[j] = row[j].Dir; _heavyDirAt[j] = tMs; _heavyX[j] = row[j].Center.X;
+        }
+        TryAdoptRow(row, clock);
     }
 
     // 미확정 화살표들의 로컬 분석 한 회. 회전/정지 라우팅은 <b>글리프 각도 시계열</b>로만 판단 —
