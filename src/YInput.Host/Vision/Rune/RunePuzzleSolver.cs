@@ -82,6 +82,7 @@ internal sealed class RunePuzzleSolver
     private readonly List<bool[]>[] _sigHist = [new(), new(), new(), new()];
     private bool _relocated;
     private double _adoptedRowArea;
+    private string? _fusedContrib; // 융합 줄 채택 시 소스 기여 요약 — BuildTrace 말미에 기록
 
     internal RunePuzzleSolver(Bitmap? beforeRef, int initialBudgetMs, bool precropped,
                               Action<string>? note = null, Action<string>? diag = null)
@@ -119,7 +120,10 @@ internal sealed class RunePuzzleSolver
     /// (실전은 Stopwatch, 오프라인은 고정값 반환 → 결정성 유지).</summary>
     internal void StepFrame(Bitmap frame, IReadOnlyList<Bitmap> recent, Func<long> clock)
     {
-        var row = RuneArrowDetector.AnalyzeFrame(frame, recent, _beforeRef, _precropped);
+        // 융합 풀 — 위치 미확보 프레임에서만 수집(확보 후엔 융합 폴백이 안 도니 비용 낭비).
+        // 프레임 단위 생성·폐기: 프레임 간 누적은 카메라 이동 시 어긋난 후보를 섞는다.
+        var pool = _pos is null ? new RuneArrowDetector.FusionPool() : null;
+        var row = RuneArrowDetector.AnalyzeFrame(frame, recent, _beforeRef, _precropped, pool);
         long tMs = clock(); // 분석 소요 시간 반영 — 각속도 정규화·시간 게이트의 기준 시각
 
         if (row is not null)
@@ -154,6 +158,15 @@ internal sealed class RunePuzzleSolver
             {
                 _pos = pp; _posAnchor = (PointF[])pp.Clone();
                 _note?.Invoke($"부분 줄 보완 — 3개+외삽으로 위치 확보: {string.Join(" ", pp.Select(p => $"({p.X:0},{p.Y:0})"))}");
+            }
+            // 소스 간 후보 융합 — 최후 폴백(④·⑦ 전부 실패한 프레임만). 단일 마스크가 4개를
+            // 못 채워도 여러 마스크가 각자 본 후보를 슬롯 병합해 위치를 복원한다. 부분 줄이
+            // 정답이고 융합이 잡줄인 케이스가 실측돼(DLUU 리플레이) 순서는 ⑦ 우선 고정.
+            else if (pool is not null
+                     && RuneArrowDetector.TryFusedRow(pool, frame, _beforeRef, out var contrib) is { Length: 4 } fp)
+            {
+                _pos = fp; _posAnchor = (PointF[])fp.Clone(); _fusedContrib = contrib;
+                _note?.Invoke($"융합 줄 채택 — 소스 간 후보 병합으로 위치 확보: {string.Join(" ", fp.Select(p => $"({p.X:0},{p.Y:0})"))}");
             }
         }
 
@@ -396,6 +409,7 @@ internal sealed class RunePuzzleSolver
             for (int k = Math.Max(0, v.Count - 60); k < v.Count; k++) sb.Append($"{t[k]:F0}:{v[k]:F0}° ");
             sb.AppendLine();
         }
+        if (_fusedContrib is not null) sb.AppendLine($"융합: {_fusedContrib}"); // 말미 전용 — 기존 라인 포맷 불변
         return sb.ToString();
     }
 }
