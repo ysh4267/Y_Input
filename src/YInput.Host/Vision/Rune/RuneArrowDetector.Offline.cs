@@ -156,16 +156,26 @@ internal static partial class RuneArrowDetector
                         // 합의 잠금 캘리브레이션용 — 웜 방향·마진(문자만 사용: 화살표·괄호숫자 없음 → 지시자 계약 안전)
                         if (wDirs is not null)
                             sb.AppendLine($"      [⑦w|방향·마진 {string.Join(" ", wDirs.Select(d => $"{d.Dir}{d.Margin:0.00}"))}]");
-                        // 방향 협응 캘리브레이션(2026-08-05 16:33) — 웜 줄 각 위치의 로컬(sat체인) 판독 대조.
-                        // 실전 교차 검증 제3 판별자(웜·로컬 ≥3 일치 → 교체)의 코퍼스 검증 창구.
+                        // 방향 협응·프로브 경쟁 캘리브레이션(2026-08-05 16:33·20:53) — 웜 줄 각 위치의
+                        // 로컬(sat체인) 판독 대조 + 양쪽 줄 프로브 면적. 실전 교차 검증 판별자
+                        // (협응 4/4 교체·프로브 경쟁 2.0× 교체)의 코퍼스 검증 창구.
                         if (wr is not null && wDirs is not null)
                         {
                             var wpa = wr.Select(p => AnalyzeArrowAt(frame, beforeRef, null,
                                 new Rectangle((int)(p.X - RunePuzzleSolver.PosBox / 2.0), (int)(p.Y - RunePuzzleSolver.PosBox / 2.0),
                                               RunePuzzleSolver.PosBox, RunePuzzleSolver.PosBox))).ToArray();
                             int wAgree = Enumerable.Range(0, 4).Count(i => wpa[i] is { } q && q.Area >= 60 && q.Dir == wDirs[i].Dir);
-                            int wMm = af is null ? -1 : Enumerable.Range(0, 4).Count(i => Math.Abs(wr[i].X - af[i].Center.X) > RunePuzzleSolver.MinSlotSepPx);
-                            sb.AppendLine($"      [⑦w|로컬협응 {string.Join(" ", wpa.Select(q => q is { } x ? $"{x.Dir}a{x.Area}" : "무"))} 일치 {wAgree}/4 ④불일치 {(wMm < 0 ? "④없음" : wMm + "슬롯")}]");
+                            // 불일치는 X·Y 모두(±MinSlotSepPx) — 실전 StepFrame 매칭과 동일해야 함(20:53 텍스트 줄이 Y만 40px 위)
+                            int wMm = af is null ? -1 : Enumerable.Range(0, 4).Count(i =>
+                                Math.Abs(wr[i].X - af[i].Center.X) > RunePuzzleSolver.MinSlotSepPx
+                                || Math.Abs(wr[i].Y - af[i].Center.Y) > RunePuzzleSolver.MinSlotSepPx);
+                            // 프로브 경쟁 캘리브레이션(2026-08-05 20:53) — 양쪽 줄 위치의 로컬 프로브 면적 합.
+                            // 실전 교체 임계 = ProbeDominanceRatio(2.0×)·하한 MinProbeAreaSum(240).
+                            double wSum = wpa.Sum(q => q is { } x ? (double)x.Area : 0);
+                            double rSum = af is null ? 0 : af.Sum(r => AnalyzeArrowAt(frame, beforeRef, null,
+                                new Rectangle((int)(r.Center.X - RunePuzzleSolver.PosBox / 2.0), (int)(r.Center.Y - RunePuzzleSolver.PosBox / 2.0),
+                                              RunePuzzleSolver.PosBox, RunePuzzleSolver.PosBox)) is { } y ? (double)y.Area : 0);
+                            sb.AppendLine($"      [⑦w|로컬협응 {string.Join(" ", wpa.Select(q => q is { } x ? $"{x.Dir}a{x.Area}" : "무"))} 일치 {wAgree}/4 ④불일치 {(wMm < 0 ? "④없음" : wMm + "슬롯")} 프로브 웜{wSum:0} ④{rSum:0}]");
                         }
                         // ⑧ 소스 융합 — 실전에서는 ④·⑦·⑦w가 모두 실패했을 때만 발동하는 최후 폴백.
                         // 여기서는 항상 찍어 융합 풀·게이트 동작을 관찰한다(캘리브레이션·회귀 창구).

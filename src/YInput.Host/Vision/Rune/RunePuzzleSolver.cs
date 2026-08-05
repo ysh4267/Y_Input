@@ -45,6 +45,13 @@ internal sealed class RunePuzzleSolver
                                                  // 전 이력(3소스, 신선도 무관)이 만장일치면 현행 잠금 복원. 15:45
                                                  // 슬롯3(진짜 R m0.01 단독)류 성공 보존용 — 슬롯1은 이력 D/L/R 산개라
                                                  // 해제 불가 → 잠금 미달 안전 실패(오답 입력이던 사건이 안전 실패로).
+    internal const double ProbeDominanceRatio = 1.8; // 평행줄 경쟁(웜 vs ④, 2슬롯+ 불일치) 프로브 면적 교체 임계
+                                                 // (08-05 20:53 재설계, 사용자 검수 A안). 실측: 20:53 진짜 웜 1184
+                                                 // vs ④ 텍스트 줄 562(2.11×) 통과 / pillhigh 잡 웜 1498 vs 진짜 ④
+                                                 // 1012(1.48×) 차단. 1.8 = 두 실측의 중앙 — 차단 마진 0.32,
+                                                 // 통과 마진 0.31 균등(어느 쪽 오판도 잘못된 위치 → fail-closed 우세).
+    internal const double MinProbeAreaSum = 240; // 프로브 경쟁 발동 하한 — 협응 유효 프로브 a60 × 4슬롯.
+                                                 // ④ 프로브 0 근방일 때 유령 웜 줄(파편)로의 교체 방지.
 
     /// <summary>StepLocal 한 회의 슬롯별 판독 — 오프라인 재현기의 f-라인 출력용(실전은 무시).
     /// Margin = 방향 분류 마진(합의 잠금 캘리브레이션 창구 — f-라인 M토큰).</summary>
@@ -235,7 +242,13 @@ internal sealed class RunePuzzleSolver
         {
             for (int j = 0; j < 4; j++) // 합의용 웜 판독 저장 — 위치 대응은 소비 시점에 검사
             { _warmDir[j] = warmDirs![j].Dir; _warmMargin[j] = warmDirs[j].Margin; _warmDirAt[j] = tMs; _warmX[j] = wcheck[j].X; _dirsSeen[j] |= DirBit(warmDirs[j].Dir); }
-            int mismatch = Enumerable.Range(0, 4).Count(j => Math.Abs(wcheck[j].X - row[j].Center.X) > MinSlotSepPx);
+            // 슬롯 매칭은 X·Y 모두(±MinSlotSepPx) — 2026-08-05 20:53: 확장 밴드의 룬 안내문 텍스트
+            // ("…방향키를 순서대로…")가 진짜 줄과 같은 X 격자·40px 위 Y에 잡줄을 형성, X 전용
+            // 매칭이 텍스트 슬롯(552,160)과 웜 진짜 슬롯(564,207)을 "일치"로 오판해 잡줄이 존치됐다
+            // (슬롯2 텍스트 글리프가 매 프레임 R m0.55로 읽혀 heavy+로컬 동일 픽셀 2표 오잠금).
+            bool SlotMismatch(int j) => Math.Abs(wcheck[j].X - row[j].Center.X) > MinSlotSepPx
+                                     || Math.Abs(wcheck[j].Y - row[j].Center.Y) > MinSlotSepPx;
+            int mismatch = Enumerable.Range(0, 4).Count(SlotMismatch);
             double rowArea = row.Sum(r => (double)r.Area);
             double rowGapRatio = GapRatio(row.Select(r => r.Center.X));
             double warmGapRatio = GapRatio(wcheck.Select(p => p.X));
@@ -265,18 +278,36 @@ internal sealed class RunePuzzleSolver
             // 입력하는 게 아니라 위치 교체 판단이며, 방향·잠금은 이후 로컬 관찰·합의가 정한다.
             else if (mismatch >= 2)
             {
-                int agree = 0;
+                int agree = 0; double warmProbe = 0, rowProbe = 0;
                 for (int j = 0; j < 4; j++)
                 {
                     var prect = new Rectangle((int)(wcheck[j].X - PosBox / 2.0), (int)(wcheck[j].Y - PosBox / 2.0), PosBox, PosBox);
-                    if (RuneArrowDetector.AnalyzeArrowAt(frame, _beforeRef, null, prect) is { } pa
-                        && pa.Area >= 60 && pa.Dir == warmDirs![j].Dir) agree++;
+                    if (RuneArrowDetector.AnalyzeArrowAt(frame, _beforeRef, null, prect) is { } pa)
+                    {
+                        warmProbe += pa.Area;
+                        if (pa.Area >= 60 && pa.Dir == warmDirs![j].Dir) agree++;
+                    }
+                    var rrect = new Rectangle((int)(row[j].Center.X - PosBox / 2.0), (int)(row[j].Center.Y - PosBox / 2.0), PosBox, PosBox);
+                    if (RuneArrowDetector.AnalyzeArrowAt(frame, _beforeRef, null, rrect) is { } ra) rowProbe += ra.Area;
                 }
                 if (agree == 4)
                 {
                     _pos = wcheck; _posAnchor = (PointF[])wcheck.Clone(); _adoptedRowArea = warmArea;
                     _posSource = "④→⑦w 교체(방향 협응)"; _posAt = tMs;
                     _note?.Invoke($"위치 교체(④→⑦w 방향 협응) — {mismatch}슬롯 불일치, 웜·로컬 방향 4/4 일치(균일비 웜 {warmGapRatio:0.00} vs ④ {rowGapRatio:0.00}), 웜 채택: "
+                                  + string.Join(" ", wcheck.Select(p => $"({p.X:0},{p.Y:0})")));
+                }
+                // 프로브 경쟁 판별자(2026-08-05 20:53 재설계, 사용자 검수 A안) — 균일성·협응이 모두
+                // 침묵하는 평행줄 경쟁의 교체 창구. 20:53 실전: ④가 안내문 텍스트 줄을 채택, 진짜
+                // 웜 줄은 간격(107/107/62)이 오히려 불균일해 균일성 기각·웜 슬롯4 방향 오독(L)으로
+                // 협응 3/4 기각 → 잡줄 존치. 판별 원리: 두 줄 위치에서 같은 로컬 프로브(sat체인)로
+                // 읽은 면적 합을 비교 — 진짜 화살표 줄이 텍스트·발광 조각보다 확연히 크다.
+                // 임계·하한 실측 근거는 ProbeDominanceRatio·MinProbeAreaSum 상수 주석.
+                else if (warmProbe >= rowProbe * ProbeDominanceRatio && warmProbe >= MinProbeAreaSum)
+                {
+                    _pos = wcheck; _posAnchor = (PointF[])wcheck.Clone(); _adoptedRowArea = warmArea;
+                    _posSource = "④→⑦w 교체(프로브 경쟁)"; _posAt = tMs;
+                    _note?.Invoke($"위치 교체(④→⑦w 프로브 경쟁) — {mismatch}슬롯 불일치, 로컬 프로브 면적 웜 {warmProbe:0} vs ④ {rowProbe:0}, 웜 채택: "
                                   + string.Join(" ", wcheck.Select(p => $"({p.X:0},{p.Y:0})")));
                 }
             }
@@ -287,7 +318,7 @@ internal sealed class RunePuzzleSolver
             // 웜이 틀린 최악의 경우에도 해당 슬롯이 잠기지 못해 3/4 안전 실패 — 더 나빠질 수 없다).
             else if (mismatch == 1)
             {
-                int bad = Enumerable.Range(0, 4).First(j => Math.Abs(wcheck[j].X - row[j].Center.X) > MinSlotSepPx);
+                int bad = Enumerable.Range(0, 4).First(SlotMismatch);
                 var fixedPos = row.Select(r => r.Center).ToArray();
                 fixedPos[bad] = wcheck[bad];
                 _pos = fixedPos; _posAnchor = (PointF[])fixedPos.Clone();
