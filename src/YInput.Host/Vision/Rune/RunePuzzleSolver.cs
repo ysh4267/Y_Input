@@ -36,6 +36,15 @@ internal sealed class RunePuzzleSolver
                                                  // 10:47 로컬 L0.07 vs heavy R, UUUR 로컬 D0.02 vs heavy R — 전부 열세)
                                                  // ↔ 진짜 판독도 저마진 실존(14:01 슬롯3 로컬 0.00, LLUL 웜 0.03)이라
                                                  // δ 미만 격차는 보류(안전 실패)가 옳다. 진짜 p75≈0.25의 절반 수준.
+    internal const double MinSoloMargin = 0.05;  // 단독 소스(n≤1) 정지 잠금 마진 하한(08-05 15:45 재설계, 사용자 검수 B안).
+                                                 // 실측: 진짜 단독 잠금 8건 전수 최저 0.10(UUDL 슬롯2, 나머지 0.13~0.35)
+                                                 // vs 오독 단독 잠금 0.01(15:45 슬롯1 →를 D로, 웜 정답 판독 260ms 전 잠금).
+                                                 // 0.05 = 진짜 최저의 절반. 최근 성공 3건(12:43·14:54·15:15)은 스냅샷
+                                                 // 전수 확인 결과 잠금 마진 ≥0.13 또는 2표 동의라 무영향.
+    internal const int SoloLateWindowMs = 500;   // 저마진 단독 보류의 말기 해제 창 — 예산 마지막 0.5초에 그 슬롯의
+                                                 // 전 이력(3소스, 신선도 무관)이 만장일치면 현행 잠금 복원. 15:45
+                                                 // 슬롯3(진짜 R m0.01 단독)류 성공 보존용 — 슬롯1은 이력 D/L/R 산개라
+                                                 // 해제 불가 → 잠금 미달 안전 실패(오답 입력이던 사건이 안전 실패로).
 
     /// <summary>StepLocal 한 회의 슬롯별 판독 — 오프라인 재현기의 f-라인 출력용(실전은 무시).
     /// Margin = 방향 분류 마진(합의 잠금 캘리브레이션 창구 — f-라인 M토큰).</summary>
@@ -107,6 +116,11 @@ internal sealed class RunePuzzleSolver
     private readonly long[] _warmDirAt = [-9999, -9999, -9999, -9999];
     private readonly float[] _warmX = new float[4];
     private readonly double[] _warmMargin = new double[4];
+    // 단독 저마진 잠금 방지(2026-08-05 15:45 재설계) — 슬롯별 전 이력 방향 비트(R=1 U=2 L=4 D=8,
+    // 3소스 공통·신선도 무관)와 잠금 기각 횟수(트레이스 가시화용), 말기 해제 발동 여부.
+    private readonly int[] _dirsSeen = new int[4];
+    private readonly int[] _holdCount = new int[4];
+    private readonly bool[] _lateRelease = new bool[4];
 
     internal RunePuzzleSolver(Bitmap? beforeRef, int initialBudgetMs, bool precropped,
                               Action<string>? note = null, Action<string>? diag = null)
@@ -136,10 +150,13 @@ internal sealed class RunePuzzleSolver
     ///    웜 DLUU(U→R m0.03)·RRDD(D→U m0.27). 5사건 전부 나머지 2소스가 정답 → 2표 동의가 유일 강건 규칙.
     ///  · 고마진 오독 실존(RRDD 웜 0.27·UUUR 웜 0.37) + 저마진 진짜 실존(14:01 로컬 0.00·LLUL 웜 0.03)
     ///    → 마진은 동의 수를 절대 못 뒤집는다(단독 고마진 배제 하드바운드).
-    ///  · 단독 소스 = 현행 잠금 — 스트립 리플레이(로컬 단독)·줄 없는 맵 계약 보존.
+    ///  · 단독 소스 = 마진 하한(MinSoloMargin) 통과 시만 현행 잠금(2026-08-05 15:45 재설계) —
+    ///    로컬이 →를 D로 오독(m0.01, 5프레임)해 웜·heavy의 첫 판독 전(t=588)에 단독 잠금한 오답
+    ///    사건. 하한 미달은 보류하되, 예산 말기(마지막 0.5초)에 전 이력 만장일치면 해제(진짜
+    ///    저마진 단독 성공 보존 — 스트립 리플레이는 명목시계가 말기에 못 가 현행 유지).
     ///  · 보류는 이 프레임뿐 — 런은 계속 자라고, 불일치가 예산 끝까지 가면 잠금 미달 안전 종료(fail-closed).
     /// 구 비대칭 '경로 충돌 보류' 가드(로컬만 heavy에 보류)는 이 규칙의 1:1-보류 특수 케이스로 흡수.</summary>
-    private bool ConsensusAllows(int j, char cand, long tMs)
+    private bool ConsensusAllows(int j, char cand, double candMargin, long tMs)
     {
         Span<(char Dir, double Margin)> src = stackalloc (char, double)[3];
         int n = 0;
@@ -152,7 +169,13 @@ internal sealed class RunePuzzleSolver
             && _pos is not null && Math.Abs(_warmX[j] - _pos[j].X) <= MinSlotSepPx)
             src[n++] = (_warmDir[j], _warmMargin[j]);
 
-        if (n <= 1) return true; // 단독 소스 — 현행 유지
+        if (n <= 1) // 단독 소스 — 하한 통과 시 현행 잠금, 미달은 보류(말기 만장일치만 해제)
+        {
+            if (candMargin >= MinSoloMargin) return true;
+            if (tMs >= BudgetMs - SoloLateWindowMs && _dirsSeen[j] == DirBit(cand))
+            { _lateRelease[j] = true; return true; }
+            _holdCount[j]++; return false;
+        }
         int cVotes = 0, oMax = 0; double cM = 0, oM = 0;
         for (int i = 0; i < n; i++)
         {
@@ -160,11 +183,14 @@ internal sealed class RunePuzzleSolver
             int same = 0; for (int k = 0; k < n; k++) if (src[k].Dir == src[i].Dir) same++;
             if (same > oMax || (same == oMax && src[i].Margin > oM)) { oMax = same; oM = src[i].Margin; }
         }
-        if (cVotes >= 2 && cVotes > oMax) return true; // 다수 동의 — 마진은 못 뒤집는다
-        if (oMax >= 2) return false;                   // 다수가 반대 — 보류
-        if (n >= 3) return false;                      // 1:1:1 산개 — 보류
-        return cM - oM >= ConsensusDeltaMargin;        // 1:1 — cand가 δ 이상 우세할 때만
+        if (cVotes >= 2 && cVotes > oMax) return true;           // 다수 동의 — 마진은 못 뒤집는다
+        if (oMax >= 2) { _holdCount[j]++; return false; }        // 다수가 반대 — 보류
+        if (n >= 3) { _holdCount[j]++; return false; }           // 1:1:1 산개 — 보류
+        if (cM - oM >= ConsensusDeltaMargin) return true;        // 1:1 — cand가 δ 이상 우세할 때만
+        _holdCount[j]++; return false;
     }
+
+    private static int DirBit(char d) => d switch { 'R' => 1, 'U' => 2, 'L' => 4, 'D' => 8, _ => 0 };
 
     /// <summary>간격 균일비 — X 정렬 후 이웃 간격 최대/최소. 진짜 화살표 줄이 잡줄보다 균일하다는
     /// 실측(2026-08-05: 진짜 1.11~1.49, 잡 1.63~1.79)이 웜 교차 검증의 판별 근거.</summary>
@@ -208,7 +234,7 @@ internal sealed class RunePuzzleSolver
                is { Length: 4 } wcheck)
         {
             for (int j = 0; j < 4; j++) // 합의용 웜 판독 저장 — 위치 대응은 소비 시점에 검사
-            { _warmDir[j] = warmDirs![j].Dir; _warmMargin[j] = warmDirs[j].Margin; _warmDirAt[j] = tMs; _warmX[j] = wcheck[j].X; }
+            { _warmDir[j] = warmDirs![j].Dir; _warmMargin[j] = warmDirs[j].Margin; _warmDirAt[j] = tMs; _warmX[j] = wcheck[j].X; _dirsSeen[j] |= DirBit(warmDirs[j].Dir); }
             int mismatch = Enumerable.Range(0, 4).Count(j => Math.Abs(wcheck[j].X - row[j].Center.X) > MinSlotSepPx);
             double rowArea = row.Sum(r => (double)r.Area);
             double rowGapRatio = GapRatio(row.Select(r => r.Center.X));
@@ -257,7 +283,7 @@ internal sealed class RunePuzzleSolver
                 if (_pos is not null && Math.Abs(row[j].Center.X - _pos[j].X) > PosBox / 2.0) continue;
                 _centers[j] = row[j].Center;
                 _heavyDir[j] = row[j].Dir; _heavyDirAt[j] = tMs; _heavyX[j] = row[j].Center.X; // 로컬 잠금 충돌 보류 기준
-                _heavyMargin[j] = row[j].Margin;
+                _heavyMargin[j] = row[j].Margin; _dirsSeen[j] |= DirBit(row[j].Dir);
                 if (_locked[j] is not null) continue;
                 // 정지 확정: '런 시작' 모양·방향이 계속 같아야 함
                 if (_runSig[j] is not null && _runDir[j] == row[j].Dir
@@ -266,7 +292,7 @@ internal sealed class RunePuzzleSolver
                     _runLen[j]++;
                     // 합의 게이트(2026-08-05 14:01 재설계) — heavy도 예외 없이 2표 동의 필요.
                     // 과거 heavy는 무가드였고, 그 단독 잠금이 ←→R 오분류 오답 입력을 냈다.
-                    if (_runLen[j] >= LockRun && tMs - _runStart[j] >= LockSpanMs && ConsensusAllows(j, _runDir[j], tMs))
+                    if (_runLen[j] >= LockRun && tMs - _runStart[j] >= LockSpanMs && ConsensusAllows(j, _runDir[j], row[j].Margin, tMs))
                     { _locked[j] = _runDir[j]; _lockedCount++; _lockedAt[j] = tMs; }
                 }
                 else { _runSig[j] = row[j].Sig; _runDir[j] = row[j].Dir; _runLen[j] = 1; _runStart[j] = tMs; }
@@ -296,7 +322,7 @@ internal sealed class RunePuzzleSolver
                 _pos = wp; _posAnchor = (PointF[])wp.Clone();
                 long wpT = clock();
                 for (int j = 0; j < 4; j++) // 합의용 웜 판독 저장
-                { _warmDir[j] = wpDirs![j].Dir; _warmMargin[j] = wpDirs[j].Margin; _warmDirAt[j] = wpT; _warmX[j] = wp[j].X; }
+                { _warmDir[j] = wpDirs![j].Dir; _warmMargin[j] = wpDirs[j].Margin; _warmDirAt[j] = wpT; _warmX[j] = wp[j].X; _dirsSeen[j] |= DirBit(wpDirs[j].Dir); }
                 _posSource = "⑦w 웜톤 줄"; _posAt = wpT;
                 _note?.Invoke($"위치 확보(⑦w 웜톤 줄·위치만) — 방향은 로컬 관찰: {string.Join(" ", wp.Select(p => $"({p.X:0},{p.Y:0})"))}");
             }
@@ -356,7 +382,7 @@ internal sealed class RunePuzzleSolver
         {
             if (_pos is not null && Math.Abs(row[j].Center.X - _pos[j].X) > PosBox / 2.0) continue; // 슬롯 위치 대응 게이트
             _heavyDir[j] = row[j].Dir; _heavyDirAt[j] = tMs; _heavyX[j] = row[j].Center.X;
-            _heavyMargin[j] = row[j].Margin;
+            _heavyMargin[j] = row[j].Margin; _dirsSeen[j] |= DirBit(row[j].Dir);
         }
         TryAdoptRow(row, clock);
         // 고속 모드의 웜 판독 갱신 — 8틱(~0.4s)마다인 이 경로에서만(50ms 고속 틱 안에서는 금지,
@@ -376,6 +402,7 @@ internal sealed class RunePuzzleSolver
         {
             if (Math.Abs(wrow[j].X - _pos![j].X) > PosBox / 2.0) continue;
             _warmDir[j] = dirs[j].Dir; _warmMargin[j] = dirs[j].Margin; _warmDirAt[j] = tMs; _warmX[j] = wrow[j].X;
+            _dirsSeen[j] |= DirBit(dirs[j].Dir);
         }
     }
 
@@ -427,6 +454,7 @@ internal sealed class RunePuzzleSolver
             {
                 // 합의용 로컬 판독 저장 — 비회전 판독만(회전 중 방향 분류는 무의미라 투표 금지)
                 _localDir[j] = a.Dir; _localMargin[j] = a.Margin; _localDirAt[j] = tMs;
+                _dirsSeen[j] |= DirBit(a.Dir);
                 // 정지 확정 — 로컬 시그니처 런. 무거운 줄 경로와 상시 병행(독립 런 상태) —
                 // 줄 인식이 흔들리는 맵에서 정지 화살표가 굶는 것 방지(10:39 4정지 실패).
                 if (_lRunSig[j] is not null && _lRunDir[j] == a.Dir && RuneArrowDetector.SigSimilar(_lRunSig[j], a.Sig))
@@ -441,7 +469,7 @@ internal sealed class RunePuzzleSolver
                     // 1:1-보류 특수 케이스로 흡수(2026-08-05) — 웜 3표째가 생겨 20:38류(로컬 오독)는
                     // heavy+웜 2표로 정답이 잠기고, 14:01류(heavy 오독)는 로컬+웜 2표가 정답을 잠근다.
                     if (_lRunLen[j] >= LockRun && tMs - _lRunStart[j] >= LockSpanMs && RuneAngleTracker.AxisStable(_angleV[j])
-                        && ConsensusAllows(j, _lRunDir[j], tMs))
+                        && ConsensusAllows(j, _lRunDir[j], a.Margin, tMs))
                     { _locked[j] = _lRunDir[j]; _lockedCount++; }
                 }
                 else { _lRunSig[j] = a.Sig; _lRunDir[j] = a.Dir; _lRunLen[j] = 1; _lRunStart[j] = tMs; }
@@ -544,6 +572,7 @@ internal sealed class RunePuzzleSolver
         if (alsoVotes) for (int c = 0; c < 4; c++) _votes[j, c] = 0;
         _lastRotAt[j] = -999;
         _localDirAt[j] = -9999; _warmDirAt[j] = -9999; // 다른 지점의 합의 판독도 무효(heavy는 호출자 소관)
+        _dirsSeen[j] = 0; _holdCount[j] = 0; // 방향 이력·보류 집계도 그 지점의 것 — 함께 무효
     }
 
     /// <summary>종료 판정 — 실패 사유/사용자 노트 문구까지 확정해 돌려준다(저장·방송은 호출자).
@@ -611,6 +640,8 @@ internal sealed class RunePuzzleSolver
             sb.Append($" 합의 h:{(_heavyDirAt[j] > -9999 ? $"{_heavyDir[j]}m{_heavyMargin[j]:0.00}@{_heavyDirAt[j]}" : "-")}"
                     + $" l:{(_localDirAt[j] > -9999 ? $"{_localDir[j]}m{_localMargin[j]:0.00}@{_localDirAt[j]}" : "-")}"
                     + $" w:{(_warmDirAt[j] > -9999 ? $"{_warmDir[j]}m{_warmMargin[j]:0.00}@{_warmDirAt[j]}" : "-")}");
+            if (_holdCount[j] > 0 || _lateRelease[j])
+                sb.Append($" 보류{_holdCount[j]}회{(_lateRelease[j] ? "·말기해제" : "")}");
             sb.AppendLine();
             var t = _angleT[j]; var v = _angleV[j];
             sb.Append("    ");
@@ -619,7 +650,7 @@ internal sealed class RunePuzzleSolver
         }
         if (_fusedContrib is not null) sb.AppendLine($"융합: {_fusedContrib}");
         sb.AppendLine("(범례) 슬롯=좌→우 1기반 · 반동표=회전 격발 투표(정지형은 전부 0이 정상) · 잠금 근거: 정지=시그니처 연속+3소스 합의(2표 동의), 회전=반동표 다수결");
-        sb.AppendLine("(범례) 합의 h/l/w=heavy(④줄)/로컬(sat체인)/웜(웜차분)의 마지막 판독 — 방향·마진(m)·시각(ms), '-'=판독 없음 · 각도열 t:주축각°=참고용(방향 분류와 별개·언랩·최근 60표본) · 회전 유무의 진실은 헤더 회전관측=");
+        sb.AppendLine("(범례) 합의 h/l/w=heavy(④줄)/로컬(sat체인)/웜(웜차분)의 마지막 판독 — 방향·마진(m)·시각(ms), '-'=판독 없음 · 보류N회=합의·단독하한이 잠금을 기각한 횟수, 말기해제=저마진 단독을 예산 말기 이력 만장일치로 잠금 · 각도열 t:주축각°=참고용(방향 분류와 별개·언랩·최근 60표본) · 회전 유무의 진실은 헤더 회전관측=");
         return sb.ToString();
     }
 }

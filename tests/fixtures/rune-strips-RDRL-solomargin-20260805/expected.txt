@@ -1,0 +1,11 @@
+# 정답 →↓→← · 로컬이 슬롯1 →를 D로 오독(m0.01, 5프레임 연속) → 웜·heavy 첫 판독 전(t=588ms) 단독 잠금 오답 입력 — 단독 마진 하한 0.05 재설계 근거 (README 참조)
+run: --rune-analyze rune-before.png rune-strip-*.png pos=390,240;460,218;582,225;657,239
+out: rune-before.png.analysis.txt
+re: 화살표1: .*확정 -
+re: 화살표2: .*확정 D
+re: 화살표3: .*확정 -
+re: 화살표4: .*확정 L
+forbid: 최종 입력\(X순\): ↓ ↓
+run: --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
+out: rune-frame-0.png.analysis.txt
+re: ⑦w\|방향·마진 R0\.14 D0\.25 R0\.09 D0\.09
