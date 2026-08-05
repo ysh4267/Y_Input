@@ -69,7 +69,9 @@ Invoke-RestMethod -Uri "http://127.0.0.1:48710/api/app/version"   # current 확�
 - rune-solve.txt: 슬롯 번호는 좌→우 1기반(앱로그와 동일). `lock=U@1293ms`=잠금 방향·시각,
   반동표는 회전 전용이라 정지형은 전부 0이 정상. 각도열은 주축각 참고용 — 방향 분류와 별개
   (침식 글리프는 주축이 틀리면서 방향은 맞을 수 있음, 방향-주축 게이트 기각 실측 2026-08-05).
-  파일 말미 범례 2줄이 요약. 이 파일은 아무 도구도 파싱하지 않는다(자유 수정 가능).
+  `합의 h:/l:/w:`=heavy(④줄)/로컬(sat체인)/웜(웜차분)의 마지막 방향 판독·마진(m)·시각 —
+  정지 잠금은 이 3소스 중 2표 동의 필요(14:01 오답 재설계). 파일 말미 범례 2줄이 요약.
+  이 파일은 아무 도구도 파싱하지 않는다(자유 수정 가능).
 - analysis.txt(오프라인): 진단 라인은 `[단계|…]` 접두로 소속 명시(예: `[②|밴드 …]`).
   ⑤⑥은 실전 미사용, ⓪ "선택된 줄"은 진단 픽 — 실전 판정은 ④. 로컬 관찰 섹션은 ⑨
   (구 "⑦ 위치" — ⑦ 부분 줄과 번호 충돌로 개명). 그라데이션 보정 진단은 인자 선평가 탓에
@@ -98,7 +100,7 @@ YInput.exe --rune-minimap-analyze rune-minimap.png    # → .rune.txt 후보·�
 **한 명령으로 전 세트 자동 대조** — 룬 코드를 고쳤으면 무조건 이걸 돌린다(종료코드=실패 수):
 
 ```powershell
-powershell -File tools\rune-regress.ps1        # 빌드 + 17세트 리플레이 + expected.txt 대조
+powershell -File tools\rune-regress.ps1        # 빌드 + 18세트 리플레이 + expected.txt 대조
 powershell -File tools\rune-regress.ps1 -NoBuild -Set *DDRD*   # 특정 세트만
 ```
 
@@ -123,6 +125,7 @@ powershell -File tools\rune-regress.ps1 -NoBuild -Set *DDRD*   # 특정 세트�
 | `rune-frames-UUDL-coolglow2-20260805` | ④ 잡줄 채택·웜 교차 검증 근거 | ⑦w 396/500/595/689 ±5 · 스트립(pos=) 4/4 ↑↑↓← (침식 주축 회귀 감시) |
 | `rune-frames-LUUR-coolglow3-20260805` | ④ 1슬롯 잡 교체·웜 슬롯 보정 근거 | ⑦w 458/588/674/730 ±5 · ② L U U R |
 | `rune-frames-LDUU-rowshift-20260805` | ④ 잡줄 채택(중심 68px 이탈)·웜 균일성 교체 근거 | ⑦w·⑧ 459/558/654/733 ±5 · ② L D U U |
+| `rune-frames-LLRR-dirflip-20260805` | ④ 방향 오분류 오답 입력·3소스 합의 잠금 근거 | ② 447/515/617/696 = L L R R · ⑨ f0/f1 슬롯1 정← |
 | `rune-minimap\` | 아이콘 3장 | README 참조 |
 
 리플레이 산출물(`*.analysis.txt`, `*.png.mask-*.png`)은 gitignore됨 — 커밋하지 말 것.

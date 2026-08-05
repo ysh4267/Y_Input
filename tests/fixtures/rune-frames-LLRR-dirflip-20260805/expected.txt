@@ -1,0 +1,7 @@
+# 정답 ←←→→ · ④ no-warm이 슬롯1 ←를 R로 오분류(m0.03) → heavy 단독 잠금 오답 입력 — 합의 잠금 재설계 근거 (README 참조)
+run: --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
+out: rune-frame-0.png.analysis.txt
+rowxs: ②|밴드 = 447 515 617 696 ~5
+re: \(447,\d+\)a\d+L \(515,\d+\)a\d+L \(617,\d+\)a\d+R \(696,\d+\)a\d+R
+re: f0: 정←
+re: f1: 정←
