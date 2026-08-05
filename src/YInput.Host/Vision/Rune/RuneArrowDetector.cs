@@ -200,7 +200,8 @@ internal static partial class RuneArrowDetector
                 }
                 for (int i = 0; i < mi.Length; i++) mi[i] &= diffBefore[i];
                 var c0 = pool is null ? null : new List<Blob>();
-                var r = DetectRow(frame, bannerRef, mi, region, w, h, thinFilter: true, fullH, candsOut: c0);
+                // extendPass:false — ④ 교집합 계열은 확장 2패스 금지(DetectRow 주석 참조)
+                var r = DetectRow(frame, bannerRef, mi, region, w, h, thinFilter: true, fullH, candsOut: c0, extendPass: false);
                 if (c0 is not null) pool!.Add(sat == VividSatStrict ? FuseSource.Inter80 : FuseSource.Inter45, c0);
                 if (r is null) continue;
                 double ratio = (double)r.Max(b => b.Area) / r.Min(b => b.Area);
@@ -217,7 +218,7 @@ internal static partial class RuneArrowDetector
             var maskA = new bool[w * h];
             for (int i = 0; i < maskA.Length; i++) maskA[i] = vivid[i] && diffBefore[i] && !moving[i];
             var cA = pool is null ? null : new List<Blob>();
-            row = DetectRow(frame, bannerRef, maskA, region, w, h, thinFilter: true, fullH, candsOut: cA);
+            row = DetectRow(frame, bannerRef, maskA, region, w, h, thinFilter: true, fullH, candsOut: cA, extendPass: false);
             if (cA is not null) pool!.Add(FuseSource.DiffStill, cA);
         }
         if (row is null && diffBefore is not null)
@@ -225,13 +226,13 @@ internal static partial class RuneArrowDetector
             var maskB = new bool[w * h];
             for (int i = 0; i < maskB.Length; i++) maskB[i] = vivid[i] && diffBefore[i];
             var cB = pool is null ? null : new List<Blob>();
-            row = DetectRow(frame, bannerRef, maskB, region, w, h, thinFilter: true, fullH, candsOut: cB);
+            row = DetectRow(frame, bannerRef, maskB, region, w, h, thinFilter: true, fullH, candsOut: cB, extendPass: false);
             if (cB is not null) pool!.Add(FuseSource.DiffBefore, cB);
         }
         if (row is null)
         {
             var cC = pool is null ? null : new List<Blob>();
-            row = DetectRow(frame, bannerRef, (bool[])vivid.Clone(), region, w, h, thinFilter: true, fullH, candsOut: cC);
+            row = DetectRow(frame, bannerRef, (bool[])vivid.Clone(), region, w, h, thinFilter: true, fullH, candsOut: cC, extendPass: false);
             if (cC is not null) pool!.Add(FuseSource.VividOnly, cC);
         }
         if (row is null && pool is not null && prevs.Count >= 1)
@@ -245,7 +246,9 @@ internal static partial class RuneArrowDetector
                 AccumulateDiff(seq[k - 1], seq[k], region, w, h, AnimDiffMin, animChanged);
             for (int i = 0; i < animChanged.Length; i++) animChanged[i] &= vivid[i];
             var (bY0, bY1, _) = BannerBand(w, h, fullH);
-            double rY0 = bY0 + RowFracLo * (bY1 - bY0), rY1 = bY0 + RowFracHi * (bY1 - bY0);
+            // 융합 풀은 기존 구간(RowClassicTopFrac~)만 — 확장 구간 잡이 풀을 오염해
+            // ⑧ 융합이 무너지는 것 실측(2026-08-05 LDUU 회귀, 0좌표)
+            double rY0 = bY0 + RowClassicTopFrac * (bY1 - bY0), rY1 = bY0 + RowFracHi * (bY1 - bY0);
             pool.Add(FuseSource.Anim, FilterCands(animChanged, w, h, rY0, rY1));
         }
         if (row is null) return null;

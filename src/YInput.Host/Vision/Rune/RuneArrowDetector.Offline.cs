@@ -258,6 +258,16 @@ internal static partial class RuneArrowDetector
             }
             if (before is null) { sb.AppendLine("rune-before가 필요합니다(밴드 기준 크롭용)"); return; }
             var bandRect = ArrowBandRect(before.Width, before.Height);
+            // 구버전 스트립 하위호환(2026-08-05 밴드 상단 0.28→0.21 확장) — 밴드 하단(0.42)은
+            // 불변이라 낮은 밴드로 녹화된 옛 스트립은 현행 밴드의 '아래 N줄'과 정확히 일치한다.
+            // 스트립이 현행 밴드보다 얕으면 기준 밴드를 하단 정렬로 줄여 옛 기하 그대로 재현
+            // (pos= y 변환·마스크·잠금 재현이 녹화 당시와 동일해진다 — 픽스처 계약 보존).
+            if (strips.Count > 0 && strips[0].Bmp.Width == bandRect.Width && strips[0].Bmp.Height < bandRect.Height)
+            {
+                int sh = strips[0].Bmp.Height;
+                sb.AppendLine($"(하위호환) 스트립 높이 {sh} < 현행 밴드 {bandRect.Height} — 하단 정렬 y{bandRect.Bottom - sh} 기준으로 재현");
+                bandRect = new Rectangle(bandRect.X, bandRect.Bottom - sh, bandRect.Width, sh);
+            }
             beforeStrip = before.Clone(bandRect, before.PixelFormat);
             int skipped = strips.RemoveAll(s => s.Bmp.Width != beforeStrip.Width || s.Bmp.Height != beforeStrip.Height);
             if (skipped > 0) sb.AppendLine($"크기 불일치 스트립 {skipped}장 제외(기준: rune-before 밴드 {beforeStrip.Width}x{beforeStrip.Height} — before가 다른 실행 것이면 정상 스트립이 전부 제외된다)");

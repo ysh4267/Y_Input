@@ -24,12 +24,22 @@ internal static partial class RuneArrowDetector
     private const double GapRatioSoftW = 0.35;                 // 소프트 균일비 페널티 가중(면적 합 대비) —
                                                                // DDRD 잡줄(비 1.94, 면적 우세)은 지고
                                                                // 카르시온 진짜 줄(비 2.78, 면적 4배)은 이기는 창(0.3~0.4)
-    private const double RowFracLo = 0.03, RowFracHi = 0.85;   // 후보 y 밴드 구간. 하한 0.20→0.03(22:19 실전):
+    private const double RowFracLo = 0.03, RowFracHi = 0.90;   // 후보 y 밴드 구간. 하한 0.20→0.03(22:19 실전):
                                                                // 필 y도 룬 월드 좌표를 따라 움직여 화살표가 창높이
                                                                // 29.3%(밴드 8.9%)까지 올라온다 — 0.20 컷이 진짜 줄을
                                                                // 후보에서 제거해 몹 잡줄(y~260) 채택 → 3/4 실패.
                                                                // 0.20의 원목적(14:13 배너 하단 반짝이 잡줄)은 현재
                                                                // 면적 경쟁·박스 벌점이 점수로 막는다(DDRD 재검증).
+                                                               // 상한 0.85→0.90(2026-08-05 밴드 상단 확장 동반 보정):
+                                                               // 밴드가 0.28~0.42→0.21~0.42로 1.5배 커지며 비율 상한의
+                                                               // 절대 y가 딸려 올라가는 것을 상쇄 — 0.85×0.14 ≈ 0.90×0.21
+                                                               // +상단차라 구 하단 절대 위치(창높이 ≈40%)가 그대로 보존된다.
+    // 1패스(기존 구간) 상단 — 구 밴드(0.28~0.42)의 후보 창 상단(0.28+0.03×0.14 = 창높이 28.4%)을
+    // 현행 밴드(0.21~0.42) 비율로 환산한 값. 확장 구간(21~28.4%, 안내 텍스트 23~27% 포함)은 잡
+    // 재료가 실측돼(2026-08-05 회귀: LLDR x407·LUUR 웜 x353 진입으로 줄이 한 칸 밀림, LDUU ⑧
+    // 융합 0좌표) 항상 참여시키지 않는다 — 기존 구간으로 줄이 안 나올 때만 2패스로 합류(19:13
+    // 높은 필 구제). 융합 풀은 기존 구간만 수집(풀 오염 방지, ⑧ 동작 동결).
+    private const double RowClassicTopFrac = ((0.28 - 0.21) + 0.03 * (0.42 - 0.28)) / (0.42 - 0.21);
     // 에지 슬롯 간격 외삽 교체(PickRow 후처리) — 20:19 실전: 침식 보라(a263)+병합 비대(a1347)가
     // 한 줄에 공존하면 크기 게이트·면적 경쟁이 진짜 줄에 불리해져 끝 슬롯을 잡블롭(버섯 a783,
     // 간격 161)이 차지했다. 나머지 두 간격이 균일(92/97)할 때만 외삽 위치의 실존 후보로 교체.
@@ -61,7 +71,12 @@ internal static partial class RuneArrowDetector
         var (bandY0, bandY1, bannerCx) = BannerBand(w, h, (int)(h / (RegionY1 - RegionY0)));
         double rowY0 = bandY0 + RowFracLo * (bandY1 - bandY0), rowY1 = bandY0 + RowFracHi * (bandY1 - bandY0);
         var cands = FilterCands(mask, w, h, rowY0, rowY1);
-        return PartialRowFromCands(cands, frame, beforeRef, region, w, frame.Width, bannerCx, verifyExtrap: false, out _);
+        // 2패스(RowClassicTopFrac 주석 참조) — 기존 구간 우선, 실패 시에만 확장 구간 합류
+        var classic = cands.Where(b => b.Cy >= bandY0 + RowClassicTopFrac * (bandY1 - bandY0)).ToList();
+        var pr = PartialRowFromCands(classic, frame, beforeRef, region, w, frame.Width, bannerCx, verifyExtrap: false, out _);
+        if (pr is null && classic.Count != cands.Count)
+            pr = PartialRowFromCands(cands, frame, beforeRef, region, w, frame.Width, bannerCx, verifyExtrap: false, out _);
+        return pr;
     }
 
     /// <summary>부분 줄 코어 — 후보 리스트에서 3개 조합 + 빠진 슬롯 외삽으로 위치 4개 복원.
@@ -188,7 +203,11 @@ internal static partial class RuneArrowDetector
     /// <summary>마스크에서 '화살표 줄' 블롭 4개 선택(왼쪽부터). fullArea = 밴드·중심 제약 없이
     /// 전 영역 탐색(진단 전용 — 밴드 기하가 틀리는 창 크기를 확인할 때). candsOut = 게이트 통과
     /// 후보의 수집 싱크(소스 융합용 — 줄 실패여도 후보는 남긴다). 실패 시 null.</summary>
-    private static List<Blob>? DetectRow(Bitmap frame, Bitmap? bannerRef, bool[] mask, Rectangle region, int w, int h, bool thinFilter, int fullFrameH, bool fullArea = false, List<Blob>? candsOut = null)
+    // extendPass=false: ④ 교집합 마스크 전용 — 교집합은 확장 구간(21~28%)에 잡 재료가 많아
+    // 2패스가 잡줄을 만든다(DLUU 실측 2026-08-05: 확장 후보 96개로 (388…727) 잡줄 구성 →
+    // 진짜 ⑦ 부분줄 455/548/633/735 선점). 높은 필 구제는 차분 기반 ⑦·⑦w의 2패스가 담당
+    // (19:13 실측: ⑦w가 확장으로 진짜 웜 줄을 찾아 교차 검증이 ④ 파편 잡줄을 교체).
+    private static List<Blob>? DetectRow(Bitmap frame, Bitmap? bannerRef, bool[] mask, Rectangle region, int w, int h, bool thinFilter, int fullFrameH, bool fullArea = false, List<Blob>? candsOut = null, bool extendPass = true)
     {
         if (thinFilter) ThinFilter(mask, w, h);
         var (bandY0, bandY1, bannerCx) = fullArea ? (0, h - 1, -1.0) : BannerBand(w, h, fullFrameH);
@@ -198,8 +217,18 @@ internal static partial class RuneArrowDetector
         // 하한 20%는 밴드 상단 가장자리 잡블롭 줄(y 0~18% — 배너 하단 반짝이, 14:13 룬)만 차단한다.
         double rowY0 = bandY0 + RowFracLo * (bandY1 - bandY0), rowY1 = bandY0 + RowFracHi * (bandY1 - bandY0);
         var cands = FilterCands(mask, w, h, rowY0, rowY1);
-        candsOut?.AddRange(cands);
-        var row = PickRow(cands, bannerCx, frame.Width);
+        // 2패스 줄 구성(RowClassicTopFrac 주석 참조) — 1패스는 기존 구간(구 밴드 창)만으로
+        // 구 동작을 정확히 보존하고, 실패 시에만 확장 구간(높은 필 화살표)을 합류시킨다.
+        // 융합 풀(candsOut)은 항상 기존 구간만 받는다.
+        var classic = fullArea ? cands
+            : cands.Where(b => b.Cy >= bandY0 + RowClassicTopFrac * (bandY1 - bandY0)).ToList();
+        candsOut?.AddRange(classic);
+        var row = PickRow(classic, bannerCx, frame.Width);
+        if (row is null && extendPass && classic.Count != cands.Count)
+        {
+            row = PickRow(cands, bannerCx, frame.Width, take: cands.Count);
+            if (row is not null) DiagLog?.Invoke("[확장 2패스] 기존 구간 줄 없음 — 확장 구간(상단 21%~) 포함 채택");
+        }
         if (DiagLog is not null)
         {
             DiagLog($"밴드 y{region.Y + bandY0}..{region.Y + bandY1} 중심X {(bannerCx >= 0 ? (region.X + bannerCx).ToString("0") : "-")} 후보 {cands.Count}"
@@ -221,11 +250,14 @@ internal static partial class RuneArrowDetector
     /// 01:16·00:45 실행에서 면적만으로는 정크가 진짜 화살표를 밀어냈다). 모양 비대칭은 판별자로
     /// 못 쓴다 — 진짜 ←도 침식되면 |0.06|까지 떨어진다(00:45 sat80). 없으면 null.
     /// srcBonus = 블롭별 가산점 훅(소스 융합 전용 — 교차 확인 후보 우대). null이면 동작 불변.</summary>
-    private static List<Blob>? PickRow(List<Blob> cands, double bannerCx, int frameW, Func<Blob, double>? srcBonus = null)
+    private static List<Blob>? PickRow(List<Blob> cands, double bannerCx, int frameW, Func<Blob, double>? srcBonus = null, int take = 20)
     {
         if (cands.Count < 4) return null;
-        // 상위 20개 — 불타는 맵은 노이즈 블롭이 커서 14개 컷으로는 작은 화살표가 밀려났다
-        var top = cands.OrderByDescending(b => b.Area).Take(20).OrderBy(b => b.Cx).ToList();
+        // 상위 20개 — 불타는 맵은 노이즈 블롭이 커서 14개 컷으로는 작은 화살표가 밀려났다.
+        // 2패스(확장 구간 합류)는 take=전체로 프루닝 해제 — 19:13 실측: 후보 38개 중 진짜
+        // 슬롯1(a294)이 면적 순위 21위로 잘려 줄 구성 실패. 2패스는 구 코드가 무조건 실패하던
+        // 프레임에서만 돌아 조합 수 증가(≤C(40,4))는 실전 주기 대비 무시 가능.
+        var top = cands.OrderByDescending(b => b.Area).Take(take).OrderBy(b => b.Cx).ToList();
         int n = top.Count;
         List<Blob>? best = null; double bestScore = double.MinValue;
         for (int a = 0; a < n - 3; a++)
@@ -326,12 +358,16 @@ internal static partial class RuneArrowDetector
     }
 
     /// <summary>화살표 탐색 밴드 — <b>창 기준 고정 기하</b>. 룬 퍼즐 UI는 창 기준 고정 위치다
-    /// (실측 두 맵 동일: 배너 띠 상단 ≈ 창높이 20%, 안내 텍스트 ≈ 23~27%, 화살표 줄 ≈ 29.5~33%).
+    /// (초기 실측 두 맵: 배너 띠 상단 ≈ 창높이 20%, 안내 텍스트 ≈ 23~27%, 화살표 줄 ≈ 29.5~33%).
     /// 발동 전 차분·어두워짐으로 배너를 '탐지'하는 방식은 불타는 맵에서 세 번 다르게 실패했다
     /// (첫 행 오검출 → 불꽃 노이즈 / 피크 앵커 → 불꽃이 사라진 자리 어두워짐이 배너보다 큼) —
-    /// 배경과 무관한 고정 밴드가 유일하게 안정적이다. 텍스트 글리프(≤27%)는 밴드 밖.
+    /// 배경과 무관한 고정 밴드가 유일하게 안정적이다.
+    /// 상단 0.28→0.21(2026-08-05 사용자 지정 "세로 1.5배까지 위로"): 19:13 실전에서 화살표
+    /// 중심이 27.6%(y205)에 떠 상단 컷(28%)에 걸려 전 소스 줄 실패 → 3/4 안전 종료.
+    /// 텍스트 글리프(23~27%)가 밴드 안으로 들어오지만, 잡줄 방어는 컷이 아니라 줄 게이트·
+    /// 면적 경쟁·웜 교차 검증·방향 협응·3소스 합의가 담당한다(회귀 전 세트로 검증).
     /// CenterX = 탐색 영역 가로 중앙(퍼즐 UI는 창 중앙 정렬 — 우측 팝업 줄 배제용).</summary>
-    private const double ArrowBandTopFrac = 0.28, ArrowBandBotFrac = 0.42;
+    private const double ArrowBandTopFrac = 0.21, ArrowBandBotFrac = 0.42;
 
     private static (int Y0, int Y1, double CenterX) BannerBand(int w, int h, int fullFrameH)
     {
