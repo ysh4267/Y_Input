@@ -39,6 +39,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:48710/api/app/version"   # current 확�
 | 화살표 추출·방향 분류·시그니처(채도·차분 마스크 체인 포함) | `Vision\Rune\RuneArrowDetector.cs` (+프리미티브는 `.Mask.cs`) |
 | 각도 시계열·머리 플립·회전 판정·반동 투표 | `Vision\Rune\RuneAngleTracker.cs` |
 | 잠금·재선출·재배치·확정(중복 관측·X순 입력) — 퍼즐 판정 전부 | `Vision\Rune\RunePuzzleSolver.cs` |
+| 소스 간 후보 융합(④·⑦ 실패 시 최후 위치 폴백 — 군집·교차확인 게이트) | `Vision\Rune\RuneArrowDetector.Fusion.cs` |
 | 룬 감지→이동→발동→입력→검증 흐름·증거 저장·캡처 스케줄 | `src\YInput.Host\PositionWatcher.Rune.cs` |
 | 오프라인 재현 CLI(--rune-analyze) | `Vision\Rune\RuneArrowDetector.Offline.cs` |
 | 미니맵 룬 아이콘 | `Vision\MinimapDetector.cs` |
@@ -56,7 +57,10 @@ Invoke-RestMethod -Uri "http://127.0.0.1:48710/api/app/version"   # current 확�
 한다(14일 뒤 자동 정리).
 
 ```powershell
-# 퍼즐 인식 재현(프레임): 실전 경로는 ④ — 줄 채택 위치·방향이 여기서 나온다
+# 퍼즐 인식 재현(프레임): 실전 경로는 ④ — 줄 채택 위치·방향이 여기서 나온다.
+# ⑧ 소스 융합 = ④·⑦ 실패 시 실전 최후 폴백(2026-08-05) — 풀 통계·기여·기각 사유가 같이 찍힌다.
+# 실전에서 융합이 발동했으면 rune-solve.txt 말미에 "융합: …" 라인이 남는다 → 그 케이스는
+# 픽스처(rune-frames-*-fusion-*)로 보존할 것(아직 발동 실측 0건이라 융합 픽스처 없음).
 YInput.exe --rune-analyze rune-frame-0.png rune-frame-1.png rune-frame-2.png rune-frame-3.png rune-before.png
 
 # 회전 반동 재현(스트립): 파일명에 rune-strip 포함 시 스트립 모드. pos=로 관찰좌표 고정 가능
